@@ -6,9 +6,9 @@ module DWARF
     <%- maxwidth = table["body"].map(&:first).sort_by(&:length).last.length -%>
     <%- for row in table["body"] -%>
       <%- if row.first == "Reserved" -%>
-    # <%= row.first.ljust(maxwidth - 2) %> = <%= sprintf("0x%02x", row[1]) %><%= row[2] && !row[2].empty? ? " # #{row[2].join(', ')}" : '' %>
+    # <%= row.first.ljust(maxwidth - 2) %> = <%= sprintf("0x%02x", row[1]) %><%= row[2] ? " # #{row[2]}" : '' %>
       <%- else -%>
-    <%= row.first.ljust(maxwidth) %> = <%= sprintf("0x%02x", row[1]) %><%= row[2] && !row[2].empty? ? " # #{row[2].join(', ')}" : '' %>
+    <%= row.first.ljust(maxwidth) %> = <%= sprintf("0x%02x", row[1]) %><%= row[2] ? " # #{row[2]}" : '' %>
       <%- end -%>
     <%- end -%>
   <%- end -%>

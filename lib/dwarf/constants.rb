@@ -106,7 +106,7 @@ module DWARF
     DW_AT_ordering                = 0x09 # constant
     # Reserved                    = 0x0a # not applicable
     DW_AT_byte_size               = 0x0b # constant, exprloc, reference
-    # Reserved                    = 0xc2 # constant, exprloc, reference
+    # Reserved                    = 0x0c # constant, exprloc, reference
     DW_AT_bit_size                = 0x0d # constant, exprloc, reference
     # Reserved                    = 0x0e # not applicable
     # Reserved                    = 0x0f # not applicable
