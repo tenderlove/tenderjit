@@ -1,5 +1,99 @@
 module DWARF
-  module Attribute
+  module Constants
+    # Table 7.2 Unit Header Types
+    DW_UT_compile       = 0x01
+    DW_UT_type          = 0x02
+    DW_UT_partial       = 0x03
+    DW_UT_skeleton      = 0x04
+    DW_UT_split_compile = 0x05
+    DW_UT_split_type    = 0x06
+    DW_UT_lo_user       = 0x80
+    DW_UT_hi_user       = 0xff
+
+    # Table 7.3: Tag encodings
+    DW_TAG_array_type               = 0x01
+    DW_TAG_class_type               = 0x02
+    DW_TAG_entry_point              = 0x03
+    DW_TAG_enumeration_type         = 0x04
+    DW_TAG_formal_parameter         = 0x05
+    # Reserved                      = 0x06
+    # Reserved                      = 0x07
+    DW_TAG_imported_declaration     = 0x08
+    # Reserved                      = 0x09
+    DW_TAG_label                    = 0x0a
+    DW_TAG_lexical_block            = 0x0b
+    # Reserved                      = 0x0c
+    DW_TAG_member                   = 0x0d
+    # Reserved                      = 0x0e
+    DW_TAG_pointer_type             = 0x0f
+    DW_TAG_reference_type           = 0x10
+    DW_TAG_compile_unit             = 0x11
+    DW_TAG_string_type              = 0x12
+    DW_TAG_structure_type           = 0x13
+    # Reserved                      = 0x14
+    DW_TAG_subroutine_type          = 0x15
+    DW_TAG_typedef                  = 0x16
+    DW_TAG_union_type               = 0x17
+    DW_TAG_unspecified_parameters   = 0x18
+    DW_TAG_variant                  = 0x19
+    DW_TAG_common_block             = 0x1a
+    DW_TAG_common_inclusion         = 0x1b
+    DW_TAG_inheritance              = 0x1c
+    DW_TAG_inlined_subroutine       = 0x1d
+    DW_TAG_module                   = 0x1e
+    DW_TAG_ptr_to_member_type       = 0x1f
+    DW_TAG_set_type                 = 0x20
+    DW_TAG_subrange_type            = 0x21
+    DW_TAG_with_stmt                = 0x22
+    DW_TAG_access_declaration       = 0x23
+    DW_TAG_base_type                = 0x24
+    DW_TAG_catch_block              = 0x25
+    DW_TAG_const_type               = 0x26
+    DW_TAG_constant                 = 0x27
+    DW_TAG_enumerator               = 0x28
+    DW_TAG_file_type                = 0x29
+    DW_TAG_friend                   = 0x2a
+    DW_TAG_namelist                 = 0x2b
+    DW_TAG_namelist_item            = 0x2c
+    DW_TAG_packed_type              = 0x2d
+    DW_TAG_subprogram               = 0x2e
+    DW_TAG_template_type_parameter  = 0x2f
+    DW_TAG_template_value_parameter = 0x30
+    DW_TAG_thrown_type              = 0x31
+    DW_TAG_try_block                = 0x32
+    DW_TAG_variant_part             = 0x33
+    DW_TAG_variable                 = 0x34
+    DW_TAG_volatile_type            = 0x35
+    DW_TAG_dwarf_procedure          = 0x36
+    DW_TAG_restrict_type            = 0x37
+    DW_TAG_interface_type           = 0x38
+    DW_TAG_namespace                = 0x39
+    DW_TAG_imported_module          = 0x3a
+    DW_TAG_unspecified_type         = 0x3b
+    DW_TAG_partial_unit             = 0x3c
+    DW_TAG_imported_unit            = 0x3d
+    # Reserved                      = 0x3e1
+    DW_TAG_condition                = 0x3f
+    DW_TAG_shared_type              = 0x40
+    DW_TAG_type_unit                = 0x41
+    DW_TAG_rvalue_reference_type    = 0x42
+    DW_TAG_template_alias           = 0x43
+    DW_TAG_coarray_type             = 0x44
+    DW_TAG_generic_subrange         = 0x45
+    DW_TAG_dynamic_type             = 0x46
+    DW_TAG_atomic_type              = 0x47
+    DW_TAG_call_site                = 0x48
+    DW_TAG_call_site_parameter      = 0x49
+    DW_TAG_skeleton_unit            = 0x4a
+    DW_TAG_immutable_type           = 0x4b
+    DW_TAG_low_user                 = 0x4080
+    DW_TAG_hi_user                  = 0xffff
+
+    # Table 7.4: Child determination encodings
+    DW_CHILDREN_no  = 0x00
+    DW_CHILDREN_yes = 0x01
+
+    # Table 7.5: Attribute encodings
     DW_AT_sibling                 = 0x01 # reference
     DW_AT_location                = 0x02 # exprloc, loclist
     DW_AT_name                    = 0x03 # string
@@ -129,7 +223,7 @@ module DWARF
     DW_AT_call_origin             = 0x7f # exprloc
     DW_AT_call_parameter          = 0x80 # reference
     DW_AT_call_pc                 = 0x81 # address
-    DW_AT_call_tail_call # 0x82 flag
+    DW_AT_call_tail_call          = 0x82 # flag
     DW_AT_call_target             = 0x83 # exprloc
     DW_AT_call_target_clobbered   = 0x84 # exprloc
     DW_AT_call_data_location      = 0x85 # exprloc
@@ -142,5 +236,7 @@ module DWARF
     DW_AT_loclists_base           = 0x8c # loclistsptr
     DW_AT_lo_user                 = 0x2000
     DW_AT_hi_user                 = 0x3fff
+
+    # Table 7.6: Attribute form encodings
   end
 end
