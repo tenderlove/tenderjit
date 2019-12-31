@@ -234,13 +234,12 @@ module DWARF
     DW_AT_deleted                 = 0x8a # flag
     DW_AT_defaulted               = 0x8b # constant
     DW_AT_loclists_base           = 0x8c # loclistsptr
-    DW_AT_lo_user                 = 0x2000
-    DW_AT_hi_user                 = 0x3fff
+    DW_AT_lo_user                 = 0x2000 # 
+    DW_AT_hi_user                 = 0x3fff # 
 
     # Table 7.6: Attribute form encodings
-    # Form name | Value | Classes
     DW_FORM_addr           = 0x01 # address
-    # Reserved             = 0x02
+    # Reserved             = 0x02 #  
     DW_FORM_block2         = 0x03 # block
     DW_FORM_block4         = 0x04 # block
     DW_FORM_data2          = 0x05 # constant
@@ -283,6 +282,5 @@ module DWARF
     DW_FORM_addrx2         = 0x2a # address
     DW_FORM_addrx3         = 0x2b # address
     DW_FORM_addrx4         = 0x2c # address
-
   end
 end
