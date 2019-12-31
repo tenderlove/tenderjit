@@ -1,6 +1,7 @@
 module DWARF
   module Constants
     # Table 7.2 Unit Header Types
+    # Unit header unit type encodings | Value
     DW_UT_compile       = 0x01
     DW_UT_type          = 0x02
     DW_UT_partial       = 0x03
@@ -9,8 +10,8 @@ module DWARF
     DW_UT_split_type    = 0x06
     DW_UT_lo_user       = 0x80
     DW_UT_hi_user       = 0xff
-
     # Table 7.3: Tag encodings
+    # Tag name | Value
     DW_TAG_array_type               = 0x01
     DW_TAG_class_type               = 0x02
     DW_TAG_entry_point              = 0x03
@@ -88,12 +89,12 @@ module DWARF
     DW_TAG_immutable_type           = 0x4b
     DW_TAG_low_user                 = 0x4080
     DW_TAG_hi_user                  = 0xffff
-
     # Table 7.4: Child determination encodings
+    # Children determination name | Value
     DW_CHILDREN_no  = 0x00
     DW_CHILDREN_yes = 0x01
-
     # Table 7.5: Attribute encodings
+    # Attribute name | Value | Classes
     DW_AT_sibling                 = 0x01 # reference
     DW_AT_location                = 0x02 # exprloc, loclist
     DW_AT_name                    = 0x03 # string
@@ -105,7 +106,7 @@ module DWARF
     DW_AT_ordering                = 0x09 # constant
     # Reserved                    = 0x0a # not applicable
     DW_AT_byte_size               = 0x0b # constant, exprloc, reference
-    # Reserved                    = 0x0c2 # constant, exprloc, reference
+    # Reserved                    = 0xc2 # constant, exprloc, reference
     DW_AT_bit_size                = 0x0d # constant, exprloc, reference
     # Reserved                    = 0x0e # not applicable
     # Reserved                    = 0x0f # not applicable
@@ -234,12 +235,12 @@ module DWARF
     DW_AT_deleted                 = 0x8a # flag
     DW_AT_defaulted               = 0x8b # constant
     DW_AT_loclists_base           = 0x8c # loclistsptr
-    DW_AT_lo_user                 = 0x2000 # 
-    DW_AT_hi_user                 = 0x3fff # 
-
+    DW_AT_lo_user                 = 0x2000
+    DW_AT_hi_user                 = 0x3fff
     # Table 7.6: Attribute form encodings
+    # Form name | Value | Classes
     DW_FORM_addr           = 0x01 # address
-    # Reserved             = 0x02 #  
+    # Reserved             = 0x02
     DW_FORM_block2         = 0x03 # block
     DW_FORM_block4         = 0x04 # block
     DW_FORM_data2          = 0x05 # constant
