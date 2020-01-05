@@ -503,5 +503,10 @@ module DWARF
     DW_END_little  = 0x02
     DW_END_lo_user = 0x40
     DW_END_hi_user = 0xff
+    # Table 7.14: Accessibility encodings
+    # Accessibility code name | Value
+    DW_ACCESS_public    = 0x01
+    DW_ACCESS_protected = 0x02
+    DW_ACCESS_private   = 0x03
   end
 end

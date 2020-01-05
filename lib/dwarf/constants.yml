@@ -542,4 +542,13 @@
       ["DW_END_hi_user", 0xff],
     ]
   },
+  {
+    "name": "Table 7.14: Accessibility encodings",
+    "header": ["Accessibility code name", "Value"],
+    "body": [
+      ["DW_ACCESS_public", 0x01],
+      ["DW_ACCESS_protected", 0x02],
+      ["DW_ACCESS_private", 0x03],
+    ]
+  },
 ]
