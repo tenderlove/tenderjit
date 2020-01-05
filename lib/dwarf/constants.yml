@@ -676,5 +676,13 @@
       ["DW_IDX_hi_user", 0x3fff],
     ]
   },
+  {
+    "name": "Table 7.24: Defaulted attribute encodings",
+    "header": ["Defaulted name", "Value"],
+    "body": [
+      ["DW_DEFAULTED_no", 0x00],
+      ["DW_DEFAULTED_in_class", 0x01],
+      ["DW_DEFAULTED_out_of_class", 0x02],
+    ]
+  },
 ]
-

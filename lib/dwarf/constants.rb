@@ -597,5 +597,10 @@ module DWARF
     DW_IDX_type_hash    = 0x05 # DW_FORM_data8
     DW_IDX_lo_user      = 0x2000
     DW_IDX_hi_user      = 0x3fff
+    # Table 7.24: Defaulted attribute encodings
+    # Defaulted name | Value
+    DW_DEFAULTED_no           = 0x00
+    DW_DEFAULTED_in_class     = 0x01
+    DW_DEFAULTED_out_of_class = 0x02
   end
 end
