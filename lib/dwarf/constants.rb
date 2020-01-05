@@ -456,5 +456,16 @@ module DWARF
     DW_OP_reinterpret         = 0xa9 # 1 | ULEB128 type entry offset
     DW_OP_lo_user             = 0xe0
     DW_OP_hi_user             = 0xff
+    # Table 7.10: Location list entry encoding values
+    # Location list entry encoding name | Value
+    DW_LLE_end_of_list      = 0x00
+    DW_LLE_base_addressx    = 0x01
+    DW_LLE_startx_endx      = 0x02
+    DW_LLE_startx_length    = 0x03
+    DW_LLE_offset_pair      = 0x04
+    DW_LLE_default_location = 0x05
+    DW_LLE_base_address     = 0x06
+    DW_LLE_start_end        = 0x07
+    DW_LLE_start_length     = 0x08
   end
 end
