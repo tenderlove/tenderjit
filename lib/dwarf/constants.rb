@@ -616,5 +616,13 @@ module DWARF
     DW_LNS_set_prologue_end   = 0x0a
     DW_LNS_set_epilogue_begin = 0x0b
     DW_LNS_set_isa            = 0x0c
+    # Table 7.26: Line number extended opcode encodings
+    # Opcode name | Value
+    DW_LNE_end_sequence      = 0x01
+    DW_LNE_set_address       = 0x02
+    # Reserved               = 0x34
+    DW_LNE_set_discriminator = 0x04
+    DW_LNE_lo_user           = 0x80
+    DW_LNE_hi_user           = 0xff
   end
 end
