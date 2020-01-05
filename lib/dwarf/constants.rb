@@ -518,5 +518,46 @@ module DWARF
     DW_VIRTUALITY_none         = 0x00
     DW_VIRTUALITY_virtual      = 0x01
     DW_VIRTUALITY_pure_virtual = 0x02
+    # Table 7.17: Language encodings
+    # Language name | Value | Default Lower Bound
+    DW_LANG_C89            = 0x01 # 0
+    DW_LANG_C              = 0x02 # 0
+    DW_LANG_Ada83          = 0x03 # 1
+    DW_LANG_C_plus_plus    = 0x04 # 0
+    DW_LANG_Cobol74        = 0x05 # 1
+    DW_LANG_Cobol85        = 0x06 # 1
+    DW_LANG_Fortran77      = 0x07 # 1
+    DW_LANG_Fortran90      = 0x08 # 1
+    DW_LANG_Pascal83       = 0x09 # 1
+    DW_LANG_Modula2        = 0x0a # 1
+    DW_LANG_Java           = 0x0b # 0
+    DW_LANG_C99            = 0x0c # 0
+    DW_LANG_Ada95          = 0x0d # 1
+    DW_LANG_Fortran95      = 0x0e # 1
+    DW_LANG_PLI            = 0x0f # 1
+    DW_LANG_ObjC           = 0x10 # 0
+    DW_LANG_ObjC_plus_plus = 0x11 # 0
+    DW_LANG_UPC            = 0x12 # 0
+    DW_LANG_D              = 0x13 # 0
+    DW_LANG_Python         = 0x14 # 0
+    DW_LANG_OpenCL         = 0x15 # 0
+    DW_LANG_Go             = 0x16 # 0
+    DW_LANG_Modula3        = 0x17 # 1
+    DW_LANG_Haskell        = 0x18 # 0
+    DW_LANG_C_plus_plus_03 = 0x19 # 0
+    DW_LANG_C_plus_plus_11 = 0x1a # 0
+    DW_LANG_OCaml          = 0x1b # 0
+    DW_LANG_Rust           = 0x1c # 0
+    DW_LANG_C11            = 0x1d # 0
+    DW_LANG_Swift          = 0x1e # 0
+    DW_LANG_Julia          = 0x1f # 1
+    DW_LANG_Dylan          = 0x20 # 0
+    DW_LANG_C_plus_plus_14 = 0x21 # 0
+    DW_LANG_Fortran03      = 0x22 # 1
+    DW_LANG_Fortran08      = 0x23 # 1
+    DW_LANG_RenderScript   = 0x24 # 0
+    DW_LANG_BLISS          = 0x25 # 0
+    DW_LANG_lo_user        = 0x8000
+    DW_LANG_hi_user        = 0xffff
   end
 end
