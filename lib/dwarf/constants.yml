@@ -748,6 +748,38 @@
       ["DW_MACRO_hi_user", 0xff],
     ]
   },
+  {
+    "name": "Table 7.29: Call frame instruction encodings",
+    "header": ["Instruction", "High 2 Bits", "Low 6 Bits", "Operand 1", "Operand 2"],
+    "body": [
+      ["DW_CFA_advance_loc", 0x1, "delta", null, null],
+      ["DW_CFA_offset", 0x2, "register", "ULEB128 offset"],
+      ["DW_CFA_restore", 0x3, "register", null, null],
+      ["DW_CFA_nop", 0, 0, null, null],
+      ["DW_CFA_set_loc", 0, 0x01, "address"],
+      ["DW_CFA_advance_loc1", 0, 0x02, "1-byte delta"],
+      ["DW_CFA_advance_loc2", 0, 0x03, "2-byte delta"],
+      ["DW_CFA_advance_loc4", 0, 0x04, "4-byte delta"],
+      ["DW_CFA_offset_extended", 0, 0x05, "ULEB128 register", "ULEB128 offset"],
+      ["DW_CFA_restore_extended", 0, 0x06, "ULEB128 register"],
+      ["DW_CFA_undefined", 0, 0x07, "ULEB128 register"],
+      ["DW_CFA_same_value", 0, 0x08, "ULEB128 register"],
+      ["DW_CFA_register", 0, 0x09, "ULEB128 register", "ULEB128 offset"],
+      ["DW_CFA_remember_state", 0, 0x0a, null, null],
+      ["DW_CFA_restore_state", 0, 0x0b, null, null],
+      ["DW_CFA_def_cfa", 0, 0x0c, "ULEB128 register", "ULEB128 offset"],
+      ["DW_CFA_def_cfa_register", 0, 0x0d, "ULEB128 register"],
+      ["DW_CFA_def_cfa_offset", 0, 0x0e, "ULEB128 offset"],
+      ["DW_CFA_def_cfa_expression", 0, 0x0f, "BLOCK"],
+      ["DW_CFA_expression", 0, 0x10, "ULEB128 register", "BLOCK"],
+      ["DW_CFA_offset_extended_sf", 0, 0x11, "ULEB128 register", "SLEB128 offset"],
+      ["DW_CFA_def_cfa_sf", 0, 0x12, "ULEB128 register", "SLEB128 offset"],
+      ["DW_CFA_def_cfa_offset_sf", 0, 0x13, "SLEB128 offset"],
+      ["DW_CFA_val_offset", 0, 0x14, "ULEB128", "ULEB128"],
+      ["DW_CFA_val_offset_sf", 0, 0x15, "ULEB128", "SLEB128"],
+      ["DW_CFA_val_expression", 0, 0x16, "ULEB128", "BLOCK"],
+      ["DW_CFA_lo_user", 0, 0x1c, null, null],
+      ["DW_CFA_hi_user", 0, 0x3f, null, null],
+    ]
+  },
 ]
-
-

@@ -649,5 +649,35 @@ module DWARF
     DW_MACRO_undef_strx  = 0x0c
     DW_MACRO_lo_user     = 0xe0
     DW_MACRO_hi_user     = 0xff
+    # Table 7.29: Call frame instruction encodings
+    # Instruction | High 2 Bits | Low 6 Bits | Operand 1 | Operand 2
+    DW_CFA_advance_loc        = 0x01 # delta |  | 
+    DW_CFA_offset             = 0x02 # register | ULEB128 offset
+    DW_CFA_restore            = 0x03 # register |  | 
+    DW_CFA_nop                = 0x00 # 0 |  | 
+    DW_CFA_set_loc            = 0x00 # 1 | address
+    DW_CFA_advance_loc1       = 0x00 # 2 | 1-byte delta
+    DW_CFA_advance_loc2       = 0x00 # 3 | 2-byte delta
+    DW_CFA_advance_loc4       = 0x00 # 4 | 4-byte delta
+    DW_CFA_offset_extended    = 0x00 # 5 | ULEB128 register | ULEB128 offset
+    DW_CFA_restore_extended   = 0x00 # 6 | ULEB128 register
+    DW_CFA_undefined          = 0x00 # 7 | ULEB128 register
+    DW_CFA_same_value         = 0x00 # 8 | ULEB128 register
+    DW_CFA_register           = 0x00 # 9 | ULEB128 register | ULEB128 offset
+    DW_CFA_remember_state     = 0x00 # 10 |  | 
+    DW_CFA_restore_state      = 0x00 # 11 |  | 
+    DW_CFA_def_cfa            = 0x00 # 12 | ULEB128 register | ULEB128 offset
+    DW_CFA_def_cfa_register   = 0x00 # 13 | ULEB128 register
+    DW_CFA_def_cfa_offset     = 0x00 # 14 | ULEB128 offset
+    DW_CFA_def_cfa_expression = 0x00 # 15 | BLOCK
+    DW_CFA_expression         = 0x00 # 16 | ULEB128 register | BLOCK
+    DW_CFA_offset_extended_sf = 0x00 # 17 | ULEB128 register | SLEB128 offset
+    DW_CFA_def_cfa_sf         = 0x00 # 18 | ULEB128 register | SLEB128 offset
+    DW_CFA_def_cfa_offset_sf  = 0x00 # 19 | SLEB128 offset
+    DW_CFA_val_offset         = 0x00 # 20 | ULEB128 | ULEB128
+    DW_CFA_val_offset_sf      = 0x00 # 21 | ULEB128 | SLEB128
+    DW_CFA_val_expression     = 0x00 # 22 | ULEB128 | BLOCK
+    DW_CFA_lo_user            = 0x00 # 28 |  | 
+    DW_CFA_hi_user            = 0x00 # 63 |  | 
   end
 end
