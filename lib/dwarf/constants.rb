@@ -559,5 +559,11 @@ module DWARF
     DW_LANG_BLISS          = 0x25 # 0
     DW_LANG_lo_user        = 0x8000
     DW_LANG_hi_user        = 0xffff
+    # Table 7.18: Identifier case encodings
+    # Identifier case name | Value
+    DW_ID_case_sensitive   = 0x00
+    DW_ID_up_case          = 0x01
+    DW_ID_down_case        = 0x02
+    DW_ID_case_insensitive = 0x03
   end
 end

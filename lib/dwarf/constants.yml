@@ -614,4 +614,14 @@
       ["DW_LANG_hi_user", 0xffff, null],
     ]
   },
+  {
+    "name": "Table 7.18: Identifier case encodings",
+    "header": ["Identifier case name", "Value"],
+    "body": [
+      ["DW_ID_case_sensitive", 0x00],
+      ["DW_ID_up_case", 0x01],
+      ["DW_ID_down_case", 0x02],
+      ["DW_ID_case_insensitive", 0x03],
+    ]
+  },
 ]
