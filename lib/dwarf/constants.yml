@@ -663,4 +663,18 @@
       ["DW_DSC_range", 0x01],
     ]
   },
+  {
+    "name": "Table 7.23: Name index attribute encodings",
+    "header": ["Attribute name", "Value", "Form/Class"],
+    "body": [
+      ["DW_IDX_compile_unit", 1, "constant"],
+      ["DW_IDX_type_unit", 2, "constant"],
+      ["DW_IDX_die_offset", 3, "reference"],
+      ["DW_IDX_parent", 4, "constant"],
+      ["DW_IDX_type_hash", 5, "DW_FORM_data8"],
+      ["DW_IDX_lo_user", 0x2000],
+      ["DW_IDX_hi_user", 0x3fff],
+    ]
+  },
 ]
+

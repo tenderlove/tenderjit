@@ -588,5 +588,14 @@ module DWARF
     # Descriptor name | Value
     DW_DSC_label = 0x00
     DW_DSC_range = 0x01
+    # Table 7.23: Name index attribute encodings
+    # Attribute name | Value | Form/Class
+    DW_IDX_compile_unit = 0x01 # constant
+    DW_IDX_type_unit    = 0x02 # constant
+    DW_IDX_die_offset   = 0x03 # reference
+    DW_IDX_parent       = 0x04 # constant
+    DW_IDX_type_hash    = 0x05 # DW_FORM_data8
+    DW_IDX_lo_user      = 0x2000
+    DW_IDX_hi_user      = 0x3fff
   end
 end
