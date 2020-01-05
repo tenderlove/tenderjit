@@ -489,5 +489,12 @@ module DWARF
     DW_ATE_ASCII           = 0x12
     DW_ATE_lo_user         = 0x80
     DW_ATE_hi_user         = 0xff
+    # Table 7.12: Decimal sign encodings
+    # Decimal sign code name | Value
+    DW_DS_unsigned           = 0x01
+    DW_DS_leading_overpunch  = 0x02
+    DW_DS_trailing_overpunch = 0x03
+    DW_DS_leading_separate   = 0x04
+    DW_DS_trailing_separate  = 0x05
   end
 end
