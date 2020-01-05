@@ -574,5 +574,11 @@ module DWARF
     DW_CC_pass_by_value     = 0x05
     DW_CC_lo_user           = 0x40
     DW_CC_hi_user           = 0xff
+    # Table 7.20: Inline encodings
+    # Inline code name | Value
+    DW_INL_not_inlined          = 0x00
+    DW_INL_inlined              = 0x01
+    DW_INL_declared_not_inlined = 0x02
+    DW_INL_declared_inlined     = 0x03
   end
 end

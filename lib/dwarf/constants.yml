@@ -637,4 +637,14 @@
       ["DW_CC_hi_user", 0xff],
     ]
   },
+  {
+    "name": "Table 7.20: Inline encodings",
+    "header": ["Inline code name", "Value"],
+    "body": [
+      ["DW_INL_not_inlined", 0x00],
+      ["DW_INL_inlined", 0x01],
+      ["DW_INL_declared_not_inlined", 0x02],
+      ["DW_INL_declared_inlined", 0x03],
+    ]
+  },
 ]
