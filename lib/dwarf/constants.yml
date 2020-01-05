@@ -655,4 +655,12 @@
       ["DW_ORD_col_major", 0x01],
     ]
   },
+  {
+    "name": "Table 7.22: Discriminant descriptor encodings",
+    "header": ["Descriptor name", "Value"],
+    "body": [
+      ["DW_DSC_label", 0x00],
+      ["DW_DSC_range", 0x01],
+    ]
+  },
 ]

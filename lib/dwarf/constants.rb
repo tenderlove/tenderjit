@@ -584,5 +584,9 @@ module DWARF
     # Ordering name | Value
     DW_ORD_row_major = 0x00
     DW_ORD_col_major = 0x01
+    # Table 7.22: Discriminant descriptor encodings
+    # Descriptor name | Value
+    DW_DSC_label = 0x00
+    DW_DSC_range = 0x01
   end
 end
