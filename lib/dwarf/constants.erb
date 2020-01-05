@@ -5,10 +5,11 @@ module DWARF
     # <%= table["header"].join(' | ') %>
     <%- maxwidth = table["body"].map(&:first).sort_by(&:length).last.length -%>
     <%- for row in table["body"] -%>
+      <%- comment = row.compact.length > 2 ? " # #{row.drop(2).join(' | ')}" : '' -%>
       <%- if row.first == "Reserved" -%>
-    # <%= row.first.ljust(maxwidth - 2) %> = <%= sprintf("0x%02x", row[1]) %><%= row[2] ? " # #{row[2]}" : '' %>
+    # <%= row.first.ljust(maxwidth - 2) %> = <%= sprintf("0x%02x", row[1]) %><%= comment %>
       <%- else -%>
-    <%= row.first.ljust(maxwidth) %> = <%= sprintf("0x%02x", row[1]) %><%= row[2] ? " # #{row[2]}" : '' %>
+    <%= row.first.ljust(maxwidth) %> = <%= sprintf("0x%02x", row[1]) %><%= comment %>
       <%- end -%>
     <%- end -%>
   <%- end -%>
