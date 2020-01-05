@@ -580,5 +580,9 @@ module DWARF
     DW_INL_inlined              = 0x01
     DW_INL_declared_not_inlined = 0x02
     DW_INL_declared_inlined     = 0x03
+    # Table 7.21: Ordering encodings
+    # Ordering name | Value
+    DW_ORD_row_major = 0x00
+    DW_ORD_col_major = 0x01
   end
 end

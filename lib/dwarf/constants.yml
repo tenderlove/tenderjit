@@ -647,4 +647,12 @@
       ["DW_INL_declared_inlined", 0x03],
     ]
   },
+  {
+    "name": "Table 7.21: Ordering encodings",
+    "header": ["Ordering name", "Value"],
+    "body": [
+      ["DW_ORD_row_major", 0x00],
+      ["DW_ORD_col_major", 0x01],
+    ]
+  },
 ]
