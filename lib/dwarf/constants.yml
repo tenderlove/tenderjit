@@ -560,4 +560,13 @@
       ["DW_VIS_qualified", 0x03],
     ]
   },
+  {
+    "name": "Table 7.16: Virtuality encodings",
+    "header": ["Virtuality code name", "Value"],
+    "body": [
+      ["DW_VIRTUALITY_none", 0x00],
+      ["DW_VIRTUALITY_virtual", 0x01],
+      ["DW_VIRTUALITY_pure_virtual", 0x02],
+    ]
+  },
 ]

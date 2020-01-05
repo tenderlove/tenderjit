@@ -513,5 +513,10 @@ module DWARF
     DW_VIS_local     = 0x01
     DW_VIS_exported  = 0x02
     DW_VIS_qualified = 0x03
+    # Table 7.16: Virtuality encodings
+    # Virtuality code name | Value
+    DW_VIRTUALITY_none         = 0x00
+    DW_VIRTUALITY_virtual      = 0x01
+    DW_VIRTUALITY_pure_virtual = 0x02
   end
 end
