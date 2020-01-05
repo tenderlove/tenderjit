@@ -551,4 +551,13 @@
       ["DW_ACCESS_private", 0x03],
     ]
   },
+  {
+    "name": "Table 7.15: Visibility encodings",
+    "header": ["Visibility code name", "Value"],
+    "body": [
+      ["DW_VIS_local", 0x01],
+      ["DW_VIS_exported", 0x02],
+      ["DW_VIS_qualified", 0x03],
+    ]
+  },
 ]

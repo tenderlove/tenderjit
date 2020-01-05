@@ -508,5 +508,10 @@ module DWARF
     DW_ACCESS_public    = 0x01
     DW_ACCESS_protected = 0x02
     DW_ACCESS_private   = 0x03
+    # Table 7.15: Visibility encodings
+    # Visibility code name | Value
+    DW_VIS_local     = 0x01
+    DW_VIS_exported  = 0x02
+    DW_VIS_qualified = 0x03
   end
 end
