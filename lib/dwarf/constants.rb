@@ -565,5 +565,14 @@ module DWARF
     DW_ID_up_case          = 0x01
     DW_ID_down_case        = 0x02
     DW_ID_case_insensitive = 0x03
+    # Table 7.19: Calling convention encodings
+    # Calling convention name | Value
+    DW_CC_normal            = 0x01
+    DW_CC_program           = 0x02
+    DW_CC_nocall            = 0x03
+    DW_CC_pass_by_reference = 0x04
+    DW_CC_pass_by_value     = 0x05
+    DW_CC_lo_user           = 0x40
+    DW_CC_hi_user           = 0xff
   end
 end
