@@ -715,4 +715,17 @@
       ["DW_LNE_hi_user", 0xff],
     ]
   },
+  {
+    "name": "Table 7.27: Line number header entry format encodings",
+    "header": ["Line number header entry format name", "Value"],
+    "body": [
+      ["DW_LNCT_path", 0x1],
+      ["DW_LNCT_directory_index", 0x2],
+      ["DW_LNCT_timestamp", 0x3],
+      ["DW_LNCT_size", 0x4],
+      ["DW_LNCT_MD5", 0x5],
+      ["DW_LNCT_lo_user", 0x2000],
+      ["DW_LNCT_hi_user", 0x3fff],
+    ]
+  },
 ]
