@@ -1,6 +1,7 @@
 class MachO
   def initialize fd
-    @fd = fd
+    @fd        = fd
+    @start_pos = @fd.pos
   end
 
   class Header < Struct.new :magic,
@@ -12,14 +13,8 @@ class MachO
                       :flags,
                       :reserved
     SIZEOF = 8 * 4 # 8 * (32 bit int)
-  end
 
-  def header
-    @fd.seek 0, IO::SEEK_SET
-    header = Header.new(*@fd.read(Header::SIZEOF).unpack('L8'))
-    # I don't want to deal with endianness
-    raise 'not supported' unless header.magic == 0xfeedfacf
-    header
+    def section?; false; end
   end
 
   class Command
@@ -27,6 +22,24 @@ class MachO
     def initialize cmd, size
       @cmd = cmd
       @size = size
+    end
+
+    def section?; false; end
+  end
+
+  class LC_UUID < Command
+    VALUE = 0x1b
+    SIZE  = 16 # uuid
+
+    def self.from_io cmd, size, io
+      new(cmd, size, io.read(SIZE))
+    end
+
+    attr_reader :uuid
+
+    def initialize cmd, size, uuid
+      super(cmd, size)
+      @uuid = uuid
     end
   end
 
@@ -176,10 +189,16 @@ class MachO
     end
   end
 
-  Section = Struct.new :sectname, :segname, :addr, :size, :offset, :align, :reloff, :nreloc, :flags, :reserved1, :reserved2, :reserved3
+  class Section < Struct.new :sectname, :segname, :addr, :size, :offset, :align, :reloff, :nreloc, :flags, :reserved1, :reserved2, :reserved3
 
-  def load_commands
-    h = self.header
+    def section?; true; end
+  end
+
+  include Enumerable
+
+  def each
+    h = header
+    yield h
 
     @fd.seek Header::SIZEOF, IO::SEEK_SET
     h.ncmds.times do
@@ -189,7 +208,10 @@ class MachO
         lc = LC_SEGMENT_64.from_io(cmd, size, @fd)
         yield lc
         lc.nsects.times do
-          yield Section.new(*@fd.read(32 + (2 * 8) + (8 * 4)).unpack('A16A16QQL8'))
+          args = @fd.read(32 + (2 * 8) + (8 * 4)).unpack('A16A16QQL8')
+          save_pos do
+            yield Section.new(*args)
+          end
         end
       when LC_BUILD_VERSION::VALUE
         yield LC_BUILD_VERSION.from_io(cmd, size, @fd)
@@ -197,16 +219,40 @@ class MachO
         yield LC_SYMTAB.from_io(cmd, size, @fd)
       when LC_DYSYMTAB::VALUE
         yield LC_DYSYMTAB.from_io(cmd, size, @fd)
+      when LC_UUID::VALUE
+        yield LC_UUID.from_io(cmd, size, @fd)
       else
-        p [cmd, size]
+        p [sprintf("0x%02x", cmd), size]
         raise
       end
     end
-      p @fd.pos
-      p header
   end
-end
 
-MachO.new(File.open(ARGV[0])).load_commands do |thing|
-  p thing
+  def read section
+    pos = @fd.pos
+    @fd.seek section.offset, IO::SEEK_SET
+    data = @fd.read(section.size)
+    data.bytes.each_slice(16) do |list|
+      p list.map { |x| sprintf("%02x", x) }.join ' '
+    end
+  ensure
+    @fd.seek pos, IO::SEEK_SET
+  end
+
+  private
+
+  def save_pos
+    pos = @fd.pos
+    yield
+  ensure
+    @fd.seek pos, IO::SEEK_SET
+  end
+
+  def header
+    @fd.seek @start_pos, IO::SEEK_SET
+    header = Header.new(*@fd.read(Header::SIZEOF).unpack('L8'))
+    # I don't want to deal with endianness
+    raise 'not supported' unless header.magic == 0xfeedfacf
+    header
+  end
 end
