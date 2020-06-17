@@ -19,6 +19,13 @@ class MachO
 
   class Command
     attr_reader :cmd, :size
+
+    def self.from_offset offset, io
+      io.seek offset, IO::SEEK_SET
+      cmd, size = io.read(2 * 4).unpack('LL')
+      from_io cmd, size, offset, io
+    end
+
     def initialize cmd, size
       @cmd = cmd
       @size = size
@@ -27,11 +34,11 @@ class MachO
     def section?; false; end
   end
 
-  class LC_UUID < Command
-    VALUE = 0x1b
+  class LC_UNIXTHREAD < Command
+    VALUE = 0x04
     SIZE  = 16 # uuid
 
-    def self.from_io cmd, size, io
+    def self.from_io cmd, size, offset, io
       new(cmd, size, io.read(SIZE))
     end
 
@@ -43,6 +50,114 @@ class MachO
     end
   end
 
+  class LC_FUNCTION_STARTS < Command
+    VALUE = 0x26
+    SIZE  = 4 + # dataoff
+            4   # datasize
+
+    def self.from_io cmd, size, offset, io
+      new(cmd, size, *io.read(SIZE).unpack("LL"))
+    end
+
+    attr_reader :dataoff, :datasize
+
+    def initialize cmd, size, dataoff, datasize
+      super(cmd, size)
+      @dataoff  = dataoff
+      @datasize = datasize
+    end
+  end
+
+  class LC_DATA_IN_CODE < LC_FUNCTION_STARTS
+    VALUE = 0x29
+  end
+
+  class LC_LOAD_DYLIB < Command
+    VALUE = 0xc
+
+    def self.from_io cmd, size, offset, io
+      # `size` is the total segment size including command and length bytes
+      # so we need to remove them from the size.
+      args = io.read(4 * 4).unpack('LLLL')
+      io.seek offset + args.first, IO::SEEK_SET
+      name = io.read(size - 8 - (4 * 4)).unpack1('A*')
+      new(cmd, size, name, *args)
+    end
+
+    def initialize cmd, size, name, str_offset, timestamp, current_version, compat_version
+      super(cmd, size)
+      @name            = name
+      @str_offset      = str_offset
+      @timestamp       = timestamp
+      @current_version = current_version
+      @compat_version  = compat_version
+    end
+  end
+
+  class LC_LOAD_DYLINKER < Command
+    VALUE = 0xe
+
+    def self.from_io cmd, size, offset, io
+      # `size` is the total segment size including command and length bytes
+      # so we need to remove them from the size.
+      new(cmd, size, *io.read(size - 8).unpack('LA*'))
+    end
+
+    attr_reader :name
+
+    def initialize cmd, size, offset, name
+      super(cmd, size)
+      @offset = offset
+      @name = name
+    end
+  end
+
+  class LC_VERSION_MIN_MACOSX < Command
+    VALUE = 0x24
+    SIZE  = 16 # uuid
+
+    def self.from_io cmd, size, offset, io
+      new(cmd, size, *io.read(SIZE))
+    end
+
+    attr_reader :uuid
+
+    def initialize cmd, size, uuid
+      super(cmd, size)
+      @uuid = uuid
+    end
+  end
+
+  class LC_UUID < Command
+    VALUE = 0x1b
+    SIZE  = 16 # uuid
+
+    def self.from_io cmd, size, offset, io
+      new(cmd, size, *io.read(SIZE))
+    end
+
+    attr_reader :uuid
+
+    def initialize cmd, size, uuid
+      super(cmd, size)
+      @uuid = uuid
+    end
+  end
+
+  class LC_SOURCE_VERSION < Command
+    VALUE = 0x2A
+    SIZE  = 8 # version
+
+    def self.from_io cmd, size, offset, io
+      new(cmd, size, *io.read(SIZE).unpack('Q'))
+    end
+
+    def initialize cmd, size, version
+      super(cmd, size)
+      @version = version
+    end
+  end
+
   class LC_BUILD_VERSION < Command
     VALUE = 0x32
     SIZE = 4 + # platform
@@ -50,7 +165,7 @@ class MachO
            4 + # sdk
            4   # ntools
 
-    def self.from_io cmd, size, io
+    def self.from_io cmd, size, offset, io
       new(cmd, size, *io.read(SIZE).unpack('L4'))
     end
 
@@ -72,7 +187,7 @@ class MachO
            4 + # stroff
            4   # strsize
 
-    def self.from_io cmd, size, io
+    def self.from_io cmd, size, offset, io
       new(cmd, size, *io.read(SIZE).unpack('L4'))
     end
 
@@ -91,7 +206,7 @@ class MachO
     VALUE = 0xb
     SIZE = 18 * 4
 
-    def self.from_io cmd, size, io
+    def self.from_io cmd, size, offset, io
       new(cmd, size, *io.read(SIZE).unpack('L18'))
     end
 
@@ -169,7 +284,7 @@ class MachO
             4 + # nsects
             4   # flags
 
-    def self.from_io cmd, size, io
+    def self.from_io cmd, size, offset, io
       new(cmd, size, *io.read(SIZE).unpack('A16Q4L4'))
     end
 
@@ -200,43 +315,63 @@ class MachO
     h = header
     yield h
 
-    @fd.seek Header::SIZEOF, IO::SEEK_SET
-    h.ncmds.times do
+
+    @fd.seek @start_pos + Header::SIZEOF, IO::SEEK_SET
+
+    next_pos = @fd.pos
+
+    h.ncmds.times do |i|
+      @fd.seek next_pos, IO::SEEK_SET
+
       cmd, size = @fd.read(2 * 4).unpack('LL')
+
       case cmd
       when LC_SEGMENT_64::VALUE
-        lc = LC_SEGMENT_64.from_io(cmd, size, @fd)
+        lc = LC_SEGMENT_64.from_offset(next_pos, @fd)
         yield lc
         lc.nsects.times do
           args = @fd.read(32 + (2 * 8) + (8 * 4)).unpack('A16A16QQL8')
-          save_pos do
-            yield Section.new(*args)
-          end
+          yield Section.new(*args)
         end
+      when LC_FUNCTION_STARTS::VALUE
+        yield LC_FUNCTION_STARTS.from_offset(next_pos, @fd)
+      when LC_DATA_IN_CODE::VALUE
+        yield LC_DATA_IN_CODE.from_offset(next_pos, @fd)
       when LC_BUILD_VERSION::VALUE
-        yield LC_BUILD_VERSION.from_io(cmd, size, @fd)
+        yield LC_BUILD_VERSION.from_offset(next_pos, @fd)
+      when LC_LOAD_DYLIB::VALUE
+        yield LC_LOAD_DYLIB.from_offset(next_pos, @fd)
+      when LC_LOAD_DYLINKER::VALUE
+        yield LC_LOAD_DYLINKER.from_offset(next_pos, @fd)
+      when LC_SOURCE_VERSION::VALUE
+        yield LC_SOURCE_VERSION.from_offset(next_pos, @fd)
       when LC_SYMTAB::VALUE
-        yield LC_SYMTAB.from_io(cmd, size, @fd)
+        yield LC_SYMTAB.from_offset(next_pos, @fd)
       when LC_DYSYMTAB::VALUE
-        yield LC_DYSYMTAB.from_io(cmd, size, @fd)
+        yield LC_DYSYMTAB.from_offset(next_pos, @fd)
       when LC_UUID::VALUE
-        yield LC_UUID.from_io(cmd, size, @fd)
+        yield LC_UUID.from_offset(next_pos, @fd)
       else
-        p [sprintf("0x%02x", cmd), size]
-        raise
+        # Just skip stuff we don't know about
+        puts "Unknown command #{cmd}"
       end
+
+      next_pos += size
     end
   end
 
+  def find_section name
+    find { |thing| thing.section? && thing.sectname == name }
+  end
+
   def read section
-    pos = @fd.pos
-    @fd.seek section.offset, IO::SEEK_SET
-    data = @fd.read(section.size)
-    data.bytes.each_slice(16) do |list|
-      p list.map { |x| sprintf("%02x", x) }.join ' '
+    save_pos do
+      @fd.seek @start_pos + section.offset, IO::SEEK_SET
+      data = @fd.read(section.size)
+      data.bytes.each_slice(16) do |list|
+        p list.map { |x| sprintf("%02x", x) }.join ' '
+      end
     end
-  ensure
-    @fd.seek pos, IO::SEEK_SET
   end
 
   private
