@@ -39,7 +39,3 @@ class RBAR
     end
   end
 end
-
-RBAR.new(File.open(ARGV[0])).each_file do |info, fd|
-  p info
-end
