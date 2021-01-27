@@ -1,8 +1,4 @@
 class RBAR
-  def initialize fd
-    @fd = fd
-  end
-
   HEADER_LENGTH = 16 + # File Identifier
                   12 + # File modification timestamp
                   6  + # Owner ID
@@ -12,6 +8,18 @@ class RBAR
                   2    # Ending characters
 
   AR_HEADER = "!<arch>\n"
+
+  def self.is_ar? io
+    pos = io.pos
+    header = io.read(AR_HEADER.length)
+    header == AR_HEADER
+  ensure
+    io.seek pos, IO::SEEK_SET
+  end
+
+  def initialize fd
+    @fd = fd
+  end
 
   Info = Struct.new :identifier, :timestamp, :owner, :group, :mode, :size
 
