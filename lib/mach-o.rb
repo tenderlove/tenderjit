@@ -1,4 +1,14 @@
 class MachO
+  HEADER_MAGIC = 0xfeedfacf
+
+  def self.is_macho? io
+    pos = io.pos
+    header = io.read(8).unpack1 'L'
+    header == HEADER_MAGIC
+  ensure
+    io.seek pos, IO::SEEK_SET
+  end
+
   def initialize fd
     @fd        = fd
     @start_pos = @fd.pos
@@ -15,10 +25,13 @@ class MachO
     SIZEOF = 8 * 4 # 8 * (32 bit int)
 
     def section?; false; end
+    def symtab?; false; end
   end
 
   class Command
     attr_reader :cmd, :size
+
+    def symtab?; false; end
 
     def self.from_offset offset, io
       io.seek offset, IO::SEEK_SET
@@ -187,19 +200,39 @@ class MachO
            4 + # stroff
            4   # strsize
 
+    NList = Struct.new :name, :index, :type, :sect, :desc, :value
+
     def self.from_io cmd, size, offset, io
-      new(cmd, size, *io.read(SIZE).unpack('L4'))
+      current = io.pos
+      symoff, nsyms, stroff, strsize = *io.read(SIZE).unpack('L4')
+
+      io.seek stroff, IO::SEEK_SET
+      stable = io.read(strsize)
+
+      io.seek symoff, IO::SEEK_SET
+
+      nlist = nsyms.times.map do |i|
+        index = io.read(4).unpack1 'L'
+        name = stable.byteslice(index, stable.bytesize).unpack1 "Z*"
+        NList.new(name, index, *io.read(1 + 1 + 2 + 8).unpack('CCsQ'))
+      end
+      new(cmd, size, symoff, nsyms, stroff, strsize, nlist)
+    ensure
+      io.seek current, IO::SEEK_SET
     end
 
-    attr_reader :symoff, :nsyms, :stroff, :strsize
+    attr_reader :symoff, :nsyms, :stroff, :strsize, :nlist
 
-    def initialize cmd, size, symoff, nsyms, stroff, strsize
+    def initialize cmd, size, symoff, nsyms, stroff, strsize, nlist
       super(cmd, size)
       @symoff  = symoff
       @nsyms   = nsyms
       @stroff  = stroff
       @strsize = strsize
+      @nlist   = nlist
     end
+
+    def symtab?; true; end
   end
 
   class LC_DYSYMTAB < Command
@@ -307,6 +340,7 @@ class MachO
   class Section < Struct.new :sectname, :segname, :addr, :size, :offset, :align, :reloff, :nreloc, :flags, :reserved1, :reserved2, :reserved3
 
     def section?; true; end
+    def symtab?; false; end
   end
 
   include Enumerable
@@ -387,7 +421,7 @@ class MachO
     @fd.seek @start_pos, IO::SEEK_SET
     header = Header.new(*@fd.read(Header::SIZEOF).unpack('L8'))
     # I don't want to deal with endianness
-    raise 'not supported' unless header.magic == 0xfeedfacf
+    raise 'not supported' unless header.magic == HEADER_MAGIC
     header
   end
 end
