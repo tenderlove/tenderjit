@@ -9,6 +9,8 @@ class MachO
     io.seek pos, IO::SEEK_SET
   end
 
+  attr_reader :start_pos
+
   def initialize fd
     @fd        = fd
     @start_pos = @fd.pos
@@ -22,10 +24,37 @@ class MachO
                       :sizeofcmds,
                       :flags,
                       :reserved
+
+    MH_OBJECT      = 0x1
+    MH_EXECUTE     = 0x2
+    MH_FVMLIB      = 0x3
+    MH_CORE        = 0x4
+    MH_PRELOAD     = 0x5
+    MH_DYLIB       = 0x6
+    MH_DYLINKER    = 0x7
+    MH_BUNDLE      = 0x8
+    MH_DYLIB_STUB  = 0x9
+    MH_DSYM        = 0xa
+    MH_KEXT_BUNDLE = 0xb
+    MH_FILESET     = 0xc
+
     SIZEOF = 8 * 4 # 8 * (32 bit int)
 
     def section?; false; end
     def symtab?; false; end
+    def segment?; false; end
+
+    def object_file?
+      filetype == MH_OBJECT
+    end
+
+    def executable_file?
+      filetype == MH_EXECUTE
+    end
+
+    def dsym_file?
+      filetype == MH_DSYM
+    end
   end
 
   class Command
@@ -45,6 +74,7 @@ class MachO
     end
 
     def section?; false; end
+    def segment?; false; end
   end
 
   class LC_UNIXTHREAD < Command
@@ -200,7 +230,30 @@ class MachO
            4 + # stroff
            4   # strsize
 
-    NList = Struct.new :name, :index, :type, :sect, :desc, :value
+    class NList < Struct.new(:name, :index, :type, :sect, :desc, :value)
+      N_GSYM  = 0x20
+      N_FNAME = 0x22
+      N_FUN   = 0x24
+      N_STSYM = 0x26
+      N_LCSYM = 0x28
+      N_BNSYM = 0x2e
+      N_AST   = 0x32
+      N_OPT   = 0x3c
+      N_RSYM  = 0x40
+      N_SLINE = 0x44
+      N_ENSYM = 0x4e
+      N_SSYM  = 0x60
+      N_SO    = 0x64
+      N_OSO   = 0x66
+
+      constants.each { |n|
+        define_method(n.to_s.sub(/^N_/, '').downcase + "?") { type == self.class::const_get(n) }
+      }
+
+      def archive?
+        oso? && name =~ /[(][^)]*[)]$/
+      end
+    end
 
     def self.from_io cmd, size, offset, io
       current = io.pos
@@ -335,20 +388,35 @@ class MachO
       @nsects   = nsects
       @flags    = flags
     end
+
+    def segment?; true; end
   end
 
   class Section < Struct.new :sectname, :segname, :addr, :size, :offset, :align, :reloff, :nreloc, :flags, :reserved1, :reserved2, :reserved3
 
     def section?; true; end
     def symtab?; false; end
+    def segment?; false; end
   end
 
   include Enumerable
 
+  def executable?
+    header.executable_file?
+  end
+
+  def object?
+    header.object_file?
+  end
+
+  def dsym?
+    header.dsym_file?
+  end
+
   def each
     h = header
-    yield h
 
+    yield h
 
     @fd.seek @start_pos + Header::SIZEOF, IO::SEEK_SET
 
@@ -408,6 +476,14 @@ class MachO
     end
   end
 
+  def header
+    @fd.seek @start_pos, IO::SEEK_SET
+    header = Header.new(*@fd.read(Header::SIZEOF).unpack('L8'))
+    # I don't want to deal with endianness
+    raise 'not supported' unless header.magic == HEADER_MAGIC
+    header
+  end
+
   private
 
   def save_pos
@@ -415,13 +491,5 @@ class MachO
     yield
   ensure
     @fd.seek pos, IO::SEEK_SET
-  end
-
-  def header
-    @fd.seek @start_pos, IO::SEEK_SET
-    header = Header.new(*@fd.read(Header::SIZEOF).unpack('L8'))
-    # I don't want to deal with endianness
-    raise 'not supported' unless header.magic == HEADER_MAGIC
-    header
   end
 end

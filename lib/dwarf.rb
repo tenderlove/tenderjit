@@ -44,14 +44,15 @@ module DWARF
   end
 
   class DebugStrings
-    def initialize io, section
+    def initialize io, section, head_pos
       @io      = io
       @section = section
+      @head_pos = head_pos
     end
 
     def string_at offset
       pos = @io.pos
-      @io.seek @section.offset + offset, IO::SEEK_SET
+      @io.seek @head_pos + @section.offset + offset, IO::SEEK_SET
       @io.readline("\x00").b.delete("\x00")
     ensure
       @io.seek pos, IO::SEEK_SET
@@ -80,6 +81,10 @@ module DWARF
 
     def type
       at Constants::DW_AT_type
+    end
+
+    def decl_file
+      at Constants::DW_AT_decl_file
     end
 
     def name strings
@@ -111,20 +116,78 @@ module DWARF
     end
   end
 
+  class DebugLine
+    def initialize io, section, debug_abbrev, head_pos
+      @io         = io
+      @section    = section
+      @head_pos   = head_pos
+      @debug_abbrev = debug_abbrev
+    end
+
+    def process
+      @io.seek @head_pos + @section.offset, IO::SEEK_SET
+      while @io.pos < @head_pos + @section.offset + @section.size
+        unit_length, dwarf_version = @io.read(6).unpack("LS")
+        if dwarf_version != 4
+          raise NotImplementedError, "Only DWARF4 rn #{dwarf_version}"
+        end
+        p unit_length.to_s(16)
+        p dwarf_version.to_s(16)
+
+        # we're just not handling 32 bit
+        prologue_length,
+          min_inst_length,
+          max_ops_per_inst,
+          default_is_stmt,
+          line_base,
+          line_range,
+          opcode_base = @io.read(4 + (1 * 6)).unpack("LCCCcCC")
+
+        puts prologue_length.to_s(16)
+        puts min_inst_length
+        puts max_ops_per_inst
+        puts default_is_stmt
+        puts line_base
+        puts line_range
+        puts base: opcode_base
+
+        standard_opcode_lengths = @io.read(opcode_base - 1).bytes
+        include_directories = []
+
+        loop do
+          str = @io.readline("\0").chomp("\0")
+          break if "" == str
+          include_directories << str
+        end
+
+        loop do
+          fname = @io.readline("\0").chomp("\0")
+          break if "" == fname
+          p fname
+          p DWARF.unpackULEB128 @io
+          p DWARF.unpackULEB128 @io
+          p DWARF.unpackULEB128 @io
+        end
+        exit
+      end
+    end
+  end
+
   CompilationUnit = Struct.new(:unit_length, :version, :debug_abbrev_offset, :address_size, :die)
 
   class DebugInfo
-    def initialize io, section, debug_abbrev
+    def initialize io, section, debug_abbrev, head_pos
       @io           = io
       @section      = section
       @debug_abbrev = debug_abbrev
-      @head_pos     = @io.pos
+      @head_pos     = head_pos
     end
 
     def compile_units
       tags = @debug_abbrev.tags
 
       cus = []
+      #@io.seek @head_pos + @section.offset, IO::SEEK_SET
       @io.seek @head_pos + @section.offset, IO::SEEK_SET
       while @io.pos < @head_pos + @section.offset + @section.size
         unit_length, dwarf_version = @io.read(6).unpack("LS")
@@ -137,11 +200,12 @@ module DWARF
         offset = @io.pos - @section.offset
         abbrev_code = DWARF.unpackULEB128 @io
         tag = tags[abbrev_code - 1]
-        cus << CompilationUnit.new(unit_length,
+        cu = CompilationUnit.new(unit_length,
                                    dwarf_version,
                                    debug_abbrev_offset,
                                    address_size,
                                    parse_die(@io, tags, tag, offset, address_size))
+        cus << cu
       end
       cus
     ensure
@@ -224,10 +288,10 @@ module DWARF
   end
 
   class DebugAbbrev
-    def initialize io, section
+    def initialize io, section, head_pos
       @io      = io
       @section = section
-      @head_pos     = @io.pos
+      @head_pos     = head_pos
     end
 
     def tags
