@@ -1,3 +1,4 @@
+module TenderTools
 class MachO
   HEADER_MAGIC = 0xfeedfacf
 
@@ -520,4 +521,5 @@ class MachO
   ensure
     @fd.seek pos, IO::SEEK_SET
   end
+end
 end

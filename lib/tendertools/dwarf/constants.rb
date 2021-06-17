@@ -1,3 +1,4 @@
+module TenderTools
 module DWARF
   module Constants
     # Table 7.2 Unit Header Types
@@ -690,4 +691,5 @@ module DWARF
     DW_RLE_start_end     = 0x06
     DW_RLE_start_length  = 0x07
   end
+end
 end

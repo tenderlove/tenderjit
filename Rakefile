@@ -1,4 +1,4 @@
-file 'lib/dwarf/constants.rb' => ['lib/dwarf/constants.yml', 'lib/dwarf/constants.erb'] do |t|
+file 'lib/tendertools/dwarf/constants.rb' => ['lib/tendertools/dwarf/constants.yml', 'lib/tendertools/dwarf/constants.erb'] do |t|
   require 'psych'
   require 'erb'
   constants = Psych.load_file t.prereqs.first
@@ -6,4 +6,4 @@ file 'lib/dwarf/constants.rb' => ['lib/dwarf/constants.yml', 'lib/dwarf/constant
   File.write t.name, erb.result(binding)
 end
 
-task :default => 'lib/dwarf/constants.rb'
+task :default => 'lib/tendertools/dwarf/constants.rb'

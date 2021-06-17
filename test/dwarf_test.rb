@@ -1,9 +1,10 @@
 ENV["MT_NO_PLUGINS"] = "1"
 
 require "minitest/autorun"
-require "mach-o"
-require "dwarf"
+require "tendertools/mach-o"
+require "tendertools/dwarf"
 
+module TenderTools
 module DWARF
   class Test < Minitest::Test
     debug_file = "fixtures/out.dSYM/Contents/Resources/DWARF/out"
@@ -111,4 +112,5 @@ module DWARF
       end
     end
   end
+end
 end

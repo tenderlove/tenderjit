@@ -1,5 +1,6 @@
-require "dwarf/constants"
+require "tendertools/dwarf/constants"
 
+module TenderTools
 module DWARF
   module Constants
     def self.tag_for id
@@ -152,7 +153,8 @@ module DWARF
         puts line_range
         puts base: opcode_base
 
-        standard_opcode_lengths = @io.read(opcode_base - 1).bytes
+        #standard_opcode_lengths = @io.read(opcode_base - 1).bytes
+        @io.read(opcode_base - 1)
         include_directories = []
 
         loop do
@@ -353,4 +355,5 @@ module DWARF
     end
     result
   end
+end
 end
