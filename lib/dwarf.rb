@@ -97,6 +97,7 @@ module DWARF
           end
         end
       end
+      nil
     end
 
     def name_offset
@@ -176,16 +177,13 @@ module DWARF
   CompilationUnit = Struct.new(:unit_length, :version, :debug_abbrev_offset, :address_size, :die)
 
   class DebugInfo
-    def initialize io, section, debug_abbrev, head_pos
+    def initialize io, section, head_pos
       @io           = io
       @section      = section
-      @debug_abbrev = debug_abbrev
       @head_pos     = head_pos
     end
 
-    def compile_units
-      tags = @debug_abbrev.tags
-
+    def compile_units tags
       cus = []
       #@io.seek @head_pos + @section.offset, IO::SEEK_SET
       @io.seek @head_pos + @section.offset, IO::SEEK_SET
@@ -236,7 +234,7 @@ module DWARF
       else
         []
       end
-      DIE.new tag, offset, attributes, children
+      DIE.new tag, offset - @head_pos, attributes, children
     end
 
     def decode tag, address_size, io

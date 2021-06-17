@@ -253,6 +253,14 @@ class MachO
       def archive?
         oso? && name =~ /[(][^)]*[)]$/
       end
+
+      def archive
+        name[/^.*(?=[(][^)]*[)]$)/]
+      end
+
+      def object
+        name[/(?<=[(])[^)]*(?=[)]$)/]
+      end
     end
 
     def self.from_io cmd, size, offset, io
@@ -266,7 +274,12 @@ class MachO
 
       nlist = nsyms.times.map do |i|
         index = io.read(4).unpack1 'L'
-        name = stable.byteslice(index, stable.bytesize).unpack1 "Z*"
+        x = stable.byteslice(index, stable.bytesize)
+        unless x
+          return new(cmd, size, symoff, nsyms, stroff, strsize, [])
+        end
+        name = x.unpack1 "Z*"
+        #name = stable.byteslice(index, stable.bytesize).unpack1 "Z*"
         NList.new(name, index, *io.read(1 + 1 + 2 + 8).unpack('CCsQ'))
       end
       new(cmd, size, symoff, nsyms, stroff, strsize, nlist)
@@ -392,11 +405,24 @@ class MachO
     def segment?; true; end
   end
 
-  class Section < Struct.new :sectname, :segname, :addr, :size, :offset, :align, :reloff, :nreloc, :flags, :reserved1, :reserved2, :reserved3
+  class Section < Struct.new :io, :start_pos, :sectname, :segname, :addr, :size, :offset, :align, :reloff, :nreloc, :flags, :reserved1, :reserved2, :reserved3
 
     def section?; true; end
     def symtab?; false; end
     def segment?; false; end
+
+    def as_dwarf
+      case sectname
+      when "__debug_abbrev"
+        DWARF::DebugAbbrev.new io, self, start_pos
+      when "__debug_info"
+        DWARF::DebugInfo.new io, self, start_pos
+      when "__debug_str"
+        DWARF::DebugStrings.new io, self, start_pos
+      else
+        raise NotImplementedError
+      end
+    end
   end
 
   include Enumerable
@@ -433,7 +459,7 @@ class MachO
         yield lc
         lc.nsects.times do
           args = @fd.read(32 + (2 * 8) + (8 * 4)).unpack('A16A16QQL8')
-          yield Section.new(*args)
+          yield Section.new(@fd, start_pos, *args)
         end
       when LC_FUNCTION_STARTS::VALUE
         yield LC_FUNCTION_STARTS.from_offset(next_pos, @fd)
@@ -455,7 +481,9 @@ class MachO
         yield LC_UUID.from_offset(next_pos, @fd)
       else
         # Just skip stuff we don't know about
-        puts "Unknown command #{cmd}"
+        if $DEBUG
+          puts "Unknown command #{cmd}"
+        end
       end
 
       next_pos += size

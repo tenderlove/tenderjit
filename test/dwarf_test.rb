@@ -1,3 +1,5 @@
+ENV["MT_NO_PLUGINS"] = "1"
+
 require "minitest/autorun"
 require "mach-o"
 require "dwarf"
@@ -51,8 +53,8 @@ module DWARF
           thing.section? && thing.sectname == "__debug_info"
         end
 
-        debug_info = DWARF::DebugInfo.new io, info, debug_abbrev, mach_o.start_pos
-        units = debug_info.compile_units
+        debug_info = DWARF::DebugInfo.new io, info, mach_o.start_pos
+        units = debug_info.compile_units(debug_abbrev.tags)
 
         assert_equal 1, units.length
         assert_equal Constants::DW_TAG_compile_unit, units.first.die.tag.type
@@ -96,9 +98,9 @@ module DWARF
         strings = DWARF::DebugStrings.new io, section_info, mach_o.start_pos
 
         info = mach_o.find_section "__debug_info"
-        debug_info = DWARF::DebugInfo.new io, info, debug_abbrev, mach_o.start_pos
+        debug_info = DWARF::DebugInfo.new io, info, mach_o.start_pos
 
-        units = debug_info.compile_units
+        units = debug_info.compile_units(debug_abbrev.tags)
         units.each do |unit|
           unit.die.children.each do |die|
             if die.tag.structure_type?
