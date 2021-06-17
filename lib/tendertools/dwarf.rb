@@ -72,6 +72,10 @@ module DWARF
       @children   = children
     end
 
+    def find_type child
+      children.bsearch { |c_die| child.type <=> c_die.offset }
+    end
+
     def data_member_location
       at Constants::DW_AT_data_member_location
     end
