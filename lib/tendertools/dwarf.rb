@@ -36,7 +36,7 @@ module DWARF
       names = @attributes.map { |k,v|
         [Constants.at_for(k) || :Custom, Constants.form_for(v)]
       }
-      maxlen = names.sort_by { |x| x.first.length }.last.first.length
+      maxlen = names.map { |x| x.first.length }.max || 0
 
       "[#{@index}] #{Constants.tag_for(@type)} #{@has_children ? "children" : "no children"}\n" +
         names.map { |k,v| "        #{k.to_s.ljust(maxlen)} #{v}" }.join("\n")
@@ -74,6 +74,18 @@ module DWARF
 
     def find_type child
       children.bsearch { |c_die| child.type <=> c_die.offset }
+    end
+
+    def location
+      at Constants::DW_AT_location
+    end
+
+    def low_pc
+      at Constants::DW_AT_low_pc
+    end
+
+    def high_pc
+      at Constants::DW_AT_high_pc
     end
 
     def data_member_location

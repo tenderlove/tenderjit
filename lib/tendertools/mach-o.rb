@@ -44,6 +44,8 @@ class MachO
     def section?; false; end
     def symtab?; false; end
     def segment?; false; end
+    def dysymtab?; false; end
+    def command?; false; end
 
     def object_file?
       filetype == MH_OBJECT
@@ -61,8 +63,6 @@ class MachO
   class Command
     attr_reader :cmd, :size
 
-    def symtab?; false; end
-
     def self.from_offset offset, io
       io.seek offset, IO::SEEK_SET
       cmd, size = io.read(2 * 4).unpack('LL')
@@ -76,6 +76,9 @@ class MachO
 
     def section?; false; end
     def segment?; false; end
+    def dysymtab?; false; end
+    def symtab?; false; end
+    def command?; true; end
   end
 
   class LC_UNIXTHREAD < Command
@@ -232,9 +235,16 @@ class MachO
            4   # strsize
 
     class NList < Struct.new(:name, :index, :type, :sect, :desc, :value)
-      N_GSYM  = 0x20
-      N_FNAME = 0x22
-      N_FUN   = 0x24
+      using Module.new {
+        refine Integer do
+          def inspect; sprintf("%#x", self); end
+        end
+      }
+
+      # From stab.h
+      N_GSYM  = 0x20 # global symbol
+      N_FNAME = 0x22 # function name
+      N_FUN   = 0x24 # function
       N_STSYM = 0x26
       N_LCSYM = 0x28
       N_BNSYM = 0x2e
@@ -251,6 +261,17 @@ class MachO
         define_method(n.to_s.sub(/^N_/, '').downcase + "?") { type == self.class::const_get(n) }
       }
 
+      # define these constants after the above metaprogramming so they don't get
+      # metaprogrammed methods :grimace:
+
+      # From nlist.h
+      N_STAB  = 0xe0
+      N_PEXT  = 0x10
+      N_TYPE  = 0x0e
+      N_EXT   = 0x01
+
+      def stab?; (type & N_STAB) != 0; end
+
       def archive?
         oso? && name =~ /[(][^)]*[)]$/
       end
@@ -261,6 +282,13 @@ class MachO
 
       def object
         name[/(?<=[(])[^)]*(?=[)]$)/]
+      end
+
+      def inspect
+        start = "#<struct #{self.class} "
+        members.inject(start) { |buffer, member|
+          buffer + " #{member.to_s}=#{self[member].inspect}"
+        } + ">"
       end
     end
 
@@ -280,7 +308,6 @@ class MachO
           return new(cmd, size, symoff, nsyms, stroff, strsize, [])
         end
         name = x.unpack1 "Z*"
-        #name = stable.byteslice(index, stable.bytesize).unpack1 "Z*"
         NList.new(name, index, *io.read(1 + 1 + 2 + 8).unpack('CCsQ'))
       end
       new(cmd, size, symoff, nsyms, stroff, strsize, nlist)
@@ -305,6 +332,8 @@ class MachO
   class LC_DYSYMTAB < Command
     VALUE = 0xb
     SIZE = 18 * 4
+
+    def dysymtab?; true; end
 
     def self.from_io cmd, size, offset, io
       new(cmd, size, *io.read(SIZE).unpack('L18'))
@@ -410,7 +439,9 @@ class MachO
 
     def section?; true; end
     def symtab?; false; end
+    def dysymtab?; false; end
     def segment?; false; end
+    def command?; false; end
 
     def as_dwarf
       case sectname
