@@ -17,6 +17,14 @@ class MachO
     @start_pos = @fd.pos
   end
 
+  module SectionTypes
+    def section?; false; end
+    def symtab?; false; end
+    def segment?; false; end
+    def dysymtab?; false; end
+    def command?; false; end
+  end
+
   class Header < Struct.new :magic,
                       :cputype,
                       :cpusubtype,
@@ -25,6 +33,8 @@ class MachO
                       :sizeofcmds,
                       :flags,
                       :reserved
+
+    include SectionTypes
 
     MH_OBJECT      = 0x1
     MH_EXECUTE     = 0x2
@@ -41,12 +51,6 @@ class MachO
 
     SIZEOF = 8 * 4 # 8 * (32 bit int)
 
-    def section?; false; end
-    def symtab?; false; end
-    def segment?; false; end
-    def dysymtab?; false; end
-    def command?; false; end
-
     def object_file?
       filetype == MH_OBJECT
     end
@@ -61,6 +65,8 @@ class MachO
   end
 
   class Command
+    include SectionTypes
+
     attr_reader :cmd, :size
 
     def self.from_offset offset, io
@@ -74,10 +80,6 @@ class MachO
       @size = size
     end
 
-    def section?; false; end
-    def segment?; false; end
-    def dysymtab?; false; end
-    def symtab?; false; end
     def command?; true; end
   end
 
@@ -437,11 +439,9 @@ class MachO
 
   class Section < Struct.new :io, :start_pos, :sectname, :segname, :addr, :size, :offset, :align, :reloff, :nreloc, :flags, :reserved1, :reserved2, :reserved3
 
+    include SectionTypes
+
     def section?; true; end
-    def symtab?; false; end
-    def dysymtab?; false; end
-    def segment?; false; end
-    def command?; false; end
 
     def as_dwarf
       case sectname
