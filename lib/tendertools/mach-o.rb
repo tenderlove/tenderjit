@@ -335,8 +335,6 @@ class MachO
     VALUE = 0xb
     SIZE = 18 * 4
 
-    def dysymtab?; true; end
-
     def self.from_io cmd, size, offset, io
       new(cmd, size, *io.read(SIZE).unpack('L18'))
     end
@@ -401,6 +399,8 @@ class MachO
       @locreloff      = locreloff
       @nlocrel        = nlocrel
     end
+
+    def dysymtab?; true; end
   end
 
   class LC_SEGMENT_64 < Command

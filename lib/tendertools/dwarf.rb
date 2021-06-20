@@ -240,7 +240,7 @@ module DWARF
 
         return children if abbrev_code == 0
 
-        tag = tags[abbrev_code - 1]
+        tag = tags.fetch(abbrev_code - 1)
         die = parse_die io, tags, tag, offset, address_size
         children << die
       end
@@ -269,6 +269,8 @@ module DWARF
           io.read(2).unpack1("S")
         when Constants::DW_FORM_data4
           io.read(4).unpack1("L")
+        when Constants::DW_FORM_data8
+          io.read(8).unpack1("Q")
         when Constants::DW_FORM_sec_offset
           io.read(4).unpack1("L")
         when Constants::DW_FORM_flag_present
@@ -348,11 +350,13 @@ module DWARF
     loop do
       byte = io.getbyte
       result |= ((byte & 0x7F) << shift)
-      if (byte & 0x80) != 0x80
-        return result
+      if (byte < 0x80)
+        break
       end
       shift += 7
     end
+
+    result
   end
 
   def self.unpackSLEB128 io
