@@ -19,13 +19,18 @@ module DWARF
   end
 
   class Tag
-    attr_reader :index, :type, :attributes
+    attr_reader :index, :type
 
-    def initialize index, type, has_children, attributes
+    def self.build index, type, has_children, attr_names, attr_forms
+      new index, type, has_children, attr_names, attr_forms
+    end
+
+    def initialize index, type, has_children, attr_names, attr_forms
       @index        = index
       @type         = type
       @has_children = has_children
-      @attributes   = attributes
+      @attr_names   = attr_names
+      @attr_forms   = attr_forms
     end
 
     class_eval Constants.constants.grep(/^DW_TAG_(.*)$/) { |match|
@@ -33,6 +38,67 @@ module DWARF
     }.join "\n"
 
     def has_children?; @has_children; end
+
+    def identifier
+      Constants.tag_for(@type)
+    end
+
+    def attribute_info name
+      i = index_of(name) || return
+      yield @attr_forms, i
+    end
+
+    def index_of name
+      @attr_names.index(name)
+    end
+
+    def decode io, _
+      @attr_forms.map do |type|
+        case type
+        when Constants::DW_FORM_addr
+          io.read(8).unpack1("Q")
+        when Constants::DW_FORM_strp
+          io.read(4).unpack1("L")
+        when Constants::DW_FORM_data1
+          io.read(1).unpack1("C")
+        when Constants::DW_FORM_data2
+          io.read(2).unpack1("S")
+        when Constants::DW_FORM_data4
+          io.read(4).unpack1("L")
+        when Constants::DW_FORM_data8
+          io.read(8).unpack1("Q")
+        when Constants::DW_FORM_sec_offset
+          io.read(4).unpack1("L")
+        when Constants::DW_FORM_flag_present
+          true
+        when Constants::DW_FORM_exprloc
+          io.read(DWARF.unpackULEB128(io))
+        when Constants::DW_FORM_ref4
+          io.read(4).unpack1("L")
+        when Constants::DW_FORM_string
+          str = []
+          loop do
+            x = io.readbyte
+            break if x == 0
+            str << x
+          end
+
+          str.pack("C*")
+        when Constants::DW_FORM_flag
+          io.readbyte
+        when Constants::DW_FORM_block1
+          io.read io.readbyte
+        when Constants::DW_FORM_udata
+          DWARF.unpackULEB128 io
+        when Constants::DW_FORM_sdata
+          DWARF.unpackSLEB128 io
+        when Constants::DW_FORM_ref_addr
+          io.read(4).unpack1("L")
+        else
+          raise "Unhandled type: #{Constants.form_for(type)}"
+        end
+      end
+    end
 
     def inspect
       names = @attributes.map { |k,v|
@@ -107,16 +173,13 @@ module DWARF
     end
 
     def name strings
-      tag.attributes.each_with_index do |(name, type), i|
-        if name == Constants::DW_AT_name
-          if type == Constants::DW_FORM_string
-            return attributes[i]
-          else
-            return strings.string_at(attributes[i])
-          end
+      tag.attribute_info(Constants::DW_AT_name) do |form, i|
+        if form == Constants::DW_FORM_string
+          attributes[i]
+        else
+          strings.string_at(attributes[i])
         end
       end
-      nil
     end
 
     def name_offset
@@ -131,7 +194,7 @@ module DWARF
     private
 
     def at name
-      idx = tag.attributes.index { |at, _| at == name }
+      idx = tag.index_of(name)
       idx && attributes[idx]
     end
   end
@@ -215,6 +278,9 @@ module DWARF
 
         debug_abbrev_offset = @io.read(4).unpack1("L")
         address_size = @io.readbyte
+        if address_size != 8
+          raise NotImplementedError, "only 8 bytes address size supported rn"
+        end
         offset = @io.pos - @section.offset
         abbrev_code = DWARF.unpackULEB128 @io
         tag = tags[abbrev_code - 1]
@@ -258,52 +324,7 @@ module DWARF
     end
 
     def decode tag, address_size, io
-      tag.attributes.map do |name, type|
-        case type
-        when Constants::DW_FORM_strp
-          # p strings.string_at io.read(4).unpack1("L")
-          io.read(4).unpack1("L")
-        when Constants::DW_FORM_data1
-          io.readbyte
-        when Constants::DW_FORM_data2
-          io.read(2).unpack1("S")
-        when Constants::DW_FORM_data4
-          io.read(4).unpack1("L")
-        when Constants::DW_FORM_data8
-          io.read(8).unpack1("Q")
-        when Constants::DW_FORM_sec_offset
-          io.read(4).unpack1("L")
-        when Constants::DW_FORM_flag_present
-          true
-        when Constants::DW_FORM_addr
-          io.read(address_size).unpack1("Q")
-        when Constants::DW_FORM_exprloc
-          io.read(DWARF.unpackULEB128(io))
-        when Constants::DW_FORM_ref4
-          io.read(4).unpack1("L")
-        when Constants::DW_FORM_string
-          str = []
-          loop do
-            x = io.readbyte
-            break if x == 0
-            str << x
-          end
-
-          str.pack("C*")
-        when Constants::DW_FORM_flag
-          io.readbyte
-        when Constants::DW_FORM_block1
-          io.read io.readbyte
-        when Constants::DW_FORM_udata
-          DWARF.unpackULEB128 io
-        when Constants::DW_FORM_sdata
-          DWARF.unpackSLEB128 io
-        when Constants::DW_FORM_ref_addr
-          io.read(4).unpack1("L")
-        else
-          raise "Unhandled type: #{Constants.form_for(type)}"
-        end
-      end
+      tag.decode io, address_size
     end
   end
 
@@ -332,15 +353,17 @@ module DWARF
       abbreviation_code = DWARF.unpackULEB128 @io
       name              = DWARF.unpackULEB128 @io
       children_p        = @io.readbyte == Constants::DW_CHILDREN_yes
-      attributes = []
+      attr_names = []
+      attr_forms = []
       loop do
         attr_name = DWARF.unpackULEB128 @io
         attr_form = DWARF.unpackULEB128 @io
         break if attr_name == 0 && attr_form == 0
 
-        attributes << [attr_name, attr_form]
+        attr_names << attr_name
+        attr_forms << attr_form
       end
-      Tag.new abbreviation_code, name, children_p, attributes
+      Tag.build abbreviation_code, name, children_p, attr_names, attr_forms
     end
   end
 
