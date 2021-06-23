@@ -22,13 +22,14 @@ module TenderTools
       assert addr
       assert archive
 
+      found_object = nil
+
       File.open(archive) do |f|
         ar = AR.new f
         ar.each do |object_file|
           next unless object_file.identifier.end_with?(".o")
-          next unless object_file.identifier == "strftime.o"
+          next unless object_file.identifier == "version.o"
 
-          p object_file
           f.seek object_file.pos, IO::SEEK_SET
           macho = MachO.new f
           debug_info = macho.find_section("__debug_info")&.as_dwarf || next
@@ -38,12 +39,14 @@ module TenderTools
           debug_info.compile_units(debug_abbrev.tags).each do |unit|
             unit.die.children.each do |die|
               if die.name(debug_strs) == "ruby_api_version"
-                puts object_file => "omg"
+                found_object = object_file
               end
             end
           end
         end
       end
+
+      assert found_object
     end
   end
 end

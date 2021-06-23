@@ -88,6 +88,7 @@ module TenderTools
                 field_type = nil
                 while child
                   field_type = child.name(debug_strs)
+                  break unless child.type
                   child = unit.die.find_type(child)
                 end
                 rbasic_layout << [field_name, field_type]
@@ -181,7 +182,7 @@ module TenderTools
               if symbol.value > 0
                 addr = symbol.value + Hacks.slide
                 pointer = Fiddle::Pointer.new(addr, Fiddle::SIZEOF_INT * 3)
-                assert_equal RUBY_VERSION.split(".").map(&:to_i),
+                assert_equal RbConfig::CONFIG["ruby_version"].split(".").map(&:to_i),
                   pointer[0, Fiddle::SIZEOF_INT * 3].unpack("LLL")
               else
                 assert_predicate symbol, :stab?
