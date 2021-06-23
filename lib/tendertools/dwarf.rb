@@ -5,8 +5,15 @@ require "tendertools/dwarf/constants"
 module TenderTools
 module DWARF
   module Constants
+    TAG_TO_NAME = constants.grep(/TAG/).each_with_object([]) { |c, o|
+      v = const_get(c)
+      if v < DW_TAG_low_user
+        o[const_get(c)] = c
+      end
+    }
+
     def self.tag_for id
-      constants.grep(/TAG/).find { |c| const_get(c) == id }
+      TAG_TO_NAME[id]
     end
 
     def self.at_for id
@@ -69,12 +76,14 @@ module DWARF
           io.read(8).unpack1("Q")
         when Constants::DW_FORM_sec_offset
           io.read(4).unpack1("L")
+        when Constants::DW_FORM_ref_addr
+          io.read(4).unpack1("L")
+        when Constants::DW_FORM_ref4
+          io.read(4).unpack1("L")
         when Constants::DW_FORM_flag_present
           true
         when Constants::DW_FORM_exprloc
           io.read(DWARF.unpackULEB128(io))
-        when Constants::DW_FORM_ref4
-          io.read(4).unpack1("L")
         when Constants::DW_FORM_string
           str = []
           loop do
@@ -92,8 +101,6 @@ module DWARF
           DWARF.unpackULEB128 io
         when Constants::DW_FORM_sdata
           DWARF.unpackSLEB128 io
-        when Constants::DW_FORM_ref_addr
-          io.read(4).unpack1("L")
         else
           raise "Unhandled type: #{Constants.form_for(type)}"
         end
@@ -101,13 +108,12 @@ module DWARF
     end
 
     def inspect
-      names = @attributes.map { |k,v|
-        [Constants.at_for(k) || :Custom, Constants.form_for(v)]
-      }
-      maxlen = names.map { |x| x.first.length }.max || 0
+      names = @attr_names.map { |k| Constants.at_for(k) || :Custom }
+      forms = @attr_forms.map { |v| Constants.form_for(v) }
+      maxlen = names.map { |x| x.length }.max || 0
 
       "[#{@index}] #{Constants.tag_for(@type)} #{@has_children ? "children" : "no children"}\n" +
-        names.map { |k,v| "        #{k.to_s.ljust(maxlen)} #{v}" }.join("\n")
+        names.zip(forms).map { |k,v| "        #{k.to_s.ljust(maxlen)} #{v}" }.join("\n")
 
     end
   end
@@ -141,6 +147,7 @@ module DWARF
     end
 
     def find_type child
+      raise ArgumentError, "DIE doesn't have a type" unless child.type
       children.bsearch { |c_die| child.type <=> c_die.offset }
     end
 
@@ -172,6 +179,10 @@ module DWARF
       at Constants::DW_AT_decl_file
     end
 
+    def const_value
+      at Constants::DW_AT_const_value
+    end
+
     def name strings
       tag.attribute_info(Constants::DW_AT_name) do |form, i|
         if form == Constants::DW_FORM_string
@@ -189,6 +200,19 @@ module DWARF
     def each &block
       yield self
       children.each { |child| child.each(&block) }
+    end
+
+    def each_with_parents &block
+      iter_with_stack([], &block)
+    end
+
+    protected
+
+    def iter_with_stack stack, &block
+      yield self, stack
+      stack.push self
+      children.each { |child| child.iter_with_stack(stack, &block) }
+      stack.pop
     end
 
     private
@@ -312,13 +336,15 @@ module DWARF
       end
     end
 
+    NO_CHILDREN = [].freeze
+
     def parse_die io, tags, tag, offset, address_size
       attributes = decode tag, address_size, io
 
       children = if tag.has_children?
         read_children io, tags, address_size
       else
-        []
+        NO_CHILDREN
       end
       DIE.new tag, offset - @head_pos, attributes, children
     end
@@ -370,6 +396,7 @@ module DWARF
   def self.unpackULEB128 io
     result = 0
     shift = 0
+
     loop do
       byte = io.getbyte
       result |= ((byte & 0x7F) << shift)
