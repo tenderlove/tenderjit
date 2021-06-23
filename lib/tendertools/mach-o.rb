@@ -451,6 +451,8 @@ class MachO
         DWARF::DebugInfo.new io, self, start_pos
       when "__debug_str"
         DWARF::DebugStrings.new io, self, start_pos
+      when "__debug_line"
+        DWARF::DebugLine.new io, self, start_pos
       else
         raise NotImplementedError
       end

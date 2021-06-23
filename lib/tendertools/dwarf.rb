@@ -224,22 +224,55 @@ module DWARF
   end
 
   class DebugLine
-    def initialize io, section, debug_abbrev, head_pos
-      @io         = io
-      @section    = section
-      @head_pos   = head_pos
-      @debug_abbrev = debug_abbrev
+    class Registers
+      attr_accessor :address, :op_index, :file, :line, :column, :is_stmt,
+                    :basic_block, :end_sequence, :prologue_end, :epilogue_begin,
+                    :isa, :discriminator
+
+      def initialize default_is_stmt
+        @address        = 0
+        @op_index       = 0
+        @file           = 1
+        @line           = 1
+        @column         = 0
+        @is_stmt        = default_is_stmt
+        @basic_block    = false
+        @end_sequence   = false
+        @prologue_end   = false
+        @epilogue_begin = false
+        @isa            = 0
+        @discriminator  = 0
+      end
+
+      def inspect
+        sprintf("%#018x %s %s %s", address,
+                                line.to_s.rjust(6),
+                                column.to_s.rjust(6),
+                                file.to_s.rjust(6))
+      end
     end
 
-    def process
+    FileName = Struct.new(:name, :dir_index, :mod_time, :length)
+    Info = Struct.new(:unit_length, :version, :include_directories, :file_names, :matrix)
+
+    def initialize io, section, head_pos
+      @io                  = io
+      @section             = section
+      @head_pos            = head_pos
+    end
+
+    def info
+      include_directories = []
+      file_names          = []
+      matrix              = []
+
       @io.seek @head_pos + @section.offset, IO::SEEK_SET
-      while @io.pos < @head_pos + @section.offset + @section.size
+      last_position = @head_pos + @section.offset + @section.size
+      while @io.pos < last_position
         unit_length, dwarf_version = @io.read(6).unpack("LS")
         if dwarf_version != 4
           raise NotImplementedError, "Only DWARF4 rn #{dwarf_version}"
         end
-        p unit_length.to_s(16)
-        p dwarf_version.to_s(16)
 
         # we're just not handling 32 bit
         prologue_length,
@@ -250,17 +283,12 @@ module DWARF
           line_range,
           opcode_base = @io.read(4 + (1 * 6)).unpack("LCCCcCC")
 
-        puts prologue_length.to_s(16)
-        puts min_inst_length
-        puts max_ops_per_inst
-        puts default_is_stmt
-        puts line_base
-        puts line_range
-        puts base: opcode_base
+        # assume address size is 8
+        address_size = 8
 
-        #standard_opcode_lengths = @io.read(opcode_base - 1).bytes
-        @io.read(opcode_base - 1)
-        include_directories = []
+        registers = Registers.new(default_is_stmt)
+
+        @io.read(opcode_base - 1) #standard_opcode_lengths = @io.read(opcode_base - 1).bytes
 
         loop do
           str = @io.readline("\0").chomp("\0")
@@ -271,13 +299,103 @@ module DWARF
         loop do
           fname = @io.readline("\0").chomp("\0")
           break if "" == fname
-          p fname
-          p DWARF.unpackULEB128 @io
-          p DWARF.unpackULEB128 @io
-          p DWARF.unpackULEB128 @io
+
+          directory_idx = DWARF.unpackULEB128 @io
+          last_mod      = DWARF.unpackULEB128 @io
+          length        = DWARF.unpackULEB128 @io
+          file_names << FileName.new(fname, directory_idx, last_mod, length)
         end
-        exit
+
+        max_line_increment = line_base + line_range - 1
+
+        loop do
+          code = @io.readbyte
+          case code
+          when 0 # extended operands
+            expected_size = DWARF.unpackULEB128 @io
+            raise if expected_size == 0
+
+            cur_pos = @io.pos
+            extended_code = @io.readbyte
+            case extended_code
+            when Constants::DW_LNE_end_sequence
+              registers.end_sequence = true
+              matrix << registers.dup
+              break
+            when Constants::DW_LNE_set_address
+              registers.address = @io.read(address_size).unpack1("Q")
+              registers.op_index = 0
+            when Constants::DW_LNE_set_discriminator
+              raise
+            else
+              raise "unknown extednded opcode #{extended_code}"
+            end
+
+            raise unless expected_size == (@io.pos - cur_pos)
+          when Constants::DW_LNS_copy
+            matrix << registers.dup
+            registers.discriminator  = 0
+            registers.basic_block    = false
+            registers.prologue_end   = false
+            registers.epilogue_begin = false
+          when Constants::DW_LNS_advance_pc
+            code = DWARF.unpackULEB128 @io
+            registers.address += (code * min_inst_length)
+          when Constants::DW_LNS_advance_line
+            registers.line += DWARF.unpackSLEB128 @io
+          when Constants::DW_LNS_set_file
+            registers.file = DWARF.unpackULEB128 @io
+          when Constants::DW_LNS_set_column
+            registers.column = DWARF.unpackULEB128 @io
+          when Constants::DW_LNS_negate_stmt
+            registers.is_stmt = !registers.is_stmt
+          when Constants::DW_LNS_set_basic_block
+            registers.basic_block = true
+          when Constants::DW_LNS_const_add_pc
+            code = 255
+            adjusted_opcode = code - opcode_base
+            operation_advance = adjusted_opcode / line_range
+            new_address = min_inst_length *
+              ((registers.op_index + operation_advance) /
+               max_ops_per_inst)
+
+            new_op_index = (registers.op_index + operation_advance) % max_ops_per_inst
+
+            registers.address += new_address
+            registers.op_index = new_op_index
+          when Constants::DW_LNS_fixed_advance_pc
+            raise
+          when Constants::DW_LNS_set_prologue_end
+            registers.prologue_end = true
+          when Constants::DW_LNS_set_epilogue_begin
+            raise
+          when Constants::DW_LNS_set_isa
+            raise
+          else
+            adjusted_opcode = code - opcode_base
+            operation_advance = adjusted_opcode / line_range
+            new_address = min_inst_length *
+              ((registers.op_index + operation_advance) /
+               max_ops_per_inst)
+
+            new_op_index = (registers.op_index + operation_advance) % max_ops_per_inst
+
+            line_increment = line_base + (adjusted_opcode % line_range)
+
+            registers.address += new_address
+            registers.op_index = new_op_index
+            registers.line += line_increment
+            matrix << registers.dup
+
+            registers.basic_block    = false
+            registers.prologue_end   = false
+            registers.epilogue_begin = false
+            registers.discriminator  = 0
+          end
+        end
       end
+
+      Info.new unit_length, dwarf_version, include_directories, file_names, matrix
     end
   end
 
@@ -419,7 +537,7 @@ module DWARF
       result |= ((byte & 0x7F) << shift)
       shift += 7
       if (byte >> 7) == 0
-        if shift < size && byte & 0x40
+        if shift < size && (byte & 0x40) != 0
           result |= (~0 << shift)
         end
         break
