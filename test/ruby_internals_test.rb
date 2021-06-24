@@ -1,5 +1,6 @@
 require "helper"
 require "tendertools/ruby_internals"
+require "fiddle/import"
 
 module TenderTools
   class RubyInternalsTest < Test
@@ -40,6 +41,69 @@ module TenderTools
 
     def c name
       TenderTools::RubyInternals::CONSTANTS[name]
+    end
+
+    class Foo; end
+
+    class ClassWithIvars
+      def initialize
+        @a = "hello"
+        @b = "world"
+        @c = "neat"
+      end
+    end
+
+    def test_RBasic
+      rBasic = TenderTools::RubyInternals::GC["RBasic"]
+      assert_rBasic rBasic
+
+      # Test we can extract the class from an rBasic
+      foo = Foo.new
+      wrapper = rBasic.new(Fiddle.dlwrap(foo))
+      assert_equal Foo, Fiddle.dlunwrap(wrapper.klass)
+    end
+
+    def test_RObject
+      rObject = TenderTools::RubyInternals::GC["RObject"]
+
+      assert_equal ["basic", "as"], rObject.members.map(&:first)
+
+      assert_rBasic rObject.types.first
+
+      # RObject union
+      rObject_as = rObject.types.last
+
+      case rObject_as.members
+      in [[heap, _], ary]
+        assert_equal "heap", heap
+        assert_equal "ary", ary
+      else
+        flunk
+      end
+
+      # Check the "heap" member. It's a struct
+      rObject_as_heap = rObject_as.types.first
+      assert_equal ["numiv", "ivptr", "iv_index_tbl"], rObject_as_heap.members
+      assert_equal [-Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP], rObject_as_heap.types
+
+      # Check the "ary" member. It's an array of unsigned long
+      assert_equal [-Fiddle::TYPE_LONG, 3], rObject_as.types.last
+    end
+
+    def test_read_RObject_ivars
+      rObject = TenderTools::RubyInternals::GC["RObject"]
+
+      obj = ClassWithIvars.new
+      ptr = rObject.new Fiddle.dlwrap obj
+
+      assert_equal "hello", Fiddle.dlunwrap(ptr.as.ary[0])
+      assert_equal "world", Fiddle.dlunwrap(ptr.as.ary[1])
+      assert_equal "neat", Fiddle.dlunwrap(ptr.as.ary[2])
+    end
+
+    def assert_rBasic rBasic
+      assert_equal [-Fiddle::TYPE_LONG, -Fiddle::TYPE_LONG], rBasic.types
+      assert_equal ["flags", "klass"], rBasic.members
     end
   end
 end

@@ -2,6 +2,8 @@ require "rbconfig"
 require "tendertools/mach-o"
 require "tendertools/dwarf"
 require "tendertools/ar"
+require "fiddle"
+require "fiddle/struct"
 
 module TenderTools
   class RubyInternals
@@ -60,6 +62,8 @@ module TenderTools
     class TypeBuilder
       attr_reader :debug_info, :debug_strs, :debug_abbrev
 
+      Type = Struct.new(:die, :fiddle)
+
       def initialize debug_info, debug_strs, debug_abbrev
         @debug_info   = debug_info
         @debug_strs   = debug_strs
@@ -75,18 +79,25 @@ module TenderTools
             find_or_build die, all_dies
           end
         end
-        @known_types.compact
+        @known_types.compact.each_with_object({}) do |type, hash|
+          name = type.die.name(debug_strs)
+          hash[name] = type.fiddle if name
+        end
       end
 
       def find_or_build die, all_dies
         object = @known_types[die.offset]
-        return object if object
+        return object.fiddle if object
 
         case die.tag.identifier
         when :DW_TAG_structure_type
-          @known_types[die.offset] = build_fiddle(die, all_dies, Fiddle::CStruct)
+          fiddle = build_fiddle(die, all_dies, Fiddle::CStruct)
+          @known_types[die.offset] = Type.new(die, fiddle)
+          fiddle
         when :DW_TAG_union_type
-          @known_types[die.offset] = build_fiddle(die, all_dies, Fiddle::CUnion)
+          fiddle = build_fiddle(die, all_dies, Fiddle::CUnion)
+          @known_types[die.offset] = Type.new(die, fiddle)
+          fiddle
         when :DW_TAG_base_type
         when :DW_TAG_const_type
         when :DW_TAG_array_type
@@ -104,15 +115,13 @@ module TenderTools
         else
           raise "uknown type #{die.tag.identifier}"
         end
+
       end
 
       def build_array die, all_dies
-        type = find_member all_dies.bsearch { |c| die.type <=> c.offset }, all_dies
-        [type, die.count]
+        type = find_member all_dies.bsearch { |c| die.type <=> c.offset }, nil, all_dies
+        [type, die.count + 1]
       end
-
-      require "fiddle"
-      require "fiddle/struct"
 
       DWARF_TO_FIDDLE = {
         "int"                    => Fiddle::TYPE_INT,
@@ -124,34 +133,25 @@ module TenderTools
         "long long int"          => Fiddle::TYPE_LONG_LONG,
         "long long unsigned int" => -Fiddle::TYPE_LONG_LONG,
         "unsigned int"           => -Fiddle::TYPE_INT,
-        "long unsigned int"      => -Fiddle::TYPE_LONG_LONG,
+        "long unsigned int"      => -Fiddle::TYPE_LONG,
         "double"                 => Fiddle::TYPE_DOUBLE,
         "long int"               => Fiddle::TYPE_LONG,
         "_Bool"                  => Fiddle::TYPE_CHAR,
       }
 
-      def find_member type_die, all_dies
+      def find_member type_die, member_name, all_dies
         case type_die.tag.identifier
         when :DW_TAG_pointer_type
           Fiddle::TYPE_VOIDP
         when :DW_TAG_base_type
           name = type_die.name(debug_strs)
           DWARF_TO_FIDDLE.fetch name
-        when :DW_TAG_const_type
+        when :DW_TAG_const_type, :DW_TAG_volatile_type, :DW_TAG_enumeration_type, :DW_TAG_typedef
           if type_die.type
-            find_member all_dies.bsearch { |c| type_die.type <=> c.offset }, all_dies
-          end
-        when :DW_TAG_volatile_type
-          if type_die.type
-            find_member all_dies.bsearch { |c| type_die.type <=> c.offset }, all_dies
+            sub_type = all_dies.bsearch { |c| type_die.type <=> c.offset }
+            find_member sub_type, member_name, all_dies
           else
-            raise "volatile has no type"
-          end
-        when :DW_TAG_typedef
-          if type_die.type
-            find_member all_dies.bsearch { |c| type_die.type <=> c.offset }, all_dies
-          else
-            raise "typedef has no type"
+            raise
           end
         when :DW_TAG_structure_type
           find_or_build type_die, all_dies
@@ -159,12 +159,6 @@ module TenderTools
           find_or_build type_die, all_dies
         when :DW_TAG_union_type
           find_or_build type_die, all_dies
-        when :DW_TAG_enumeration_type
-          if type_die.type
-            find_member all_dies.bsearch { |c| type_die.type <=> c.offset }, all_dies
-          else
-            raise "enum has no type"
-          end
         else
           raise "unknown member type #{type_die.tag.identifier}"
         end
@@ -181,9 +175,14 @@ module TenderTools
             name = child.name(debug_strs)
             raise unless name
 
-            names << name
             type = all_dies.bsearch { |c| child.type <=> c.offset }
-            types << find_member(type, all_dies)
+            type = find_member(type, name, all_dies)
+            if type.is_a?(Class)
+              names << [name, type]
+            else
+              names << name
+            end
+            types << type
           when :DW_TAG_structure_type, :DW_TAG_union_type
             # we can ignore sub structures. They should be built out
             # when the named member finds them
@@ -222,15 +221,16 @@ module TenderTools
           end
         when "iseq.o"
           builder = TypeBuilder.new(debug_info, debug_strs, debug_abbrev)
-          builder.build
+          ISEQ = builder.build
         when "gc.o"
           builder = TypeBuilder.new(debug_info, debug_strs, debug_abbrev)
+          GC = builder.build
         when "st.o"
           builder = TypeBuilder.new(debug_info, debug_strs, debug_abbrev)
-          builder.build
+          ST = builder.build
         when "vm.o"
           builder = TypeBuilder.new(debug_info, debug_strs, debug_abbrev)
-          builder.build
+          VM = builder.build
         else
         end
       end
