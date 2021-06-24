@@ -46,6 +46,10 @@ module DWARF
 
     def has_children?; @has_children; end
 
+    def user?
+      @type > Constants::DW_TAG_low_user
+    end
+
     def identifier
       Constants.tag_for(@type)
     end
@@ -62,24 +66,15 @@ module DWARF
     def decode io, _
       @attr_forms.map do |type|
         case type
-        when Constants::DW_FORM_addr
-          io.read(8).unpack1("Q")
-        when Constants::DW_FORM_strp
-          io.read(4).unpack1("L")
-        when Constants::DW_FORM_data1
-          io.read(1).unpack1("C")
-        when Constants::DW_FORM_data2
-          io.read(2).unpack1("S")
-        when Constants::DW_FORM_data4
-          io.read(4).unpack1("L")
-        when Constants::DW_FORM_data8
-          io.read(8).unpack1("Q")
-        when Constants::DW_FORM_sec_offset
-          io.read(4).unpack1("L")
-        when Constants::DW_FORM_ref_addr
-          io.read(4).unpack1("L")
-        when Constants::DW_FORM_ref4
-          io.read(4).unpack1("L")
+        when Constants::DW_FORM_addr       then io.read(8).unpack1("Q")
+        when Constants::DW_FORM_strp       then io.read(4).unpack1("L")
+        when Constants::DW_FORM_data1      then io.read(1).unpack1("C")
+        when Constants::DW_FORM_data2      then io.read(2).unpack1("S")
+        when Constants::DW_FORM_data4      then io.read(4).unpack1("L")
+        when Constants::DW_FORM_data8      then io.read(8).unpack1("Q")
+        when Constants::DW_FORM_sec_offset then io.read(4).unpack1("L")
+        when Constants::DW_FORM_ref_addr   then io.read(4).unpack1("L")
+        when Constants::DW_FORM_ref4       then io.read(4).unpack1("L")
         when Constants::DW_FORM_flag_present
           true
         when Constants::DW_FORM_exprloc
