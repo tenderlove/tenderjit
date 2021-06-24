@@ -76,6 +76,8 @@ module TenderTools
           top = unit.die
           all_dies = top.to_a
           top.children.each do |die|
+            next if die.tag.user?
+
             find_or_build die, all_dies
           end
         end
@@ -101,9 +103,10 @@ module TenderTools
         when :DW_TAG_base_type
         when :DW_TAG_const_type
         when :DW_TAG_array_type
-          build_array die, all_dies
+          fiddle = build_array die, all_dies
+          @known_types[die.offset] = Type.new(die, fiddle)
+          fiddle
         when :DW_TAG_enumeration_type
-          #p die
         when :DW_TAG_restrict_type
         when :DW_TAG_subprogram
         when :DW_TAG_typedef
@@ -111,6 +114,15 @@ module TenderTools
         when :DW_TAG_variable
         when :DW_TAG_subroutine_type
         when :DW_TAG_volatile_type
+        when :DW_TAG_compile_unit
+        when :DW_TAG_formal_parameter
+        when :DW_TAG_inlined_subroutine
+        when :DW_TAG_subrange_type
+        when :DW_TAG_member
+        when :DW_TAG_lexical_block
+        when :DW_TAG_enumerator
+        when :DW_TAG_unspecified_parameters
+        when :DW_TAG_label
           # ???
         else
           raise "uknown type #{die.tag.identifier}"
