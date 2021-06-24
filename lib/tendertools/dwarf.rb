@@ -275,7 +275,7 @@ module DWARF
         end
 
         # we're just not handling 32 bit
-        prologue_length,
+        _, # prologue_length,
           min_inst_length,
           max_ops_per_inst,
           default_is_stmt,
@@ -305,8 +305,6 @@ module DWARF
           length        = DWARF.unpackULEB128 @io
           file_names << FileName.new(fname, directory_idx, last_mod, length)
         end
-
-        max_line_increment = line_base + line_range - 1
 
         loop do
           code = @io.readbyte
@@ -410,7 +408,6 @@ module DWARF
 
     def compile_units tags
       cus = []
-      #@io.seek @head_pos + @section.offset, IO::SEEK_SET
       @io.seek @head_pos + @section.offset, IO::SEEK_SET
       while @io.pos < @head_pos + @section.offset + @section.size
         unit_length, dwarf_version = @io.read(6).unpack("LS")
