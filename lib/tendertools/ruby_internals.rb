@@ -181,21 +181,28 @@ module TenderTools
 
         types = []
         names = []
+        last_offset = -1
         die.children.each do |child|
           case child.tag.identifier
           when :DW_TAG_member
             name = child.name(debug_strs)
             raise unless name
 
-            type = all_dies.bsearch { |c| child.type <=> c.offset }
-            type = find_member(type, name, all_dies)
-            if type.is_a?(Class)
-              names << [name, type]
+            type = find_type_die(child, all_dies)
+            # deal with bitfield memebers
+            if child.data_member_location == last_offset && fiddle_type == Fiddle::CStruct
+              names.last << "|#{name}"
             else
-              names << name
+              last_offset = child.data_member_location
+              fiddle_subtype = find_fiddle_type(type, all_dies)
+              if fiddle_subtype.is_a?(Class)
+                names << [name, fiddle_subtype]
+              else
+                names << name
+              end
+              types << fiddle_subtype
             end
-            types << type
-          when :DW_TAG_structure_type, :DW_TAG_union_type
+          when :DW_TAG_structure_type, :DW_TAG_union_type, :DW_TAG_enumeration_type
             # we can ignore sub structures. They should be built out
             # when the named member finds them
             # we can ignore sub structures. They should be built out
