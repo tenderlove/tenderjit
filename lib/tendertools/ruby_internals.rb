@@ -7,56 +7,108 @@ require "fiddle/struct"
 
 module TenderTools
   class RubyInternals
-    class DebugEnumVisitor
-      def initialize unit, debug_strs
-        @unit       = unit
-        @debug_strs = debug_strs
-        @all_dies   = unit.die.to_a
+    def self.find_archive
+      get_internals.archive
+    end
+
+    class Internals
+      attr_reader :archive
+
+      def initialize archive, slide, symbol_addresses, constants, structs, unions
+        @archive          = archive
+        @slide            = slide
+        @symbol_addresses = symbol_addresses
+        @constants        = constants
+        @structs          = structs
+        @unions           = unions
       end
 
-      def visit unit, die, acc
-        _visit unit, die, [], acc
+      def symbol_address name
+        @symbol_addresses[name]
       end
 
-      private
-
-      def _visit unit, die, stack, acc
-        stack.push die
-
-        if respond_to?(die.tag.identifier, true)
-          acc = send die.tag.identifier, unit, die, stack, acc
-        end
-        if die.type
-          acc = _visit unit, find_type(die), stack, acc
-        end
-        die.children.each { |child|
-          acc = _visit unit, child, stack, acc
-        }
-
-        stack.pop
-
-        acc
+      def c name
+        @constants[name]
       end
 
-      def DW_TAG_enumerator unit, die, stack, acc
-        acc[die.name(@debug_strs)] = die.const_value
-        acc
-      end
-
-      def find_type die
-        @all_dies.bsearch { |c_die| die.type <=> c_die.offset }
+      def struct name
+        @structs[name]
       end
     end
 
-    def self.find_archive
+    def self.get_internals
+      archive = nil
+      symbol_addresses = {}
+      constants = {}
+      structs = {}
+      unions = {}
+
       File.open(RbConfig.ruby) do |f|
         my_macho = MachO.new f
+
         my_macho.each do |section|
           if section.symtab?
-            return section.nlist.find_all(&:archive?).map(&:archive).uniq.first
+            section.nlist.each do |item|
+              if item.archive?
+                archive ||= item.archive
+              else
+                name = item.name.delete_prefix(RbConfig::CONFIG["SYMBOL_PREFIX"])
+                symbol_addresses[name] = item.value if item.value > 0
+              end
+            end
           end
         end
       end
+
+      # Fix up addresses due to ASLR
+      slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - symbol_addresses["rb_st_insert"]
+      symbol_addresses.transform_values! { |v| v + slide }
+
+      File.open(archive) do |f|
+        ar = AR.new f
+        ar.each do |object_file|
+          next unless object_file.identifier.end_with?(".o")
+          next unless %w{ debug.o iseq.o gc.o st.o vm.o mjit.o }.include?(object_file.identifier)
+
+          f.seek object_file.pos, IO::SEEK_SET
+          macho = MachO.new f
+
+          debug_info = debug_strs = debug_abbrev = nil
+          macho.each do |thing|
+            if thing.section?
+              case thing.sectname
+              when "__debug_info"
+                debug_info = thing.as_dwarf
+              when "__debug_str"
+                debug_strs = thing.as_dwarf
+              when "__debug_abbrev"
+                debug_abbrev = thing.as_dwarf
+              else
+              end
+            end
+
+            break if debug_info && debug_strs && debug_abbrev
+          end
+
+          raise "Couldn't find debug information" unless debug_info
+
+          if object_file.identifier == "debug.o"
+            debug_info.compile_units(debug_abbrev.tags).each do |unit|
+              unit.die.find_all { |x| x.tag.enumerator? }.each do |enum|
+                name = enum.name(debug_strs).delete_prefix("RUBY_")
+                constants[name] = enum.const_value
+              end
+            end
+          else
+            builder = TypeBuilder.new(debug_info, debug_strs, debug_abbrev)
+            builder.build
+            structs.merge! builder.structs
+            unions.merge! builder.unions
+          end
+        end
+      end
+
+      Internals.new(archive, slide, symbol_addresses, constants, structs, unions)
     end
 
     class TypeBuilder
@@ -64,11 +116,15 @@ module TenderTools
 
       Type = Struct.new(:die, :fiddle)
 
+      attr_reader :known_types, :structs, :unions
+
       def initialize debug_info, debug_strs, debug_abbrev
         @debug_info   = debug_info
         @debug_strs   = debug_strs
         @debug_abbrev = debug_abbrev
         @known_types  = []
+        @structs      = {}
+        @unions       = {}
       end
 
       def build
@@ -77,13 +133,20 @@ module TenderTools
           all_dies = top.to_a
           top.children.each do |die|
             next if die.tag.user?
-
             find_or_build die, all_dies
           end
         end
         @known_types.compact.each_with_object({}) do |type, hash|
           name = type.die.name(debug_strs)
           hash[name] = type.fiddle if name
+        end
+      end
+
+      def handle_typedef die, all_dies
+        name = die.name(@debug_strs)
+        type = find_type_die(die, all_dies)
+        if type.tag.identifier == :DW_TAG_structure_type
+          @structs[name] = find_or_build type, all_dies
         end
       end
 
@@ -94,44 +157,27 @@ module TenderTools
         case die.tag.identifier
         when :DW_TAG_structure_type
           fiddle = build_fiddle(die, all_dies, Fiddle::CStruct)
+          name = die.name(@debug_strs)
           @known_types[die.offset] = Type.new(die, fiddle)
+          @structs[name] = fiddle if name
           fiddle
         when :DW_TAG_union_type
           fiddle = build_fiddle(die, all_dies, Fiddle::CUnion)
+          name = die.name(@debug_strs)
           @known_types[die.offset] = Type.new(die, fiddle)
+          @unions[name] = fiddle if name
           fiddle
-        when :DW_TAG_base_type
-        when :DW_TAG_const_type
         when :DW_TAG_array_type
           fiddle = build_array die, all_dies
           @known_types[die.offset] = Type.new(die, fiddle)
           fiddle
-        when :DW_TAG_enumeration_type
-        when :DW_TAG_restrict_type
-        when :DW_TAG_subprogram
         when :DW_TAG_typedef
-        when :DW_TAG_pointer_type
-        when :DW_TAG_variable
-        when :DW_TAG_subroutine_type
-        when :DW_TAG_volatile_type
-        when :DW_TAG_compile_unit
-        when :DW_TAG_formal_parameter
-        when :DW_TAG_inlined_subroutine
-        when :DW_TAG_subrange_type
-        when :DW_TAG_member
-        when :DW_TAG_lexical_block
-        when :DW_TAG_enumerator
-        when :DW_TAG_unspecified_parameters
-        when :DW_TAG_label
-          # ???
-        else
-          raise "uknown type #{die.tag.identifier}"
+          handle_typedef die, all_dies
         end
-
       end
 
       def build_array die, all_dies
-        type = find_member all_dies.bsearch { |c| die.type <=> c.offset }, nil, all_dies
+        type = find_fiddle_type find_type_die(die, all_dies), all_dies
         [type, die.count + 1]
       end
 
@@ -149,9 +195,14 @@ module TenderTools
         "double"                 => Fiddle::TYPE_DOUBLE,
         "long int"               => Fiddle::TYPE_LONG,
         "_Bool"                  => Fiddle::TYPE_CHAR,
+        "float"                  => Fiddle::TYPE_FLOAT,
       }
 
-      def find_member type_die, member_name, all_dies
+      def find_type_die die, all_dies
+        all_dies.bsearch { |c| die.type <=> c.offset }
+      end
+
+      def find_fiddle_type type_die, all_dies
         case type_die.tag.identifier
         when :DW_TAG_pointer_type
           Fiddle::TYPE_VOIDP
@@ -160,8 +211,8 @@ module TenderTools
           DWARF_TO_FIDDLE.fetch name
         when :DW_TAG_const_type, :DW_TAG_volatile_type, :DW_TAG_enumeration_type, :DW_TAG_typedef
           if type_die.type
-            sub_type = all_dies.bsearch { |c| type_die.type <=> c.offset }
-            find_member sub_type, member_name, all_dies
+            sub_type = find_type_die(type_die, all_dies)
+            find_fiddle_type sub_type, all_dies
           else
             raise
           end
@@ -212,46 +263,6 @@ module TenderTools
           end
         end
         Fiddle::CStructBuilder.create(fiddle_type, types, names)
-      end
-    end
-
-    File.open(find_archive) do |f|
-      ar = AR.new f
-      ar.each do |object_file|
-        next unless object_file.identifier.end_with?(".o")
-        next unless %w{ debug.o iseq.o gc.o st.o vm.o }.include?(object_file.identifier)
-
-        f.seek object_file.pos, IO::SEEK_SET
-        macho = MachO.new f
-        debug_info = macho.find_section("__debug_info")&.as_dwarf || next
-        debug_strs = macho.find_section("__debug_str").as_dwarf
-        debug_abbrev = macho.find_section("__debug_abbrev").as_dwarf
-
-        case object_file.identifier
-        when "debug.o"
-          debug_info.compile_units(debug_abbrev.tags).each do |unit|
-            unit.die.children.each do |die|
-              if die.name(debug_strs) == "ruby_dummy_gdb_enums"
-                visitor = DebugEnumVisitor.new(unit, debug_strs)
-                CONSTANTS = visitor.visit(unit, unit.die.find_type(die), {})
-                break
-              end
-            end
-          end
-        when "iseq.o"
-          builder = TypeBuilder.new(debug_info, debug_strs, debug_abbrev)
-          ISEQ = builder.build
-        when "gc.o"
-          builder = TypeBuilder.new(debug_info, debug_strs, debug_abbrev)
-          GC = builder.build
-        when "st.o"
-          builder = TypeBuilder.new(debug_info, debug_strs, debug_abbrev)
-          ST = builder.build
-        when "vm.o"
-          builder = TypeBuilder.new(debug_info, debug_strs, debug_abbrev)
-          VM = builder.build
-        else
-        end
       end
     end
   end

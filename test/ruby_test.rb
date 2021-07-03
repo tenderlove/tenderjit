@@ -172,33 +172,63 @@ module TenderTools
       end
     end
 
-    def test_find_global
-      my_macho = MachO.new File.open RbConfig.ruby
+    def test_rb_vm_get_insns_address_table
+      sym = nil
 
-      my_macho.each do |section|
-        if section.symtab?
-          section.nlist.each do |symbol|
-            if symbol.name == "_ruby_api_version"
-              if symbol.value > 0
-                addr = symbol.value + Hacks.slide
-                pointer = Fiddle::Pointer.new(addr, Fiddle::SIZEOF_INT * 3)
-                assert_equal RbConfig::CONFIG["ruby_version"].split(".").map(&:to_i),
-                  pointer[0, Fiddle::SIZEOF_INT * 3].unpack("LLL")
-              else
-                assert_predicate symbol, :stab?
-                assert_predicate symbol, :gsym?
+      File.open(RbConfig.ruby) do |f|
+        my_macho = MachO.new f
+
+        my_macho.each do |section|
+          if section.symtab?
+            sym = section.nlist.find do |symbol|
+              symbol.name == "_rb_vm_get_insns_address_table" && symbol.value
+            end
+            break if sym
+          end
+        end
+      end
+
+      addr = sym.value + Hacks.slide
+      ptr = Fiddle::Function.new(addr, [], TYPE_VOIDP).call
+      len = RubyVM::INSTRUCTION_NAMES.length
+      p ptr[0, len * Fiddle::SIZEOF_VOIDP].unpack("Q#{len}")
+    end
+
+    def test_guess_slide
+      File.open(RbConfig.ruby) do |f|
+        my_macho = MachO.new f
+
+        my_macho.each do |section|
+          if section.symtab?
+            section.nlist.each do |symbol|
+              if symbol.name == "_rb_st_insert"
+                guess_slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - symbol.value
+                assert_equal Hacks.slide, guess_slide
               end
             end
+          end
+        end
+      end
+    end
 
-            #if symbol.name == "_rb_vm_get_insns_address_table"
-            #  p section.class => [symbol, symbol.stab?]
-            #  p((symbol.value + Hacks.slide).to_s(16))
-            #end
+    def test_find_global
+      File.open(RbConfig.ruby) do |f|
+        my_macho = MachO.new f
 
-            if symbol.name == "_rb_st_insert"
-              #p section.class => [symbol, symbol.stab?]
-              guess_slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - symbol.value
-              assert_equal Hacks.slide, guess_slide
+        my_macho.each do |section|
+          if section.symtab?
+            section.nlist.each do |symbol|
+              if symbol.name == "_ruby_api_version"
+                if symbol.value > 0
+                  addr = symbol.value + Hacks.slide
+                  pointer = Fiddle::Pointer.new(addr, Fiddle::SIZEOF_INT * 3)
+                  assert_equal RbConfig::CONFIG["ruby_version"].split(".").map(&:to_i),
+                    pointer[0, Fiddle::SIZEOF_INT * 3].unpack("LLL")
+                else
+                  assert_predicate symbol, :stab?
+                  assert_predicate symbol, :gsym?
+                end
+              end
             end
           end
         end
