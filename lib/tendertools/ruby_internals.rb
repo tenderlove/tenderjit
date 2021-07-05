@@ -5,22 +5,83 @@ require "tendertools/ar"
 require "fiddle"
 require "fiddle/struct"
 
-module TenderTools
-  class RubyInternals
-    def self.find_archive
-      get_internals.archive
+module Fiddle
+  class CArray
+    def initialize ptr, len, type
+      @ptr  = ptr
+      @len  = len
+      @type = type
     end
 
+    def [] i
+      raise IndexError if i > @len
+      size = Fiddle::PackInfo::SIZE_MAP[@type]
+      offset = i * size
+      @ptr[offset, size].unpack1(Fiddle::PackInfo::PACK_MAP[@type])
+    end
+  end
+end
+
+module TenderTools
+  class RubyInternals
     class Internals
-      attr_reader :archive
+      include Fiddle
+
+      attr_reader :archive, :encoded_instructions, :instruction_lengths
+
+      class Fiddle::Function
+        def to_proc
+          this = self
+          lambda { |*args| this.call(*args) }
+        end
+      end unless Function.method_defined?(:to_proc)
+
+      def self.make_function name, args, ret
+        ptr = Handle::DEFAULT[name]
+        func = Function.new ptr, args, ret, name: name
+        define_method name, &func.to_proc
+      end
+
+      make_function "rb_intern", [TYPE_CONST_STRING], TYPE_INT
 
       def initialize archive, slide, symbol_addresses, constants, structs, unions
-        @archive          = archive
-        @slide            = slide
-        @symbol_addresses = symbol_addresses
-        @constants        = constants
-        @structs          = structs
-        @unions           = unions
+        @archive              = archive
+        @slide                = slide
+        @symbol_addresses     = symbol_addresses
+        @constants            = constants
+        @structs              = structs
+        @unions               = unions
+        @encoded_instructions = read_encoded_instructions(symbol_addresses)
+        @instruction_lengths  = read_instruction_lengths(symbol_addresses)
+        @insn_to_name         = Hash[@encoded_instructions.zip(RubyVM::INSTRUCTION_NAMES)]
+        @insn_len             = Hash[@encoded_instructions.zip(@instruction_lengths)]
+      end
+
+      def insn_name encoded_name
+        @insn_to_name.fetch encoded_name
+      end
+
+      def insn_len encoded_name
+        @insn_len.fetch encoded_name
+      end
+
+      def read_instruction_lengths symbol_addresses
+        # FIXME: this needs to be tested on Linux, certainly the name will be
+        # different.
+        addr = symbol_addresses.fetch("insn_len.t")
+
+        # FIXME: we should use DWARF data to figure out the array type rather
+        # than hardcoding "sizeof char" below
+        len  = RubyVM::INSTRUCTION_NAMES.length
+        Fiddle::Pointer.new(addr)[0, len * SIZEOF_CHAR].unpack("C#{len}")
+      end
+
+      def read_encoded_instructions symbol_addresses
+        addr = symbol_addresses["rb_vm_get_insns_address_table"]
+        func = Fiddle::Function.new(addr, [], TYPE_VOIDP)
+        buf  = func.call
+        len  = RubyVM::INSTRUCTION_NAMES.length
+        buf[0, len * SIZEOF_VOIDP].unpack("Q#{len}")
       end
 
       def symbol_address name
@@ -119,12 +180,13 @@ module TenderTools
       attr_reader :known_types, :structs, :unions
 
       def initialize debug_info, debug_strs, debug_abbrev
-        @debug_info   = debug_info
-        @debug_strs   = debug_strs
-        @debug_abbrev = debug_abbrev
-        @known_types  = []
-        @structs      = {}
-        @unions       = {}
+        @debug_info          = debug_info
+        @debug_strs          = debug_strs
+        @debug_abbrev        = debug_abbrev
+        @known_types         = []
+        @structs             = {}
+        @unions              = {}
+        @function_signatures = {}
       end
 
       def build
@@ -171,6 +233,13 @@ module TenderTools
           fiddle = build_array die, all_dies
           @known_types[die.offset] = Type.new(die, fiddle)
           fiddle
+        #when :DW_TAG_subprogram
+        #  name = die.name(@debug_strs)
+        #  return_type = find_fiddle_type find_type_die(die, all_dies), all_dies
+        #  param_types = die.children.map { |x|
+        #    find_fiddle_type find_type_die(x, all_dies), all_dies
+        #  }
+        #  @function_signatures[name] = [param_types, return_type]
         when :DW_TAG_typedef
           handle_typedef die, all_dies
         end

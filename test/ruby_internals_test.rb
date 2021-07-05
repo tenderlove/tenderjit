@@ -55,6 +55,28 @@ module TenderTools
       assert_same rb.struct("rb_iseq_t"), rb.struct("rb_iseq_struct")
     end
 
+    def test_encoded_instructions
+      rTypedData            = rb.struct("RTypedData")
+      rb_iseq_t             = rb.struct("rb_iseq_t")
+      rb_iseq_constant_body = rb.struct("rb_iseq_constant_body")
+      rb_iseq = RubyVM::InstructionSequence.of(method(__method__))
+      iseq    = rb_iseq_t.new rTypedData.new(Fiddle.dlwrap(rb_iseq)).data
+      body    = rb_iseq_constant_body.new iseq.body
+
+      ary = Fiddle::CArray.new(body.iseq_encoded, body.iseq_size, Fiddle::TYPE_VOIDP)
+
+      assert_equal "putself", rb.insn_name(ary[0])
+
+      idx = 0
+      rb_iseq.to_a.last.each do |insn|
+        next unless insn.is_a?(Array)
+        name = insn.first
+        assert_equal name.to_s, rb.insn_name(ary[idx])
+        assert_equal insn.length, rb.insn_len(ary[idx])
+        idx += insn.length
+      end
+    end
+
     def test_RBasic2
       rBasic = rb.struct("RBasic")
 
@@ -263,6 +285,7 @@ module TenderTools
       fisk = Fisk.new
 
       klass = self
+      rb = self.rb
       binary = fisk.asm do
         push rbp
         mov rcx, rdi # save the first parameter, it's the iseq
@@ -272,7 +295,7 @@ module TenderTools
         self.or rcx, imm8(0x1)
 
         mov rdi, imm64(Fiddle.dlwrap(x))
-        mov rsi, imm64(Hacks.rb_intern("call"))
+        mov rsi, imm64(rb.rb_intern("call"))
         mov rdx, imm32(1)
         mov r8, imm64(Fiddle::Handle::DEFAULT["rb_funcall"])
         call r8
