@@ -46,10 +46,6 @@ module DWARF
 
         debug_abbrev = DWARF::DebugAbbrev.new io, abbrev, mach_o.start_pos
 
-        section_info = mach_o.find do |thing|
-          thing.section? && thing.sectname == "__debug_str"
-        end
-
         info = mach_o.find do |thing|
           thing.section? && thing.sectname == "__debug_info"
         end
@@ -66,11 +62,22 @@ module DWARF
       end
     end
 
+    class StructInfo
+      def initialize die, names, ranges
+        @die    = die
+        @ranges = ranges
+      end
+
+      def byte_size; @die.byte_size; end
+
+      def used_size
+        @ranges.map(&:size).inject(:+)
+      end
+    end
+
     def show unit, die, strings, dies
-      puts "struct " + strings.string_at(die.name_offset)
-      puts "========= #{die.byte_size}"
-      bytes = ["*******"] * die.byte_size
-      die.children.each do |child|
+      names = []
+      ranges = die.children.map do |child|
         if child.tag.member?
           type_die = dies.find { |d| d.offset == child.type }
           size = if type_die.tag.pointer_type?
@@ -80,15 +87,19 @@ module DWARF
                  end
           start = child.data_member_location
           name = strings.string_at(child.name_offset)
-          size.times { |i| bytes[i + start] = name }
+          names << name
+          Range.new(start, start + size, exclude_end: true)
         else
           raise NotImplementedError
         end
       end
-      bytes.each { |m| puts "| #{m}" }
+
+      StructInfo.new die, names, ranges
     end
 
     def test_read_struct
+      struct_info = nil
+
       File.open SLOP do |io|
         mach_o = MachO.new(io)
 
@@ -102,14 +113,19 @@ module DWARF
         debug_info = DWARF::DebugInfo.new io, info, mach_o.start_pos
 
         units = debug_info.compile_units(debug_abbrev.tags)
+
         units.each do |unit|
           unit.die.children.each do |die|
             if die.tag.structure_type?
-              show unit, die, strings, unit.die.to_a
+              struct_info = show unit, die, strings, unit.die.to_a
+              break
             end
           end
         end
       end
+
+      assert_equal 24, struct_info.byte_size
+      assert_equal 17, struct_info.used_size
     end
   end
 end

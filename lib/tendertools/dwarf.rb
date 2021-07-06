@@ -197,19 +197,6 @@ module DWARF
       children.each { |child| child.each(&block) }
     end
 
-    def each_with_parents &block
-      iter_with_stack([], &block)
-    end
-
-    protected
-
-    def iter_with_stack stack, &block
-      yield self, stack
-      stack.push self
-      children.each { |child| child.iter_with_stack(stack, &block) }
-      stack.pop
-    end
-
     private
 
     def at name
