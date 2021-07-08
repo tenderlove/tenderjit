@@ -1,7 +1,7 @@
 require "rbconfig"
-require "tendertools/mach-o"
-require "tendertools/dwarf"
-require "tendertools/ar"
+require "worf"
+require "odinflex/mach-o"
+require "odinflex/ar"
 require "fiddle"
 require "fiddle/struct"
 
@@ -22,7 +22,7 @@ module Fiddle
   end
 end
 
-module TenderTools
+module TenderJIT
   class RubyInternals
     class Internals
       include Fiddle
@@ -105,7 +105,7 @@ module TenderTools
       unions = {}
 
       File.open(RbConfig.ruby) do |f|
-        my_macho = MachO.new f
+        my_macho = OdinFlex::MachO.new f
 
         my_macho.each do |section|
           if section.symtab?
@@ -126,13 +126,13 @@ module TenderTools
       symbol_addresses.transform_values! { |v| v + slide }
 
       File.open(archive) do |f|
-        ar = AR.new f
+        ar = OdinFlex::AR.new f
         ar.each do |object_file|
           next unless object_file.identifier.end_with?(".o")
           next unless %w{ debug.o iseq.o gc.o st.o vm.o mjit.o }.include?(object_file.identifier)
 
           f.seek object_file.pos, IO::SEEK_SET
-          macho = MachO.new f
+          macho = OdinFlex::MachO.new f
 
           debug_info = debug_strs = debug_abbrev = nil
           macho.each do |thing|

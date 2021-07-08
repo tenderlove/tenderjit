@@ -1,15 +1,12 @@
 ENV["MT_NO_PLUGINS"] = "1"
 
 require "minitest/autorun"
-require "tendertools/mach-o"
-require "tendertools/dwarf"
-require "tendertools/ar"
+require "tenderjit/ruby_internals"
 require "rbconfig"
-require "fiddle"
 require "fisk"
 require "fisk/helpers"
 
-module TenderTools
+module TenderJIT
   class Test < Minitest::Test
     include Fiddle
 

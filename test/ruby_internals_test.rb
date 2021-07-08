@@ -1,9 +1,7 @@
 require "helper"
-require "tendertools/ruby_internals"
-require "fiddle/import"
 require "etc"
 
-module TenderTools
+module TenderJIT
   class RubyInternalsTest < Test
     attr_reader :rb
     def setup
