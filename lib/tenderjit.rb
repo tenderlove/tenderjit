@@ -22,11 +22,16 @@ class TenderJIT
   MJIT_OPTIONS.min_calls = 5
   MJIT_OPTIONS.wait = 0
 
+  # Important Addresses
+
+  VM_EXEC_CORE = Internals.symbol_address("vm_exec_core")
+
   extend Fiddle::Importer
 
   Stats = struct [
     "int64_t compiled_methods",
     "int64_t executed_methods",
+    "int64_t exits",
   ]
 
   def initialize
@@ -42,6 +47,10 @@ class TenderJIT
 
   def executed_methods
     @stats.executed_methods
+  end
+
+  def exits
+    @stats.exits
   end
 
   def compile method
@@ -82,13 +91,87 @@ class TenderJIT
        .inc(_.m64(_.r10, Stats.offsetof("executed_methods")))
     }.write_to(@jit_buffer)
 
+    offset = 0
+
     while insn = insns.shift
       name   = rb.insn_name(insn)
       params = insns.shift(rb.insn_len(insn) - 1)
-      send("handle_#{name}", *params).write_to(@jit_buffer)
+
+      if respond_to?("handle_#{name}", true)
+        fisk = send("handle_#{name}", *params)
+        fisk.write_to(@jit_buffer)
+      else
+        exit_pc = body.iseq_encoded.to_i + (offset * Fiddle::SIZEOF_VOIDP)
+        make_exit(exit_pc).write_to @jit_buffer
+        break
+      end
+
+      offset += rb.insn_len(insn)
     end
 
     body.jit_func = jit_head
+  end
+
+  def make_exit exit_pc
+    fisk = Fisk.new
+
+    stats_addr = @stats.to_i
+
+    fisk.instance_eval do
+      # increment the exits counter
+      mov r10, imm64(stats_addr)
+      inc m64(r10, Stats.offsetof("exits"))
+
+      # Set the PC on the CFP
+      mov r10, imm64(exit_pc)
+      mov m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), r10
+
+      reg_ep = r11
+
+      # Set VM_FRAME_FLAG_FINISH so that vm_exec_core will return
+      mov reg_ep, m64(REG_CFP, RbControlFrameStruct.offsetof("ep"))
+      mov rax, m64(reg_ep)
+      self.or rax, imm32(Internals.c("VM_FRAME_FLAG_FINISH"))
+      mov m64(reg_ep), rax
+
+      # EC is already in RDI, so we don't need to put it there
+      # mov rdi, REG_EC
+      mov rsi, imm32(0) # "initial"
+      mov r10, imm64(VM_EXEC_CORE)
+
+      push rsp
+      call r10
+      pop rsp
+      ret
+    end
+
+    fisk
+  end
+
+  def handle_putself
+    sizeof_sp = member_size(RbControlFrameStruct, "sp")
+
+    fisk = Fisk.new
+
+    fisk.instance_eval do
+      reg_sp   = r10
+      reg_self = r11
+
+      # Increment the SP
+      mov reg_sp, m64(REG_CFP, RbControlFrameStruct.offsetof("sp"))
+      add reg_sp, imm32(sizeof_sp)
+
+      # Write the SP back to the CFP
+      mov m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), reg_sp
+
+      # Get self from the CFP
+      mov reg_self, m64(REG_CFP, RbControlFrameStruct.offsetof("self"))
+
+      # Write self to the top of the stack
+      mov m64(reg_sp, -sizeof_sp), reg_self
+    end
+
+    fisk
   end
 
   def handle_putobject literal

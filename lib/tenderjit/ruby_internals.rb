@@ -72,7 +72,7 @@ class TenderJIT
       end
 
       def c name
-        @constants[name]
+        @constants.fetch name
       end
 
       def struct name
@@ -148,6 +148,7 @@ class TenderJIT
             builder.build
             structs.merge! builder.structs
             unions.merge! builder.unions
+            constants.merge! builder.enums
           end
         end
       end
@@ -160,7 +161,7 @@ class TenderJIT
 
       Type = Struct.new(:die, :fiddle)
 
-      attr_reader :known_types, :structs, :unions
+      attr_reader :known_types, :structs, :unions, :enums
 
       def initialize debug_info, debug_strs, debug_abbrev
         @debug_info          = debug_info
@@ -170,6 +171,7 @@ class TenderJIT
         @structs             = {}
         @unions              = {}
         @function_signatures = {}
+        @enums               = {}
       end
 
       def build
@@ -225,6 +227,11 @@ class TenderJIT
         #  @function_signatures[name] = [param_types, return_type]
         when :DW_TAG_typedef
           handle_typedef die, all_dies
+        when :DW_TAG_enumeration_type
+          die.children.each do |child|
+            name = child.name(@debug_strs)
+            @enums[name] = child.const_value
+          end
         end
       end
 
