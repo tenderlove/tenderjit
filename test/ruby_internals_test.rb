@@ -1,7 +1,8 @@
 require "helper"
 require "etc"
+require "tenderjit/fiddle_hacks"
 
-module TenderJIT
+class TenderJIT
   class RubyInternalsTest < Test
     attr_reader :rb
     def setup
@@ -61,7 +62,7 @@ module TenderJIT
       iseq    = rb_iseq_t.new rTypedData.new(Fiddle.dlwrap(rb_iseq)).data
       body    = rb_iseq_constant_body.new iseq.body
 
-      ary = Fiddle::CArray.new(body.iseq_encoded, body.iseq_size, Fiddle::TYPE_VOIDP)
+      ary = Fiddle::CArray.unpack(body.iseq_encoded, body.iseq_size, Fiddle::TYPE_VOIDP)
 
       assert_equal "putself", rb.insn_name(ary[0])
 

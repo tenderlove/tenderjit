@@ -5,24 +5,7 @@ require "odinflex/ar"
 require "fiddle"
 require "fiddle/struct"
 
-module Fiddle
-  class CArray
-    def initialize ptr, len, type
-      @ptr  = ptr
-      @len  = len
-      @type = type
-    end
-
-    def [] i
-      raise IndexError if i > @len
-      size = Fiddle::PackInfo::SIZE_MAP[@type]
-      offset = i * size
-      @ptr[offset, size].unpack1(Fiddle::PackInfo::PACK_MAP[@type])
-    end
-  end
-end
-
-module TenderJIT
+class TenderJIT
   class RubyInternals
     class Internals
       include Fiddle
