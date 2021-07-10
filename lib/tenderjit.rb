@@ -29,16 +29,26 @@ class TenderJIT
   extend Fiddle::Importer
 
   Stats = struct [
-    "int64_t compiled_methods",
-    "int64_t executed_methods",
-    "int64_t exits",
+    "uint64_t compiled_methods",
+    "uint64_t executed_methods",
+    "uint64_t exits",
   ]
+
+  ExitStats = struct RubyVM::INSTRUCTION_NAMES.map { |n|
+    "uint64_t #{n}"
+  }
 
   def initialize
     @stats = Stats.malloc(Fiddle::RUBY_FREE)
     @stats.compiled_methods = 0
     @stats.executed_methods = 0
+
+    @exit_stats = ExitStats.malloc(Fiddle::RUBY_FREE)
     @jit_buffer = Fisk::Helpers.jitbuffer(4096 * 4)
+  end
+
+  def exit_stats
+    @exit_stats.to_h
   end
 
   def compiled_methods
@@ -102,7 +112,7 @@ class TenderJIT
         fisk.write_to(@jit_buffer)
       else
         exit_pc = body.iseq_encoded.to_i + (offset * Fiddle::SIZEOF_VOIDP)
-        make_exit(exit_pc).write_to @jit_buffer
+        make_exit(name, exit_pc).write_to @jit_buffer
         break
       end
 
@@ -112,15 +122,20 @@ class TenderJIT
     body.jit_func = jit_head
   end
 
-  def make_exit exit_pc
+  def make_exit exit_insn_name, exit_pc
     fisk = Fisk.new
 
     stats_addr = @stats.to_i
+    exit_stats_addr = @exit_stats.to_i
 
     fisk.instance_eval do
       # increment the exits counter
       mov r10, imm64(stats_addr)
       inc m64(r10, Stats.offsetof("exits"))
+
+      # increment the instruction specific counter
+      mov r10, imm64(exit_stats_addr)
+      inc m64(r10, ExitStats.offsetof(exit_insn_name))
 
       # Set the PC on the CFP
       mov r10, imm64(exit_pc)
@@ -201,6 +216,7 @@ class TenderJIT
   def handle_leave
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
+    # FIXME: We need to check interrupts and exit
     fisk = Fisk.new
     fisk.instance_eval do
       reg_sp = r10

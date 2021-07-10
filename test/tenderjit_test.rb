@@ -67,6 +67,8 @@ class TenderJIT
       assert_equal 1, jit.compiled_methods
       assert_equal 1, jit.executed_methods
       assert_equal 1, jit.exits
+
+      assert_equal 1, jit.exit_stats["opt_send_without_block"]
     end
   end
 end
