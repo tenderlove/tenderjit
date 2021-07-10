@@ -3,6 +3,35 @@
 require "helper"
 
 class TenderJIT
+  class JITTwoMethods < Test
+    def simple
+      "foo"
+    end
+
+    def putself
+      self
+    end
+
+    def test_compile_two_methods
+      jit = TenderJIT.new
+      jit.compile method(:simple)
+      jit.compile method(:putself)
+      assert_equal 2, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      a = simple
+      b = putself
+      jit.disable!
+
+      assert_equal "foo", a
+      assert_equal self, b
+
+      assert_equal 2, jit.compiled_methods
+      assert_equal 2, jit.executed_methods
+    end
+  end
+
   class SimpleMethodJIT < Test
     def simple
       "foo"
