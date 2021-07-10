@@ -163,6 +163,34 @@ class TenderJIT
     fisk
   end
 
+  def handle_getlocal_WC_0 idx
+    #level = 0
+    sizeof_sp = member_size(RbControlFrameStruct, "sp")
+
+    fisk = Fisk.new
+
+    fisk.instance_eval do
+      reg_ep    = r11
+      reg_local = r11
+      reg_sp    = r10
+
+      # Get the local value from the EP
+      mov reg_ep, m64(REG_CFP, RbControlFrameStruct.offsetof("ep"))
+      sub reg_ep, imm8(Fiddle::SIZEOF_VOIDP * idx)
+      mov reg_local, m64(reg_ep)
+
+      # Increment the SP
+      mov reg_sp, m64(REG_CFP, RbControlFrameStruct.offsetof("sp"))
+      add reg_sp, imm32(sizeof_sp)
+
+      # Write the SP back to the CFP
+      mov m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), reg_sp
+
+      # Write the local to the top of the stack
+      mov m64(reg_sp, -sizeof_sp), reg_local
+    end
+  end
+
   def handle_putself
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
 

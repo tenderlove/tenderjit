@@ -47,6 +47,29 @@ class TenderJIT
     end
   end
 
+  class GetLocalWC0 < Test
+    def getlocal_wc_0 x
+      x
+    end
+
+    def test_getlocal_wc_0
+      jit = TenderJIT.new
+      jit.compile method(:getlocal_wc_0)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+      assert_equal 0, jit.exits
+
+      jit.enable!
+      v = getlocal_wc_0 "foo"
+      jit.disable!
+      assert_equal "foo", v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+  end
+
   class HardMethodJIT < Test
     def too_hard
       "foo".to_s
