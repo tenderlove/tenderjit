@@ -84,6 +84,8 @@ class TenderJIT
   REG_EC  = Fisk::Registers::RDI
   REG_CFP = Fisk::Registers::RSI
 
+  # rdi, rsi, rdx, rcx, r8, r9
+
   def compile_iseq_t addr
     @stats.compiled_methods += 1
 
@@ -158,6 +160,66 @@ class TenderJIT
       call r10
       pop rsp
       ret
+    end
+
+    fisk
+  end
+
+  def handle_opt_lt call_data
+    sizeof_sp = member_size(RbControlFrameStruct, "sp")
+
+    fisk = Fisk.new
+    fisk.instance_eval do
+      reg_sp = rdx
+      reg_lhs = r8
+      reg_rhs = r9
+
+      # Opt LT takes two parameters
+      mov reg_sp, m64(REG_CFP, RbControlFrameStruct.offsetof("sp"))
+      mov reg_rhs, m64(reg_sp, -sizeof_sp)
+      mov reg_lhs, m64(reg_sp, -(sizeof_sp * 2))
+
+      # Decrement SP and write it back to the CFP
+      #   `POPN(2)`
+      sub reg_sp, imm32(sizeof_sp * 2)
+      mov m64(REG_CFP, sizeof_sp), reg_sp
+
+      # Is the LHS a fixnum?
+      test reg_lhs, imm32(Internals.c("RUBY_FIXNUM_FLAG"))
+      jz label(:next_check)
+
+      # Is the RHS a fixnum?
+      test reg_rhs, imm32(Internals.c("RUBY_FIXNUM_FLAG"))
+      jz label(:next_check)
+
+      cmp reg_lhs, reg_rhs
+      mov reg_lhs, imm32(Internals.c("Qtrue"))
+      mov reg_rhs, imm32(Internals.c("Qfalse"))
+      cmova reg_lhs, reg_rhs
+      mov m64(reg_sp, -sizeof_sp), reg_lhs
+
+      put_label(:next_check)
+    end
+    fisk
+  end
+
+  def handle_putobject_INT2FIX_1_
+    sizeof_sp = member_size(RbControlFrameStruct, "sp")
+
+    fisk = Fisk.new
+
+    fisk.instance_eval do
+      reg_sp    = r10
+
+      # Increment the SP
+      mov reg_sp, m64(REG_CFP, RbControlFrameStruct.offsetof("sp"))
+      add reg_sp, imm32(sizeof_sp)
+
+      # Write the SP back to the CFP
+      mov m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), reg_sp
+
+      # Write 1 to the top of the stack
+      mov m64(reg_sp, -sizeof_sp), imm32(0x3)
     end
 
     fisk
