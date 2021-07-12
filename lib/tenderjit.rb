@@ -26,6 +26,12 @@ class TenderJIT
 
   VM_EXEC_CORE = Internals.symbol_address("vm_exec_core")
 
+  # Important Constants
+
+  Qtrue  = Internals.c "Qtrue"
+  Qfalse = Internals.c "Qfalse"
+  Qundef = Internals.c "Qundef"
+
   extend Fiddle::Importer
 
   Stats = struct [
@@ -38,6 +44,28 @@ class TenderJIT
     "uint64_t #{n}"
   }
 
+  class TempStack
+    def initialize
+      @stack = []
+      @sizeof_sp = TenderJIT.member_size(RbControlFrameStruct, "sp")
+    end
+
+    def push thing
+      m = Fisk::M64.new(REG_SP, @stack.length * @sizeof_sp)
+      @stack.push thing
+      m
+    end
+
+    def pop
+      @stack.pop
+      Fisk::M64.new(REG_SP, @stack.length * @sizeof_sp)
+    end
+
+    def size
+      @stack.size
+    end
+  end
+
   def initialize
     @stats = Stats.malloc(Fiddle::RUBY_FREE)
     @stats.compiled_methods = 0
@@ -45,6 +73,7 @@ class TenderJIT
 
     @exit_stats = ExitStats.malloc(Fiddle::RUBY_FREE)
     @jit_buffer = Fisk::Helpers.jitbuffer(4096 * 4)
+    @temp_stack = TempStack.new
   end
 
   def exit_stats
@@ -83,8 +112,12 @@ class TenderJIT
 
   REG_EC  = Fisk::Registers::RDI
   REG_CFP = Fisk::Registers::RSI
+  REG_SP  = Fisk::Registers::RDX
 
-  # rdi, rsi, rdx, rcx, r8, r9
+  # rdi, rsi, rdx, rcx, r8 - r15
+  #
+  # Caller saved regs:
+  #    rdi, rsi, rdx, rcx, r8 - r10
 
   def compile_iseq_t addr
     @stats.compiled_methods += 1
@@ -101,6 +134,7 @@ class TenderJIT
     Fisk.new { |_|
       _.mov(_.r10, _.imm64(@stats.to_i))
        .inc(_.m64(_.r10, Stats.offsetof("executed_methods")))
+       .mov(REG_SP, _.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
     }.write_to(@jit_buffer)
 
     offset = 0
@@ -114,7 +148,7 @@ class TenderJIT
         fisk.write_to(@jit_buffer)
       else
         exit_pc = body.iseq_encoded.to_i + (offset * Fiddle::SIZEOF_VOIDP)
-        make_exit(name, exit_pc).write_to @jit_buffer
+        make_exit(name, exit_pc, @temp_stack.size).write_to @jit_buffer
         break
       end
 
@@ -124,8 +158,10 @@ class TenderJIT
     body.jit_func = jit_head
   end
 
-  def make_exit exit_insn_name, exit_pc
+  def make_exit exit_insn_name, exit_pc, exit_sp
     fisk = Fisk.new
+
+    sizeof_sp = TenderJIT.member_size(RbControlFrameStruct, "sp")
 
     stats_addr = @stats.to_i
     exit_stats_addr = @exit_stats.to_i
@@ -143,22 +179,11 @@ class TenderJIT
       mov r10, imm64(exit_pc)
       mov m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), r10
 
-      reg_ep = r11
+      # increment the SP
+      add REG_SP, imm32(sizeof_sp * exit_sp)
+      mov m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), REG_SP
 
-      # Set VM_FRAME_FLAG_FINISH so that vm_exec_core will return
-      mov reg_ep, m64(REG_CFP, RbControlFrameStruct.offsetof("ep"))
-      mov rax, m64(reg_ep)
-      self.or rax, imm32(Internals.c("VM_FRAME_FLAG_FINISH"))
-      mov m64(reg_ep), rax
-
-      # EC is already in RDI, so we don't need to put it there
-      # mov rdi, REG_EC
-      mov rsi, imm32(0) # "initial"
-      mov r10, imm64(VM_EXEC_CORE)
-
-      push rsp
-      call r10
-      pop rsp
+      mov rax, imm64(Qundef)
       ret
     end
 
@@ -168,21 +193,19 @@ class TenderJIT
   def handle_opt_lt call_data
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
+    rhs_loc = @temp_stack.pop
+    lhs_loc = @temp_stack.pop
+
+    ts = @temp_stack
+
     fisk = Fisk.new
     fisk.instance_eval do
-      reg_sp = rdx
       reg_lhs = r8
       reg_rhs = r9
 
       # Opt LT takes two parameters
-      mov reg_sp, m64(REG_CFP, RbControlFrameStruct.offsetof("sp"))
-      mov reg_rhs, m64(reg_sp, -sizeof_sp)
-      mov reg_lhs, m64(reg_sp, -(sizeof_sp * 2))
-
-      # Decrement SP and write it back to the CFP
-      #   `POPN(2)`
-      sub reg_sp, imm32(sizeof_sp * 2)
-      mov m64(REG_CFP, sizeof_sp), reg_sp
+      mov reg_rhs, rhs_loc
+      mov reg_lhs, lhs_loc
 
       # Is the LHS a fixnum?
       test reg_lhs, imm32(Internals.c("RUBY_FIXNUM_FLAG"))
@@ -193,10 +216,11 @@ class TenderJIT
       jz label(:next_check)
 
       cmp reg_lhs, reg_rhs
-      mov reg_lhs, imm32(Internals.c("Qtrue"))
-      mov reg_rhs, imm32(Internals.c("Qfalse"))
+      mov reg_lhs, imm32(Qtrue)
+      mov reg_rhs, imm32(Qfalse)
       cmova reg_lhs, reg_rhs
-      mov m64(reg_sp, -sizeof_sp), reg_lhs
+
+      mov ts.push(:boolean), reg_lhs
 
       put_label(:next_check)
     end
@@ -208,19 +232,9 @@ class TenderJIT
 
     fisk = Fisk.new
 
-    fisk.instance_eval do
-      reg_sp    = r10
+    loc = @temp_stack.push(:literal)
 
-      # Increment the SP
-      mov reg_sp, m64(REG_CFP, RbControlFrameStruct.offsetof("sp"))
-      add reg_sp, imm32(sizeof_sp)
-
-      # Write the SP back to the CFP
-      mov m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), reg_sp
-
-      # Write 1 to the top of the stack
-      mov m64(reg_sp, -sizeof_sp), imm32(0x3)
-    end
+    fisk.mov loc, fisk.imm32(0x3)
 
     fisk
   end
@@ -231,73 +245,44 @@ class TenderJIT
 
     fisk = Fisk.new
 
+    loc = @temp_stack.push(:local)
+
     fisk.instance_eval do
       reg_ep    = r11
       reg_local = r11
-      reg_sp    = r10
 
       # Get the local value from the EP
       mov reg_ep, m64(REG_CFP, RbControlFrameStruct.offsetof("ep"))
       sub reg_ep, imm8(Fiddle::SIZEOF_VOIDP * idx)
       mov reg_local, m64(reg_ep)
 
-      # Increment the SP
-      mov reg_sp, m64(REG_CFP, RbControlFrameStruct.offsetof("sp"))
-      add reg_sp, imm32(sizeof_sp)
-
-      # Write the SP back to the CFP
-      mov m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), reg_sp
-
-      # Write the local to the top of the stack
-      mov m64(reg_sp, -sizeof_sp), reg_local
+      mov loc, reg_local
     end
   end
 
   def handle_putself
-    sizeof_sp = member_size(RbControlFrameStruct, "sp")
+    loc = @temp_stack.push(:self)
 
     fisk = Fisk.new
 
     fisk.instance_eval do
-      reg_sp   = r10
       reg_self = r11
-
-      # Increment the SP
-      mov reg_sp, m64(REG_CFP, RbControlFrameStruct.offsetof("sp"))
-      add reg_sp, imm32(sizeof_sp)
-
-      # Write the SP back to the CFP
-      mov m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), reg_sp
 
       # Get self from the CFP
       mov reg_self, m64(REG_CFP, RbControlFrameStruct.offsetof("self"))
-
-      # Write self to the top of the stack
-      mov m64(reg_sp, -sizeof_sp), reg_self
+      mov loc, reg_self
     end
 
     fisk
   end
 
   def handle_putobject literal
-    sizeof_sp = member_size(RbControlFrameStruct, "sp")
-
     fisk = Fisk.new
 
-    fisk.instance_eval do
-      reg_sp = r10
+    loc = @temp_stack.push(:literal)
 
-      # Increment the SP
-      mov reg_sp, m64(REG_CFP, RbControlFrameStruct.offsetof("sp"))
-      add reg_sp, imm32(sizeof_sp)
-
-      # Write the SP back to the CFP
-      mov m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), reg_sp
-
-      # Write the literal to the top of the stack
-      mov r11, imm64(literal)
-      mov m64(reg_sp, -sizeof_sp), r11
-    end
+    fisk.mov fisk.r10, fisk.imm64(literal)
+    fisk.mov loc, fisk.r10
 
     fisk
   end
@@ -306,20 +291,13 @@ class TenderJIT
   def handle_leave
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
+    loc = @temp_stack.pop
+
     # FIXME: We need to check interrupts and exit
     fisk = Fisk.new
     fisk.instance_eval do
-      reg_sp = r10
-
       # Copy top value from the stack in to rax
-      #   `VALUE val = TOP(0);`
-      mov reg_sp, m64(REG_CFP, RbControlFrameStruct.offsetof("sp"))
-      mov rax, m64(reg_sp, -sizeof_sp)
-
-      # Decrement SP and write it back to the CFP
-      #   `POPN(1)`
-      sub reg_sp, imm32(sizeof_sp)
-      mov m64(REG_CFP, sizeof_sp), reg_sp
+      mov rax, loc
 
       # Pop the frame from the stack
       add REG_CFP, imm32(RbControlFrameStruct.size)
@@ -342,6 +320,10 @@ class TenderJIT
   def rb; Internals; end
 
   def member_size struct, member
+    self.class.member_size(struct, member)
+  end
+
+  def self.member_size struct, member
     fiddle_type = struct.types[struct.members.index(member)]
     Fiddle::PackInfo::SIZE_MAP[fiddle_type]
   end
