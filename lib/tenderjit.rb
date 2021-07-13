@@ -1,5 +1,6 @@
 require "tenderjit/ruby_internals"
 require "tenderjit/fiddle_hacks"
+require "tenderjit/exit_code"
 require "fiddle/import"
 require "fisk"
 
@@ -32,6 +33,8 @@ class TenderJIT
   Qfalse = Internals.c "Qfalse"
   Qundef = Internals.c "Qundef"
 
+  T_FIXNUM = Internals.c "T_FIXNUM"
+
   extend Fiddle::Importer
 
   Stats = struct [
@@ -45,20 +48,30 @@ class TenderJIT
   }
 
   class TempStack
+    Item = Struct.new(:name, :type, :loc)
+
     def initialize
       @stack = []
       @sizeof_sp = TenderJIT.member_size(RbControlFrameStruct, "sp")
     end
 
-    def push thing
+    # Returns the info stored for stack location +idx+
+    def peek idx
+      @stack.fetch idx
+    end
+
+    # Push a value on the temp stack. Returns the memory location where
+    # to write the actual value in machine code.
+    def push name, type: nil
       m = Fisk::M64.new(REG_SP, @stack.length * @sizeof_sp)
-      @stack.push thing
+      @stack.push Item.new(name, type, m)
       m
     end
 
+    # Pop a value from the temp stack. Returns the memory location where the
+    # value should be read in machine code.
     def pop
-      @stack.pop
-      Fisk::M64.new(REG_SP, @stack.length * @sizeof_sp)
+      @stack.pop.loc
     end
 
     def size
@@ -71,9 +84,10 @@ class TenderJIT
     @stats.compiled_methods = 0
     @stats.executed_methods = 0
 
-    @exit_stats = ExitStats.malloc(Fiddle::RUBY_FREE)
-    @jit_buffer = Fisk::Helpers.jitbuffer(4096 * 4)
-    @temp_stack = TempStack.new
+    @exit_stats   = ExitStats.malloc(Fiddle::RUBY_FREE)
+    @jit_buffer   = Fisk::Helpers.jitbuffer(4096 * 4)
+    @exits        = ExitCode.new @stats.to_i, @exit_stats.to_i
+    @temp_stack   = TempStack.new
   end
 
   def exit_stats
@@ -138,108 +152,121 @@ class TenderJIT
     }.write_to(@jit_buffer)
 
     offset = 0
+    current_pc = body.iseq_encoded.to_i
 
     while insn = insns.shift
       name   = rb.insn_name(insn)
       params = insns.shift(rb.insn_len(insn) - 1)
 
       if respond_to?("handle_#{name}", true)
-        fisk = send("handle_#{name}", *params)
+        fisk = send("handle_#{name}", current_pc, *params)
         fisk.write_to(@jit_buffer)
       else
-        exit_pc = body.iseq_encoded.to_i + (offset * Fiddle::SIZEOF_VOIDP)
-        make_exit(name, exit_pc, @temp_stack.size).write_to @jit_buffer
+        make_exit(name, current_pc, @temp_stack.size).write_to @jit_buffer
         break
       end
 
-      offset += rb.insn_len(insn)
+      current_pc += rb.insn_len(insn) * Fiddle::SIZEOF_VOIDP
     end
 
     body.jit_func = jit_head
   end
 
   def make_exit exit_insn_name, exit_pc, exit_sp
-    fisk = Fisk.new
-
-    sizeof_sp = TenderJIT.member_size(RbControlFrameStruct, "sp")
-
-    stats_addr = @stats.to_i
-    exit_stats_addr = @exit_stats.to_i
-
-    fisk.instance_eval do
-      # increment the exits counter
-      mov r10, imm64(stats_addr)
-      inc m64(r10, Stats.offsetof("exits"))
-
-      # increment the instruction specific counter
-      mov r10, imm64(exit_stats_addr)
-      inc m64(r10, ExitStats.offsetof(exit_insn_name))
-
-      # Set the PC on the CFP
-      mov r10, imm64(exit_pc)
-      mov m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), r10
-
-      # increment the SP
-      add REG_SP, imm32(sizeof_sp * exit_sp)
-      mov m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), REG_SP
-
-      mov rax, imm64(Qundef)
-      ret
-    end
-
-    fisk
+    jump_addr = @exits.make_exit(exit_insn_name, exit_pc, exit_sp)
+    Fisk.new { |_|
+      _.mov(_.r10, _.imm64(jump_addr))
+       .jmp(_.r10)
+    }
   end
 
-  def handle_opt_lt call_data
+  def handle_opt_lt current_pc, call_data
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
-
-    rhs_loc = @temp_stack.pop
-    lhs_loc = @temp_stack.pop
 
     ts = @temp_stack
 
-    fisk = Fisk.new
-    fisk.instance_eval do
-      reg_lhs = r8
-      reg_rhs = r9
+    __ = Fisk.new
+    reg_lhs = __.r8
+    reg_rhs = __.r9
 
-      # Opt LT takes two parameters
-      mov reg_rhs, rhs_loc
-      mov reg_lhs, lhs_loc
+    # If we know both sides are fixnums, then we don't need to bother with
+    # guarding for types.
+    if ts.peek(0).type == T_FIXNUM && ts.peek(0).type == T_FIXNUM
+      rhs_loc = ts.pop
+      lhs_loc = ts.pop
 
-      # Is the LHS a fixnum?
-      test reg_lhs, imm32(Internals.c("RUBY_FIXNUM_FLAG"))
-      jz label(:next_check)
+      # Copy the LHS and RHS in to registers
+      __.mov(reg_rhs, rhs_loc)
+        .mov(reg_lhs, lhs_loc)
 
-      # Is the RHS a fixnum?
-      test reg_rhs, imm32(Internals.c("RUBY_FIXNUM_FLAG"))
-      jz label(:next_check)
+      # Compare them
+      __.cmp(reg_lhs, reg_rhs)
 
-      cmp reg_lhs, reg_rhs
-      mov reg_lhs, imm32(Qtrue)
-      mov reg_rhs, imm32(Qfalse)
-      cmova reg_lhs, reg_rhs
+      # Conditionally move based on the comparison
+      __.mov(reg_lhs, __.imm32(Qtrue))
+        .mov(reg_rhs, __.imm32(Qfalse))
+        .cmova(reg_lhs, reg_rhs)
 
-      mov ts.push(:boolean), reg_lhs
+      # Push the result on the stack
+      __.mov(ts.push(:boolean), reg_lhs)
 
-      put_label(:next_check)
+    else
+      # We need to do dynamic checks, so there is a chance we'll have to exit
+      # back to the interpreter. Make a side exit before the temp stack is
+      # mutated, that way it will know where to put the stack
+      exit_addr = @exits.make_exit("opt_lt", current_pc, @temp_stack.size)
+
+      rhs_loc = ts.pop
+      lhs_loc = ts.pop
+
+      # Copy the LHS and RHS in to registers
+      __.mov(reg_rhs, rhs_loc)
+        .mov(reg_lhs, lhs_loc)
+
+        # Is the LHS a fixnum?
+      __.test(reg_lhs, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
+        .jz(__.label(:quit!))
+
+        # Is the RHS a fixnum?
+      __.test(reg_rhs, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
+        .jz(__.label(:quit!))
+
+      # Compare them
+      __.cmp(reg_lhs, reg_rhs)
+
+      # Conditionally move based on the comparison
+      __.mov(reg_lhs, __.imm32(Qtrue))
+        .mov(reg_rhs, __.imm32(Qfalse))
+        .cmova(reg_lhs, reg_rhs)
+
+      # Push the result on the stack
+      __.mov(ts.push(:boolean), reg_lhs)
+
+      __.jmp(__.label(:done))
+
+      __.put_label(:quit!)
+        .mov(__.rax, __.imm64(exit_addr))
+        .jmp(__.rax)
+
+      __.put_label(:done)
     end
-    fisk
+
+    __
   end
 
-  def handle_putobject_INT2FIX_1_
+  def handle_putobject_INT2FIX_1_ current_pc
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
     fisk = Fisk.new
 
-    loc = @temp_stack.push(:literal)
+    loc = @temp_stack.push(:literal, type: T_FIXNUM)
 
     fisk.mov loc, fisk.imm32(0x3)
 
     fisk
   end
 
-  def handle_getlocal_WC_0 idx
+  def handle_getlocal_WC_0 current_pc, idx
     #level = 0
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
@@ -260,7 +287,7 @@ class TenderJIT
     end
   end
 
-  def handle_putself
+  def handle_putself current_pc
     loc = @temp_stack.push(:self)
 
     fisk = Fisk.new
@@ -276,10 +303,14 @@ class TenderJIT
     fisk
   end
 
-  def handle_putobject literal
+  def handle_putobject current_pc, literal
     fisk = Fisk.new
 
-    loc = @temp_stack.push(:literal)
+    loc = if rb.RB_FIXNUM_P(literal)
+            @temp_stack.push(:literal, type: T_FIXNUM)
+          else
+            @temp_stack.push(:literal)
+          end
 
     fisk.mov fisk.r10, fisk.imm64(literal)
     fisk.mov loc, fisk.r10
@@ -288,7 +319,7 @@ class TenderJIT
   end
 
   # `leave` instruction
-  def handle_leave
+  def handle_leave current_pc
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
     loc = @temp_stack.pop

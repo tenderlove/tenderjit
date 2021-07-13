@@ -40,6 +40,22 @@ class TenderJIT
         @insn_len             = Hash[@encoded_instructions.zip(@instruction_lengths)]
       end
 
+      def RB_IMMEDATE_P obj_addr
+        0 != obj_addr & c("RUBY_IMMEDIATE_MASK")
+      end
+
+      def RB_TEST obj_addr
+        0 == obj_addr & ~c("RUBY_Qnil")
+      end
+
+      def RB_SPECIAL_CONST_P obj_addr
+        self.RB_IMMEDATE_P(obj_addr) || !self.RB_TEST(obj_addr)
+      end
+
+      def RB_FIXNUM_P obj_addr
+        0 != obj_addr & c("RUBY_FIXNUM_FLAG")
+      end
+
       def insn_name encoded_name
         @insn_to_name.fetch encoded_name
       end

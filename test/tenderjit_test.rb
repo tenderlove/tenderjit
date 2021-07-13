@@ -63,6 +63,22 @@ class TenderJIT
       assert_equal 1, jit.executed_methods
       assert_equal 0, jit.exits
     end
+
+    def test_lt_exits
+      jit = TenderJIT.new
+      jit.compile method(:lt_params)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      v = lt_params("foo", "bar")
+      jit.disable!
+      assert_equal false, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 1, jit.exits
+    end
   end
 
   class JITTwoMethods < Test
