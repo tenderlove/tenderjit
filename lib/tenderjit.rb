@@ -175,12 +175,18 @@ class TenderJIT
     offset = 0
     current_pc = body.iseq_encoded.to_i
 
+    scratch_registers = [
+      Fisk::Registers::R8,
+      Fisk::Registers::R9,
+    ]
+
     while insn = insns.shift
       name   = rb.insn_name(insn)
       params = insns.shift(rb.insn_len(insn) - 1)
 
       if respond_to?("handle_#{name}", true)
         fisk = send("handle_#{name}", current_pc, *params)
+        fisk.assign_registers(scratch_registers)
         fisk.write_to(@jit_buffer)
       else
         make_exit(name, current_pc, @temp_stack.size).write_to @jit_buffer
@@ -221,8 +227,8 @@ class TenderJIT
       end
     end
 
-    reg_lhs = __.r8
-    reg_rhs = __.r9
+    reg_lhs = __.register "lhs"
+    reg_rhs = __.register "rhs"
     rhs_loc = ts.pop
     lhs_loc = ts.pop
 
@@ -275,33 +281,28 @@ class TenderJIT
 
     loc = @temp_stack.push(:local)
 
-    fisk.instance_eval do
-      reg_ep    = r11
-      reg_local = r11
+    __ = fisk
 
-      # Get the local value from the EP
-      mov reg_ep, m64(REG_CFP, RbControlFrameStruct.offsetof("ep"))
-      sub reg_ep, imm8(Fiddle::SIZEOF_VOIDP * idx)
-      mov reg_local, m64(reg_ep)
+    reg_ep = fisk.register "ep"
+    reg_local = fisk.register "local"
 
-      mov loc, reg_local
-    end
+    # Get the local value from the EP
+    __.mov(reg_ep, __.m64(REG_CFP, RbControlFrameStruct.offsetof("ep")))
+      .sub(reg_ep, __.imm8(Fiddle::SIZEOF_VOIDP * idx))
+      .mov(reg_local, __.m64(reg_ep))
+      .mov(loc, reg_local)
   end
 
   def handle_putself current_pc
     loc = @temp_stack.push(:self)
 
     fisk = Fisk.new
+    __ = fisk
+    reg_self = fisk.register "self"
 
-    fisk.instance_eval do
-      reg_self = r11
-
-      # Get self from the CFP
-      mov reg_self, m64(REG_CFP, RbControlFrameStruct.offsetof("self"))
-      mov loc, reg_self
-    end
-
-    fisk
+    # Get self from the CFP
+    __.mov(reg_self, __.m64(REG_CFP, RbControlFrameStruct.offsetof("self")))
+      .mov(loc, reg_self)
   end
 
   def handle_putobject current_pc, literal
@@ -313,10 +314,9 @@ class TenderJIT
             @temp_stack.push(:literal)
           end
 
-    fisk.mov fisk.r10, fisk.imm64(literal)
-    fisk.mov loc, fisk.r10
-
-    fisk
+    reg = fisk.register
+    fisk.mov reg, fisk.imm64(literal)
+    fisk.mov loc, reg
   end
 
   # `leave` instruction
