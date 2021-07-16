@@ -14,6 +14,27 @@ class TenderJIT
   Rb_ISeq_Constant_Body = Internals.struct("rb_iseq_constant_body")
   RbControlFrameStruct  = Internals.struct("rb_control_frame_struct")
   RbExecutionContextT   = Internals.struct("rb_execution_context_t")
+  RbCallInfo            = Internals.struct("rb_callinfo")
+  RbCallData            = Internals.struct("rb_call_data")
+
+  class RbCallInfo
+    CI_EMBED_TAG_bits  = 1
+    CI_EMBED_ARGC_bits = 15
+    CI_EMBED_ARGC_SHFT = CI_EMBED_TAG_bits
+    CI_EMBED_ARGC_MASK = (1 << CI_EMBED_ARGC_bits) - 1
+
+    def vm_ci_packed?
+      to_i & 0x1 != 0
+    end
+
+    def vm_ci_argc
+      if vm_ci_packed?
+        (to_i >> CI_EMBED_ARGC_SHFT) & CI_EMBED_ARGC_MASK
+      else
+        argc
+      end
+    end
+  end
 
   # Global Variables
 
