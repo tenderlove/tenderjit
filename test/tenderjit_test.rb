@@ -79,6 +79,44 @@ class TenderJIT
       assert_equal 1, jit.executed_methods
       assert_equal 1, jit.exits
     end
+
+    def test_lt_left_exits
+      jit = TenderJIT.new
+      jit.compile method(:lt_params)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      begin
+        lt_params("foo", 1)
+        flunk
+      rescue ArgumentError
+      end
+      jit.disable!
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 1, jit.exits
+    end
+
+    def test_lt_right_exits
+      jit = TenderJIT.new
+      jit.compile method(:lt_params)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      begin
+        lt_params(1, "foo")
+        flunk
+      rescue ArgumentError
+      end
+      jit.disable!
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 1, jit.exits
+    end
   end
 
   class JITTwoMethods < Test

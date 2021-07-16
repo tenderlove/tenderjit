@@ -207,62 +207,42 @@ class TenderJIT
     ts = @temp_stack
 
     __ = Fisk.new
+
+    exit_addr = nil
+
+    # Generate runtime checks if we need them
+    2.times do |i|
+      if ts.peek(i).type != T_FIXNUM
+        exit_addr ||= @exits.make_exit("opt_lt", current_pc, @temp_stack.size)
+
+        # Is the argument a fixnum?
+        __.test(ts.peek(i).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
+          .jz(__.label(:quit!))
+      end
+    end
+
     reg_lhs = __.r8
     reg_rhs = __.r9
+    rhs_loc = ts.pop
+    lhs_loc = ts.pop
 
-    # If we know both sides are fixnums, then we don't need to bother with
-    # guarding for types.
-    if ts.peek(0).type == T_FIXNUM && ts.peek(0).type == T_FIXNUM
-      rhs_loc = ts.pop
-      lhs_loc = ts.pop
+    # Copy the LHS and RHS in to registers
+    __.mov(reg_rhs, rhs_loc)
+      .mov(reg_lhs, lhs_loc)
 
-      # Copy the LHS and RHS in to registers
-      __.mov(reg_rhs, rhs_loc)
-        .mov(reg_lhs, lhs_loc)
+    # Compare them
+    __.cmp(reg_lhs, reg_rhs)
 
-      # Compare them
-      __.cmp(reg_lhs, reg_rhs)
+    # Conditionally move based on the comparison
+    __.mov(reg_lhs, __.imm32(Qtrue))
+      .mov(reg_rhs, __.imm32(Qfalse))
+      .cmova(reg_lhs, reg_rhs)
 
-      # Conditionally move based on the comparison
-      __.mov(reg_lhs, __.imm32(Qtrue))
-        .mov(reg_rhs, __.imm32(Qfalse))
-        .cmova(reg_lhs, reg_rhs)
+    # Push the result on the stack
+    __.mov(ts.push(:boolean), reg_lhs)
 
-      # Push the result on the stack
-      __.mov(ts.push(:boolean), reg_lhs)
-
-    else
-      # We need to do dynamic checks, so there is a chance we'll have to exit
-      # back to the interpreter. Make a side exit before the temp stack is
-      # mutated, that way it will know where to put the stack
-      exit_addr = @exits.make_exit("opt_lt", current_pc, @temp_stack.size)
-
-      rhs_loc = ts.pop
-      lhs_loc = ts.pop
-
-      # Copy the LHS and RHS in to registers
-      __.mov(reg_rhs, rhs_loc)
-        .mov(reg_lhs, lhs_loc)
-
-        # Is the LHS a fixnum?
-      __.test(reg_lhs, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
-        .jz(__.label(:quit!))
-
-        # Is the RHS a fixnum?
-      __.test(reg_rhs, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
-        .jz(__.label(:quit!))
-
-      # Compare them
-      __.cmp(reg_lhs, reg_rhs)
-
-      # Conditionally move based on the comparison
-      __.mov(reg_lhs, __.imm32(Qtrue))
-        .mov(reg_rhs, __.imm32(Qfalse))
-        .cmova(reg_lhs, reg_rhs)
-
-      # Push the result on the stack
-      __.mov(ts.push(:boolean), reg_lhs)
-
+    # If we needed to generate runtime checks then add the labels and jumps
+    if exit_addr
       __.jmp(__.label(:done))
 
       __.put_label(:quit!)
