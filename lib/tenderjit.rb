@@ -20,11 +20,33 @@ class TenderJIT
   class RbCallInfo
     CI_EMBED_TAG_bits  = 1
     CI_EMBED_ARGC_bits = 15
+    CI_EMBED_FLAG_bits = 16
+    CI_EMBED_ID_bits   = 32
     CI_EMBED_ARGC_SHFT = CI_EMBED_TAG_bits
     CI_EMBED_ARGC_MASK = (1 << CI_EMBED_ARGC_bits) - 1
+    CI_EMBED_FLAG_SHFT = CI_EMBED_TAG_bits + CI_EMBED_ARGC_bits
+    CI_EMBED_FLAG_MASK = (1 << CI_EMBED_FLAG_bits) - 1
+    CI_EMBED_ID_SHFT   = (CI_EMBED_TAG_bits + CI_EMBED_ARGC_bits + CI_EMBED_FLAG_bits)
+    CI_EMBED_ID_MASK   = (1<<CI_EMBED_ID_bits) - 1
 
     def vm_ci_packed?
       to_i & 0x1 != 0
+    end
+
+    def vm_ci_flag
+      if vm_ci_packed?
+        (to_i >> CI_EMBED_FLAG_SHFT) & CI_EMBED_FLAG_MASK
+      else
+        flag
+      end
+    end
+
+    def vm_ci_mid
+      if vm_ci_packed?
+        (to_i >> CI_EMBED_ID_SHFT) & CI_EMBED_ID_MASK
+      else
+        mid
+      end
     end
 
     def vm_ci_argc
@@ -55,6 +77,13 @@ class TenderJIT
   Qundef = Internals.c "Qundef"
 
   T_FIXNUM = Internals.c "T_FIXNUM"
+
+  Internals.constants.each do |x|
+    if /^(VM_CALL_.*)_bit$/ =~ x
+      p $1 => Internals.c(x)
+      const_set $1, 1 << Internals.c(x)
+    end
+  end
 
   extend Fiddle::Importer
 

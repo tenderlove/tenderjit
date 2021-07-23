@@ -26,6 +26,8 @@ class TenderJIT
       end
 
       make_function "rb_intern", [TYPE_CONST_STRING], TYPE_INT
+      make_function "rb_id2sym", [TYPE_INT], TYPE_VOIDP
+      make_function "rb_callable_method_entry", [TYPE_VOIDP, TYPE_INT], TYPE_VOIDP
 
       def initialize archive, slide, symbol_addresses, constants, structs, unions
         @archive              = archive
@@ -89,6 +91,10 @@ class TenderJIT
 
       def c name
         @constants.fetch name
+      end
+
+      def constants
+        @constants.keys
       end
 
       def struct name
