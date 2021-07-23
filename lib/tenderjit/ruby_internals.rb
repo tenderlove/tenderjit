@@ -196,6 +196,10 @@ class TenderJIT
         @enums               = {}
       end
 
+      def make_decorator mod, name, type
+        mod.define_method(name) { type.new(super()) }
+      end
+
       def build
         debug_info.compile_units(debug_abbrev.tags).each do |unit|
           top = unit.die
@@ -203,6 +207,22 @@ class TenderJIT
           top.children.each do |die|
             next if die.tag.user?
             find_or_build die, all_dies
+          end
+        end
+
+        # Add decorators to each struct that automatically cast pointers to
+        # the struct type we want.  That way we don't have to manually keep
+        # adding types.
+        @structs.each_value do |struct|
+          ref_structs = struct.instance_variable_get(:@reference_structs)
+          if ref_structs
+            mod = Module.new
+            ref_structs.each do |member_name, type|
+              if @structs.key? type
+                make_decorator(mod, member_name, @structs[type])
+              end
+            end
+            struct.prepend mod
           end
         end
         @known_types.compact.each_with_object({}) do |type, hash|
@@ -313,6 +333,8 @@ class TenderJIT
 
         types = []
         names = []
+        reference_structs = {}
+
         last_offset = -1
         die.children.each do |child|
           case child.tag.identifier
@@ -330,6 +352,12 @@ class TenderJIT
               if fiddle_subtype.is_a?(Class)
                 names << [name, fiddle_subtype]
               else
+                if type.tag.identifier == :DW_TAG_pointer_type
+                  pointer_type = find_type_die(type, all_dies)
+                  if pointer_type && pointer_type.tag.identifier == :DW_TAG_structure_type
+                    reference_structs[name] = pointer_type.name(debug_strs)
+                  end
+                end
                 names << name
               end
               types << fiddle_subtype
@@ -343,7 +371,14 @@ class TenderJIT
             raise "unhandled type #{child.tag.identifier}"
           end
         end
-        Fiddle::CStructBuilder.create(fiddle_type, types, names)
+
+        klass = Fiddle::CStructBuilder.create(fiddle_type, types, names)
+        # if this class references any structs, add the member name / type
+        # hash to the class.
+        if reference_structs.size > 0
+          klass.instance_variable_set(:@reference_structs, reference_structs)
+        end
+        klass
       end
     end
   end

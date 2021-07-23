@@ -171,6 +171,24 @@ class TenderJIT
       Fiddle::PackInfo::SIZE_MAP[fiddle_type]
     end
 
+    def has_locals bar
+      foo = 1
+      foo += 1
+      foo + bar
+    end
+
+    # We don't need to cast every pointer to its type, the structs know how
+    # to do it for us.
+    def test_automatic_casting
+      rTypedData            = rb.struct("RTypedData")
+      rb_iseq_t             = rb.struct("rb_iseq_struct")
+
+      rb_iseq = RubyVM::InstructionSequence.of(method(:has_locals))
+      iseq    = rb_iseq_t.new rTypedData.new(Fiddle.dlwrap(rb_iseq)).data
+
+      assert_equal 2, iseq.body.local_table_size
+    end
+
     def test_write_jit_body
       rTypedData            = rb.struct("RTypedData")
       rb_iseq_t             = rb.struct("rb_iseq_struct")
