@@ -136,6 +136,20 @@ class TenderJIT
 
     @exit_stats   = ExitStats.malloc(Fiddle::RUBY_FREE)
     @jit_buffer   = Fisk::Helpers.jitbuffer(4096 * 4)
+
+    @top_exit     = @jit_buffer.memory
+
+    __ = Fisk.new
+
+    # Set up the top-level JIT return. This is for the JIT to return back to
+    # the interpreter.  It assumes the return value has been placed in RAX
+    # Pop the frame from the stack
+    __.add(REG_CFP, __.imm32(RbControlFrameStruct.size))
+    # Write the frame pointer back to the ec
+    __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
+    __.ret
+    __.write_to(@jit_buffer)
+
     @exits        = ExitCode.new @stats.to_i, @exit_stats.to_i
     @temp_stack   = TempStack.new
   end
@@ -196,6 +210,11 @@ class TenderJIT
 
     # Write the prologue for book keeping
     Fisk.new { |_|
+      # Write the top exit to the PC.  JIT to JIT calls need to skip
+      # this instruction
+      _.mov(_.r10, _.imm64(@top_exit))
+      _.mov(_.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), _.r10)
+
       _.mov(_.r10, _.imm64(@stats.to_i))
        .inc(_.m64(_.r10, Stats.offsetof("executed_methods")))
        .mov(REG_SP, _.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
@@ -349,25 +368,23 @@ class TenderJIT
   end
 
   # `leave` instruction
-  def handle_leave current_pc
+  def handle_leave iseq_addr, current_pc
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
     loc = @temp_stack.pop
 
     # FIXME: We need to check interrupts and exit
     fisk = Fisk.new
-    fisk.instance_eval do
-      # Copy top value from the stack in to rax
-      mov rax, loc
 
-      # Pop the frame from the stack
-      add REG_CFP, imm32(RbControlFrameStruct.size)
+    jump_reg = fisk.register "jump to exit"
 
-      # Write the frame pointer back to the ec
-      mov m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
+    __ = fisk
+    # Copy top value from the stack in to rax
+    __.mov __.rax, loc
 
-      ret
-    end
+    # Read the jump address from the PC
+    __.mov jump_reg, __.m64(REG_CFP, RbControlFrameStruct.offsetof("pc"))
+    __.jmp jump_reg
 
     fisk
   end
