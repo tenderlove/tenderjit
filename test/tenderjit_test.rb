@@ -285,7 +285,7 @@ class TenderJIT
       fun(1, 2)
     end
 
-    def test_too_hard
+    def xtest_too_hard
       jit = TenderJIT.new
       jit.compile method(:too_hard)
       assert_equal 1, jit.compiled_methods
