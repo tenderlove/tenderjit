@@ -62,6 +62,8 @@ class TenderJIT
       assert_equal 1, jit.compiled_methods
       assert_equal 1, jit.executed_methods
       assert_equal 0, jit.exits
+    ensure
+      jit.uncompile method(:lt_params)
     end
 
     def test_lt_exits
@@ -78,6 +80,8 @@ class TenderJIT
       assert_equal 1, jit.compiled_methods
       assert_equal 1, jit.executed_methods
       assert_equal 1, jit.exits
+    ensure
+      jit.uncompile method(:lt_params)
     end
 
     def test_lt_left_exits
@@ -97,6 +101,8 @@ class TenderJIT
       assert_equal 1, jit.compiled_methods
       assert_equal 1, jit.executed_methods
       assert_equal 1, jit.exits
+    ensure
+      jit.uncompile method(:lt_params)
     end
 
     def test_lt_right_exits
@@ -116,6 +122,8 @@ class TenderJIT
       assert_equal 1, jit.compiled_methods
       assert_equal 1, jit.executed_methods
       assert_equal 1, jit.exits
+    ensure
+      jit.uncompile method(:lt_params)
     end
   end
 
@@ -237,8 +245,12 @@ class TenderJIT
   end
 
   class HardMethodJIT < Test
+    def fun a, b
+      a < b
+    end
+
     def too_hard
-      "foo".to_s
+      fun(1, 2)
     end
 
     def test_too_hard
@@ -249,6 +261,8 @@ class TenderJIT
       assert_equal 0, jit.exits
 
       jit.enable!
+      p too_hard
+      p too_hard
       v = too_hard
       jit.disable!
       assert_equal "foo", v

@@ -9,13 +9,15 @@ class TenderJIT
 
   # Struct layouts
 
+  RBasic                = Internals.struct("RBasic")
   RTypedData            = Internals.struct("RTypedData")
-  Rb_ISeq_T             = Internals.struct("rb_iseq_t")
-  Rb_ISeq_Constant_Body = Internals.struct("rb_iseq_constant_body")
+  RbISeqT               = Internals.struct("rb_iseq_t")
   RbControlFrameStruct  = Internals.struct("rb_control_frame_struct")
   RbExecutionContextT   = Internals.struct("rb_execution_context_t")
   RbCallInfo            = Internals.struct("rb_callinfo")
   RbCallData            = Internals.struct("rb_call_data")
+  RbCallableMethodEntryT = Internals.struct("rb_callable_method_entry_t")
+  RbMethodDefinitionStruct = Internals.struct("rb_method_definition_struct")
 
   class RbCallInfo
     CI_EMBED_TAG_bits  = 1
@@ -176,6 +178,12 @@ class TenderJIT
     compile_iseq_t addr
   end
 
+  def uncompile method
+    rb_iseq = RubyVM::InstructionSequence.of(method)
+    addr = method_to_iseq_t(rb_iseq)
+    RbISeqT.new(addr).body.jit_func = 0
+  end
+
   def enable!
     MJIT_OPTIONS.on = 1
     MJIT_CALL_P[0] = 1
@@ -198,10 +206,15 @@ class TenderJIT
   #    rdi, rsi, rdx, rcx, r8 - r10
 
   def compile_iseq_t addr
-    @stats.compiled_methods += 1
-
-    body  = Rb_ISeq_Constant_Body.new Rb_ISeq_T.new(addr).body
+    body  = RbISeqT.new(addr).body
     insns = Fiddle::CArray.unpack(body.iseq_encoded, body.iseq_size, Fiddle::TYPE_VOIDP)
+
+    if body.jit_func.to_i != 0
+      puts "already compiled!"
+      return
+    end
+
+    @stats.compiled_methods += 1
 
     jit_head = @jit_buffer.memory + @jit_buffer.pos
 
@@ -224,8 +237,8 @@ class TenderJIT
     current_pc = body.iseq_encoded.to_i
 
     scratch_registers = [
-      Fisk::Registers::R8,
       Fisk::Registers::R9,
+      Fisk::Registers::R10,
     ]
 
     while insn = insns.shift
@@ -233,8 +246,9 @@ class TenderJIT
       params = insns.shift(rb.insn_len(insn) - 1)
 
       if respond_to?("handle_#{name}", true)
-        fisk = send("handle_#{name}", current_pc, *params)
-        fisk.assign_registers(scratch_registers)
+        fisk = send("handle_#{name}", addr, current_pc, *params)
+        fisk.release_all_registers
+        fisk.assign_registers(scratch_registers, local: true)
         fisk.write_to(@jit_buffer)
       else
         make_exit(name, current_pc, @temp_stack.size).write_to @jit_buffer
@@ -256,6 +270,8 @@ class TenderJIT
   end
 
   def handle_opt_lt current_pc, call_data
+
+  def handle_opt_lt iseq_addr, current_pc, call_data
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
     ts = @temp_stack
@@ -309,7 +325,7 @@ class TenderJIT
     __
   end
 
-  def handle_putobject_INT2FIX_1_ current_pc
+  def handle_putobject_INT2FIX_1_ iseq_addr, current_pc
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
     fisk = Fisk.new
@@ -321,7 +337,7 @@ class TenderJIT
     fisk
   end
 
-  def handle_getlocal_WC_0 current_pc, idx
+  def handle_getlocal_WC_0 iseq_addr, current_pc, idx
     #level = 0
     sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
@@ -341,7 +357,7 @@ class TenderJIT
       .mov(loc, reg_local)
   end
 
-  def handle_putself current_pc
+  def handle_putself iseq_addr, current_pc
     loc = @temp_stack.push(:self)
 
     fisk = Fisk.new
@@ -353,7 +369,7 @@ class TenderJIT
       .mov(loc, reg_self)
   end
 
-  def handle_putobject current_pc, literal
+  def handle_putobject iseq_addr, current_pc, literal
     fisk = Fisk.new
 
     loc = if rb.RB_FIXNUM_P(literal)
