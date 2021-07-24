@@ -181,7 +181,10 @@ class TenderJIT
   def uncompile method
     rb_iseq = RubyVM::InstructionSequence.of(method)
     addr = method_to_iseq_t(rb_iseq)
-    RbISeqT.new(addr).body.jit_func = 0
+    rb_iseq = RbISeqT.new(addr)
+    rb_iseq.body.jit_func = 0
+    cov_ptr = Fiddle.dlunwrap(rb_iseq.body.variable.coverage)
+    cov_ptr[2] = nil if cov_ptr
   end
 
   def enable!
@@ -194,11 +197,27 @@ class TenderJIT
     MJIT_CALL_P[0] = 0
   end
 
+  def code_blocks iseq
+    rb_iseq = RubyVM::InstructionSequence.of(iseq)
+    addr = method_to_iseq_t(rb_iseq)
+    ptr = RbISeqT.new(addr).body.variable.coverage
+    if ptr == 0
+      nil
+    else
+      # COVERAGE_INDEX_LINES is 0
+      # COVERAGE_INDEX_BRANCHES is 1
+      # 2 is unused so we'll use it. :D
+      Fiddle.dlunwrap(ptr)[2]
+    end
+  end
+
   private
 
   REG_EC  = Fisk::Registers::RDI
   REG_CFP = Fisk::Registers::RSI
   REG_SP  = Fisk::Registers::RDX
+
+  CodeBlock = Struct.new(:start, :finish)
 
   # rdi, rsi, rdx, rcx, r8 - r15
   #
@@ -217,6 +236,7 @@ class TenderJIT
     @stats.compiled_methods += 1
 
     jit_head = @jit_buffer.memory + @jit_buffer.pos
+    cb = CodeBlock.new jit_head
 
     # ec is in rdi
     # cfp is in rsi
@@ -257,6 +277,21 @@ class TenderJIT
 
       current_pc += rb.insn_len(insn) * Fiddle::SIZEOF_VOIDP
     end
+
+    cb.finish = @jit_buffer.memory + @jit_buffer.pos
+    ary = nil
+    cov_ptr = body.variable.coverage
+    if cov_ptr == 0
+      ary = []
+      body.variable.coverage = Fiddle.dlwrap(ary)
+    else
+      ary = Fiddle.dlunwrap(cov_ptr)
+    end
+
+    # COVERAGE_INDEX_LINES is 0
+    # COVERAGE_INDEX_BRANCHES is 1
+    # 2 is unused so we'll use it. :D
+    (ary[2] ||= []) << cb
 
     body.jit_func = jit_head
   end

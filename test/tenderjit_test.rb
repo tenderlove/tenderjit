@@ -3,6 +3,38 @@
 require "helper"
 
 class TenderJIT
+  class CodeBlockTest < Test
+    def lt_true
+      1 < 2
+    end
+
+    def test_compile_adds_codeblock
+      jit = TenderJIT.new
+      jit.compile method(:lt_true)
+      cbs = jit.code_blocks(method(:lt_true))
+      assert_equal 1, cbs.length
+    ensure
+      jit.uncompile method(:lt_true)
+    end
+
+    def test_uncompile_removes_codeblocks
+      jit = TenderJIT.new
+      jit.compile method(:lt_true)
+      cbs = jit.code_blocks(method(:lt_true))
+      assert_equal 1, cbs.length
+      jit.uncompile method(:lt_true)
+      cbs = jit.code_blocks(method(:lt_true))
+      assert_nil cbs
+    end
+
+    def test_uncompile_without_compile
+      jit = TenderJIT.new
+      jit.uncompile method(:lt_true)
+      cbs = jit.code_blocks(method(:lt_true))
+      assert_nil cbs
+    end
+  end
+
   class OptLT < Test
     def lt_true
       1 < 2
