@@ -304,7 +304,141 @@ class TenderJIT
     }
   end
 
-  def handle_opt_lt current_pc, call_data
+  CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc)
+  COMPILE_REQUSTS = []
+
+  def handle_opt_send_without_block iseq_addr, current_pc, call_data
+    sizeof_sp = TenderJIT.member_size(RbControlFrameStruct, "sp")
+
+    cd = RbCallData.new call_data
+    ci = RbCallInfo.new cd.ci
+
+    # only handle simple methods
+    return unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+
+    compile_request = CallCompileRequest.new
+    compile_request.call_info = ci
+
+    COMPILE_REQUSTS << compile_request
+
+    __ = Fisk.new
+
+    temp_sp = __.register "reg_sp"
+
+    __.put_label(:retry)
+
+    __.lazy { |pos|
+      compile_request.patch_loc = pos
+    }
+
+    # Flush the SP so that the next Ruby call will push a frame correctly
+    __.mov(temp_sp, REG_SP)
+      .add(temp_sp, __.imm32(@temp_stack.size * TenderJIT.member_size(RbControlFrameStruct, "sp")))
+      .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), temp_sp)
+
+    # Convert the SP to a Ruby integer
+    __.shl(temp_sp, __.imm8(1))
+      .add(temp_sp, __.imm8(1))
+
+    save_regs __
+
+    __.mov(__.rdi, __.imm64(Fiddle.dlwrap(self)))
+      .mov(__.rsi, __.imm64(rb.rb_intern("compile_method")))
+      .mov(__.rdx, __.imm64(2))
+      .mov(__.rcx, temp_sp)
+      .mov(__.r8, __.imm64(Fiddle.dlwrap(compile_request)))
+      .mov(__.rax, __.imm64(rb.symbol_address("rb_funcall")))
+      .call(__.rax)
+
+    restore_regs __
+
+    __.jmp __.label(:retry)
+
+    __.lazy { |pos| compile_request.return_loc = pos }
+
+    # The method call will return here, and its return value will be in RAX
+    loc = @temp_stack.push(:unknown)
+    __.mov(loc, __.rax)
+  end
+
+  def topn stack, i
+    Fiddle.dlunwrap(Fiddle::Pointer.new(stack - (Fiddle::SIZEOF_VOIDP * (i + 1))).ptr)
+  end
+
+  def compile_method stack, compile_request
+    puts "OMGGG!"
+    ci = compile_request.call_info
+    mid = ci.vm_ci_mid
+    p(ARGC: ci.vm_ci_argc)
+    recv = topn(stack, ci.vm_ci_argc)
+    p recv
+
+    current_pos = @jit_buffer.pos
+    jump_loc = @jit_buffer.memory + current_pos
+
+    ## Patch the source location to jump here
+    __ = Fisk.new
+    __.mov(__.r10, __.imm64(jump_loc))
+    __.jmp(__.r10)
+
+    @jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
+    __.write_to(@jit_buffer)
+    @jit_buffer.seek current_pos
+
+    ## Write out the method call
+    __ = Fisk.new
+    __.mov(__.rax, __.imm64((42 << 1) | 1))
+      .mov(__.r10, __.imm64(@jit_buffer.memory + compile_request.return_loc))
+      .jmp(__.r10)
+
+    __.write_to(@jit_buffer)
+    return
+
+    exit!
+    #p recv
+
+    # FIXME: this only works on heap allocated objects
+    klass = RBasic.new(recv).klass
+
+    cme = RbCallableMethodEntryT.new(rb.rb_callable_method_entry(klass, mid))
+    p cme.def
+
+    iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr
+    p Fiddle.dlunwrap(cme.defined_class)
+
+    iseq  = RbISeqT.new(addr)
+
+    # `vm_call_iseq_setup`
+    local_size = iseq.body.local_table_size
+    p local_size
+    # `vm_call_iseq_setup_normal`
+
+    # `vm_push_frame`
+    __ = Fisk.new
+    __.sub(REG_CFP, __.imm32(RbControlFrameStruct.size))
+
+    #(ci.vm_ci_argc + 1).times do |i|
+    #  p Fiddle.dlunwrap(Fiddle::Pointer.new(stack + (i * 8)).ptr.to_i)
+    #end
+
+    #p stack
+    #p Fiddle.dlunwrap(Fiddle::Pointer.new(stack).ptr.to_i)
+    #p Fiddle.dlunwrap(Fiddle::Pointer.new(stack + 8).ptr.to_i)
+    #p Fiddle.dlunwrap(Fiddle::Pointer.new(stack + 16).ptr.to_i)
+    puts "OMGOMGOMG"
+  end
+
+  def save_regs fisk
+    fisk.push(REG_EC)
+    fisk.push(REG_CFP)
+    fisk.push(REG_SP)
+  end
+
+  def restore_regs fisk
+    fisk.pop(REG_SP)
+    fisk.pop(REG_CFP)
+    fisk.pop(REG_EC)
+  end
 
   def handle_opt_lt iseq_addr, current_pc, call_data
     sizeof_sp = member_size(RbControlFrameStruct, "sp")

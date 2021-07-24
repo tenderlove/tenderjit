@@ -293,8 +293,6 @@ class TenderJIT
       assert_equal 0, jit.exits
 
       jit.enable!
-      p too_hard
-      p too_hard
       v = too_hard
       jit.disable!
       assert_equal "foo", v
