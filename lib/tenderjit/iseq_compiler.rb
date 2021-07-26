@@ -62,7 +62,7 @@ class TenderJIT
         params = insns.shift(rb.insn_len(insn) - 1)
 
         if respond_to?("handle_#{name}", true)
-          fisk = send("handle_#{name}", addr, current_pc, *params)
+          fisk = send("handle_#{name}", current_pc, *params)
           fisk.release_all_registers
           fisk.assign_registers(scratch_registers, local: true)
           fisk.write_to(jit_buffer)
@@ -113,7 +113,7 @@ class TenderJIT
     CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack)
     COMPILE_REQUSTS = []
 
-    def handle_opt_send_without_block iseq_addr, current_pc, call_data
+    def handle_opt_send_without_block current_pc, call_data
       sizeof_sp = TenderJIT.member_size(RbControlFrameStruct, "sp")
 
       cd = RbCallData.new call_data
@@ -323,7 +323,7 @@ class TenderJIT
       fisk.pop(REG_EC)
     end
 
-    def handle_opt_lt iseq_addr, current_pc, call_data
+    def handle_opt_lt current_pc, call_data
       sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
       ts = @temp_stack
@@ -377,7 +377,7 @@ class TenderJIT
       __
     end
 
-    def handle_putobject_INT2FIX_1_ iseq_addr, current_pc
+    def handle_putobject_INT2FIX_1_ current_pc
       sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
       fisk = Fisk.new
@@ -389,7 +389,7 @@ class TenderJIT
       fisk
     end
 
-    def handle_getlocal_WC_0 iseq_addr, current_pc, idx
+    def handle_getlocal_WC_0 current_pc, idx
       #level = 0
       sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
@@ -409,7 +409,7 @@ class TenderJIT
         .mov(loc, reg_local)
     end
 
-    def handle_putself iseq_addr, current_pc
+    def handle_putself current_pc
       loc = @temp_stack.push(:self)
 
       fisk = Fisk.new
@@ -421,7 +421,7 @@ class TenderJIT
         .mov(loc, reg_self)
     end
 
-    def handle_putobject iseq_addr, current_pc, literal
+    def handle_putobject current_pc, literal
       fisk = Fisk.new
 
       loc = if rb.RB_FIXNUM_P(literal)
@@ -436,7 +436,7 @@ class TenderJIT
     end
 
     # `leave` instruction
-    def handle_leave iseq_addr, current_pc
+    def handle_leave current_pc
       sizeof_sp = member_size(RbControlFrameStruct, "sp")
 
       loc = @temp_stack.pop
