@@ -281,27 +281,25 @@ class TenderJIT
       a < b
     end
 
-    def too_hard
+    def call_function_simple
       fun(1, 2)
     end
 
-    def xtest_too_hard
+    def test_method_call
       jit = TenderJIT.new
-      jit.compile method(:too_hard)
+      jit.compile method(:call_function_simple)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
       assert_equal 0, jit.exits
 
       jit.enable!
-      v = too_hard
+      v = call_function_simple
       jit.disable!
-      assert_equal "foo", v
+      assert_equal true, v
 
-      assert_equal 1, jit.compiled_methods
-      assert_equal 1, jit.executed_methods
-      assert_equal 1, jit.exits
-
-      assert_equal 1, jit.exit_stats["opt_send_without_block"]
+      assert_equal 2, jit.compiled_methods
+      assert_equal 2, jit.executed_methods
+      assert_equal 0, jit.exits
     end
   end
 end

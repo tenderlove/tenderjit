@@ -12,6 +12,10 @@ class TenderJIT
       @stack.fetch idx
     end
 
+    def last
+      @stack.last
+    end
+
     # Push a value on the temp stack. Returns the memory location where
     # to write the actual value in machine code.
     def push name, type: nil
@@ -26,8 +30,26 @@ class TenderJIT
       @stack.pop.loc
     end
 
+    def initialize_copy other
+      @stack = other.stack.dup
+    end
+
+    # Get an operand for the stack pointer plus some bytes
+    def + bytes
+      Fisk::M64.new(REG_SP, (@stack.length * @sizeof_sp) + bytes)
+    end
+
+    # Get an operand for the stack pointer plus some bytes
+    def - bytes
+      Fisk::M64.new(REG_SP, (@stack.length * @sizeof_sp) - bytes)
+    end
+
     def size
       @stack.size
     end
+
+    protected
+
+    attr_reader :stack
   end
 end

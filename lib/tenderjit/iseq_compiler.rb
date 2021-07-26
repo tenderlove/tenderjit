@@ -10,14 +10,27 @@ class TenderJIT
       @temp_stack = TempStack.new
     end
 
+    # Assembles a standard prologue for JIT to Interpreter returns.  The end of
+    # every method jumps to the value stored in the CFP's PC.  This prologue
+    # sets the PC to the top level JIT exit.  JIT to JIT calls need to set the
+    # PC in the frame to return to themselves and then __skip__ these prologue
+    # bytes.
+    def self.make_top_exit_prologue __, addr
+      # Write the top exit to the PC.  JIT to JIT calls need to skip
+      # this instruction
+      __.mov(__.r10, __.imm64(addr))
+        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), __.r10)
+    end
+
     def compile addr
       body  = RbISeqT.new(addr).body
-      insns = Fiddle::CArray.unpack(body.iseq_encoded, body.iseq_size, Fiddle::TYPE_VOIDP)
 
       if body.jit_func.to_i != 0
         puts "already compiled!"
-        return
+        return body.jit_func.to_i
       end
+
+      insns = Fiddle::CArray.unpack(body.iseq_encoded, body.iseq_size, Fiddle::TYPE_VOIDP)
 
       stats.compiled_methods += 1
 
@@ -27,13 +40,10 @@ class TenderJIT
       # ec is in rdi
       # cfp is in rsi
 
+      current_pos = jit_buffer.pos
+
       # Write the prologue for book keeping
       Fisk.new { |_|
-        # Write the top exit to the PC.  JIT to JIT calls need to skip
-        # this instruction
-        _.mov(_.r10, _.imm64(jit_buffer.top_exit))
-        _.mov(_.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), _.r10)
-
         _.mov(_.r10, _.imm64(stats.to_i))
           .inc(_.m64(_.r10, Stats.offsetof("executed_methods")))
           .mov(REG_SP, _.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
@@ -80,6 +90,8 @@ class TenderJIT
       (ary[2] ||= []) << cb
 
       body.jit_func = jit_head
+
+      jit_head.to_i
     end
 
     private
@@ -98,7 +110,7 @@ class TenderJIT
       }
     end
 
-    CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc)
+    CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack)
     COMPILE_REQUSTS = []
 
     def handle_opt_send_without_block iseq_addr, current_pc, call_data
@@ -112,6 +124,8 @@ class TenderJIT
 
       compile_request = CallCompileRequest.new
       compile_request.call_info = ci
+      compile_request.overflow_exit = exits.make_exit("opt_send_without_block", current_pc, @temp_stack.size)
+      compile_request.temp_stack = @temp_stack.dup
 
       COMPILE_REQUSTS << compile_request
 
@@ -150,8 +164,11 @@ class TenderJIT
 
       __.lazy { |pos| compile_request.return_loc = pos }
 
+      (ci.vm_ci_argc + 1).times { @temp_stack.pop }
+
       # The method call will return here, and its return value will be in RAX
       loc = @temp_stack.push(:unknown)
+      __.pop(REG_SP)
       __.mov(loc, __.rax)
     end
 
@@ -159,62 +176,139 @@ class TenderJIT
       Fiddle::Pointer.new(stack - (Fiddle::SIZEOF_VOIDP * (i + 1))).ptr
     end
 
+    def vm_push_frame ec, iseq, type, _self, specval, cref_or_me, pc, sp, local_size, stack_max, compile_request, __
+      # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
+      # We already have the CFP in a register, so lets just increment that
+      __.sub(REG_CFP, __.imm32(RbControlFrameStruct.size))
+
+      tmp = __.register
+
+      temp_stack = compile_request.temp_stack
+
+      # /* check stack overflow */
+      # CHECK_VM_STACK_OVERFLOW0(cfp, sp, local_size + stack_max);
+      margin = local_size + stack_max
+      __.lea(tmp, __.m(temp_stack + (margin + RbCallableMethodEntryT.size)))
+        .cmp(REG_CFP, tmp)
+        .jg(__.label(:continue))
+        .mov(tmp, __.imm64(compile_request.overflow_exit))
+        .jmp(tmp)
+        .put_label(:continue)
+
+      # FIXME: Initialize local variables
+      #p LOCAL_SIZE2: local_size
+
+      # /* setup ep with managing data */
+      __.mov(tmp, __.imm64(cref_or_me))
+        .mov(__.m64(sp), tmp)
+
+      __.mov(tmp, __.imm64(specval))
+      __.mov(__.m64(sp, Fiddle::SIZEOF_VOIDP), tmp)
+
+      __.mov(tmp, __.imm64(type))
+      __.mov(__.m64(sp, 2 * Fiddle::SIZEOF_VOIDP), tmp)
+
+      __.mov(tmp, __.imm64(pc))
+        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), tmp)
+
+      __.lea(tmp, __.m(sp, 3 * Fiddle::SIZEOF_VOIDP))
+        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), tmp)
+        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("__bp__")), tmp)
+        .sub(tmp, __.imm8(Fiddle::SIZEOF_VOIDP))
+        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("ep")), tmp)
+
+      __.mov(tmp, __.imm64(iseq))
+        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("iseq")), tmp)
+      __.mov(tmp, __.imm64(_self))
+        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("self")), tmp)
+      __.mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("block_code")), __.imm32(0))
+
+      __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
+      __.release_register tmp
+    end
+
     def compile_method stack, compile_request
-      puts "OMGGG!"
       ci = compile_request.call_info
       mid = ci.vm_ci_mid
-      p(ARGC: ci.vm_ci_argc)
+      argc = ci.vm_ci_argc
       recv = topn(stack, ci.vm_ci_argc)
 
-      current_pos = @jit_buffer.pos
-      jump_loc = @jit_buffer.memory + current_pos
-
-      ## Patch the source location to jump here
-      __ = Fisk.new
-      __.mov(__.r10, __.imm64(jump_loc))
-      __.jmp(__.r10)
-
-      @jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
-      __.write_to(@jit_buffer)
-      @jit_buffer.seek current_pos
-
-      ## Write out the method call
-      __ = Fisk.new
-      __.mov(__.rax, __.imm64((42 << 1) | 1))
-        .mov(__.r10, __.imm64(@jit_buffer.memory + compile_request.return_loc))
-        .jmp(__.r10)
-
-      __.write_to(@jit_buffer)
-
-      # FIXME: this only works on heap allocated objects
-      klass = RBasic.new(recv).klass
+      ## Compile the target method
+      klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
 
       cme = RbCallableMethodEntryT.new(rb.rb_callable_method_entry(klass, mid))
-      iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr
-      p iseq_ptr
-      exit
-      p Fiddle.dlunwrap(cme.defined_class)
+      iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
+      iseq = RbISeqT.new(iseq_ptr)
 
-      iseq  = RbISeqT.new(addr)
+      entrance_addr = ISEQCompiler.new(stats, @jit).compile iseq_ptr
 
       # `vm_call_iseq_setup`
+      param_size = iseq.body.param.size
       local_size = iseq.body.local_table_size
-      p local_size
+      opt_pc     = 0 # we don't handle optional parameters rn
+
+      # `vm_call_iseq_setup_2` FIXME: we need to deal with TAILCALL
+      # `vm_call_iseq_setup_normal` FIXME: we need to deal with TAILCALL
+
+      temp_stack = compile_request.temp_stack
+
+      # pop locals and recv off the stack
+      #(ci.vm_ci_argc + 1).times { @temp_stack.pop }
+
+      __ = Fisk.new
+      argv = __.register "tmp"
+
+      # Pop params and self from the stack
+      __.lea(argv, __.m(temp_stack - ((argc + 1) * Fiddle::SIZEOF_VOIDP)))
+        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), argv)
+
+      __.lea(argv, __.m(REG_SP, (temp_stack.size - argc + param_size) * Fiddle::SIZEOF_VOIDP))
+
       # `vm_call_iseq_setup_normal`
 
       # `vm_push_frame`
-      __ = Fisk.new
-      __.sub(REG_CFP, __.imm32(RbControlFrameStruct.size))
+      vm_push_frame REG_EC,
+                    iseq_ptr,
+                    rb.c("VM_FRAME_MAGIC_METHOD") | rb.c("VM_ENV_FLAG_LOCAL"),
+                    recv,
+                    0, #ci.block_handler,
+                    cme,
+                    iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
+                    argv,
+                    local_size - param_size,
+                    iseq.body.stack_max,
+                    compile_request,
+                    __
 
-      #(ci.vm_ci_argc + 1).times do |i|
-      #  p Fiddle.dlunwrap(Fiddle::Pointer.new(stack + (i * 8)).ptr.to_i)
-      #end
+      current_pos = jit_buffer.pos
+      jump_loc = jit_buffer.memory + current_pos
 
-      #p stack
-      #p Fiddle.dlunwrap(Fiddle::Pointer.new(stack).ptr.to_i)
-      #p Fiddle.dlunwrap(Fiddle::Pointer.new(stack + 8).ptr.to_i)
-      #p Fiddle.dlunwrap(Fiddle::Pointer.new(stack + 16).ptr.to_i)
-      puts "OMGOMGOMG"
+      ## Patch the source location to jump here
+      fisk = Fisk.new
+      fisk.mov(fisk.r10, fisk.imm64(jump_loc))
+      fisk.jmp(fisk.r10)
+
+      jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
+      fisk.write_to(jit_buffer)
+      jit_buffer.seek current_pos, IO::SEEK_SET
+
+      ## Write out the method call
+
+      ## Push the return location on the machine stack.  `leave` will `ret` here
+      __.mov(argv, __.imm64(jit_buffer.memory + compile_request.return_loc))
+        .push(REG_SP)
+        .push(argv)
+        .mov(argv, __.imm64(entrance_addr))
+        .jmp(argv)
+
+      __.release_register argv
+
+        #.mov(__.r10, __.imm64(jit_buffer.memory + compile_request.return_loc))
+        #.jmp(__.r10)
+
+      __.release_all_registers
+      __.assign_registers([__.r9, __.r10], local: true)
+      __.write_to(jit_buffer)
     end
 
     def save_regs fisk
@@ -356,9 +450,12 @@ class TenderJIT
       # Copy top value from the stack in to rax
       __.mov __.rax, loc
 
-      # Read the jump address from the PC
-      __.mov jump_reg, __.m64(REG_CFP, RbControlFrameStruct.offsetof("pc"))
-      __.jmp jump_reg
+      # Pop the frame from the stack
+      __.add(REG_CFP, __.imm32(RbControlFrameStruct.size))
+
+      # Write the frame pointer back to the ec
+      __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
+      __.ret
 
       fisk
     end

@@ -1,7 +1,6 @@
 require "tenderjit/ruby_internals"
 require "tenderjit/fiddle_hacks"
 require "tenderjit/exit_code"
-require "tenderjit/iseq_compiler"
 require "tenderjit/jit_buffer_proxy"
 require "fiddle/import"
 require "fisk"
@@ -197,3 +196,5 @@ class TenderJIT
     Fiddle::PackInfo::SIZE_MAP[fiddle_type]
   end
 end
+
+require "tenderjit/iseq_compiler"
