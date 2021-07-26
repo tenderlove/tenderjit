@@ -323,9 +323,22 @@ class TenderJIT
       fisk.pop(REG_EC)
     end
 
-    def handle_opt_lt current_pc, call_data
-      sizeof_sp = member_size(RbControlFrameStruct, "sp")
+    def handle_duparray current_pc, ary
+      fisk = Fisk.new
 
+      loc = @temp_stack.push(:object, type: T_ARRAY)
+
+      save_regs fisk
+      fisk.mov(fisk.rdi, fisk.imm64(ary))
+          .mov(fisk.rax, fisk.imm64(rb.symbol_address("rb_ary_resurrect")))
+          .call(fisk.rax)
+      restore_regs fisk
+      fisk.mov loc, fisk.rax
+
+      fisk
+    end
+
+    def handle_opt_lt current_pc, call_data
       ts = @temp_stack
 
       __ = Fisk.new
@@ -389,10 +402,31 @@ class TenderJIT
       fisk
     end
 
+    def handle_setlocal_WC_0 current_pc, idx
+      loc = @temp_stack.pop
+
+      fisk = Fisk.new
+      __ = fisk
+
+      addr = exits.make_exit("setlocal_WC_0", current_pc, @temp_stack.size)
+
+      reg_ep = fisk.register "ep"
+      reg_local = fisk.register "local"
+
+      # Set the local value to the EP
+      __.mov(reg_ep, __.m64(REG_CFP, RbControlFrameStruct.offsetof("ep")))
+        .test(__.m64(reg_ep, Fiddle::SIZEOF_VOIDP * rb.c("VM_ENV_FLAG_WB_REQUIRED")),
+                       __.imm32(rb.c("VM_ENV_FLAG_WB_REQUIRED")))
+        .jz(__.label(:continue))
+        .mov(reg_local, __.imm64(addr))
+        .jmp(reg_local)
+        .put_label(:continue)
+        .mov(reg_local, loc)
+        .mov(__.m64(reg_ep, -(Fiddle::SIZEOF_VOIDP * idx)), reg_local)
+    end
+
     def handle_getlocal_WC_0 current_pc, idx
       #level = 0
-      sizeof_sp = member_size(RbControlFrameStruct, "sp")
-
       fisk = Fisk.new
 
       loc = @temp_stack.push(:local)

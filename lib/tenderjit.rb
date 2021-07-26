@@ -80,6 +80,7 @@ class TenderJIT
   Qundef = Internals.c "Qundef"
 
   T_FIXNUM = Internals.c "T_FIXNUM"
+  T_ARRAY  = Internals.c "T_ARRAY"
 
   Internals.constants.each do |x|
     if /^(VM_CALL_.*)_bit$/ =~ x

@@ -3,6 +3,32 @@
 require "helper"
 
 class TenderJIT
+  class DupArray < Test
+    def duparray
+      a = [1, 2]
+      a
+    end
+
+    def test_duparray
+      jit = TenderJIT.new
+      jit.compile method(:duparray)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+      assert_equal 0, jit.exits
+
+      jit.enable!
+      v = duparray
+      jit.disable!
+      assert_equal [1, 2], v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 0, jit.exits
+    ensure
+      jit.uncompile method(:duparray)
+    end
+  end
+
   class CodeBlockTest < Test
     def lt_true
       1 < 2
@@ -300,6 +326,29 @@ class TenderJIT
       assert_equal 2, jit.compiled_methods
       assert_equal 2, jit.executed_methods
       assert_equal 0, jit.exits
+    end
+
+    def call_with_block
+      a = [1, 2]
+      fun(*a)
+    end
+
+    def test_funcall_with_block
+      jit = TenderJIT.new
+      jit.compile method(:call_with_block)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+      assert_equal 0, jit.exits
+
+      jit.enable!
+      v = call_with_block
+      jit.disable!
+      assert_equal true, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 1, jit.exits
+      #p jit.exit_stats.find_all { |k, v| v > 0 }
     end
   end
 end
