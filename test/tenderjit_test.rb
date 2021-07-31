@@ -3,7 +3,7 @@
 require "helper"
 
 class TenderJIT
-  class DupArray < Test
+  class DupArray < JITTest
     def duparray
       a = [1, 2]
       a
@@ -29,7 +29,7 @@ class TenderJIT
     end
   end
 
-  class CodeBlockTest < Test
+  class CodeBlockTest < JITTest
     def lt_true
       1 < 2
     end
@@ -61,7 +61,85 @@ class TenderJIT
     end
   end
 
-  class OptLT < Test
+  class OptPlus < JITTest
+    def add_lits
+      1 + 2
+    end
+
+    def add_params a, b
+      a + b
+    end
+
+    def add_lit_and_param a
+      a + 2
+    end
+
+    def test_add_lits
+      jit = TenderJIT.new
+      jit.compile method(:add_lits)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      v = add_lits
+      jit.disable!
+      assert_equal 3, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
+    def test_add_params
+      jit = TenderJIT.new
+      jit.compile method(:add_params)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      v = add_params(1, 2)
+      jit.disable!
+      assert_equal 3, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
+    def test_add_lit_and_params
+      jit = TenderJIT.new
+      jit.compile method(:add_lit_and_param)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      v = add_lit_and_param(1)
+      jit.disable!
+      assert_equal 3, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
+    def test_add_strings_bails
+      jit = TenderJIT.new
+      jit.compile method(:add_params)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      v = add_params("foo", "bar")
+      jit.disable!
+      assert_equal "foobar", v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 1, jit.exits
+    end
+  end
+
+  class OptLT < JITTest
     def lt_true
       1 < 2
     end
@@ -185,7 +263,7 @@ class TenderJIT
     end
   end
 
-  class JITTwoMethods < Test
+  class JITTwoMethods < JITTest
     def simple
       "foo"
     end
@@ -214,7 +292,7 @@ class TenderJIT
     end
   end
 
-  class SimpleMethodJIT < Test
+  class SimpleMethodJIT < JITTest
     def simple
       "foo"
     end
@@ -235,7 +313,7 @@ class TenderJIT
     end
   end
 
-  class PutSelf < Test
+  class PutSelf < JITTest
     def putself
       self
     end
@@ -258,7 +336,7 @@ class TenderJIT
     end
   end
 
-  class GetLocalWC0 < Test
+  class GetLocalWC0 < JITTest
     def getlocal_wc_0 x
       x
     end
@@ -302,7 +380,7 @@ class TenderJIT
     end
   end
 
-  class HardMethodJIT < Test
+  class HardMethodJIT < JITTest
     def fun a, b
       a < b
     end

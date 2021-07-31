@@ -355,6 +355,49 @@ class TenderJIT
       fisk
     end
 
+    def handle_opt_plus current_pc, call_data
+      ts = @temp_stack
+
+      __ = Fisk.new
+
+      exit_addr = exits.make_exit("opt_plus", current_pc, @temp_stack.size)
+
+      # Generate runtime checks if we need them
+      2.times do |i|
+        if ts.peek(i).type != T_FIXNUM
+          exit_addr ||= exits.make_exit("opt_plus", current_pc, @temp_stack.size)
+
+          # Is the argument a fixnum?
+          __.test(ts.peek(i).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
+            .jz(__.label(:quit!))
+        end
+      end
+
+      rhs_loc = ts.pop
+      lhs_loc = ts.pop
+
+      tmp = __.rax
+
+      __.mov(tmp, lhs_loc)
+        .sub(tmp, __.imm32(1))
+        .add(tmp, rhs_loc)
+        .jo(__.label(:quit!))
+
+      write_loc = ts.push(:object, type: T_FIXNUM)
+
+      __.mov(write_loc, __.rax)
+
+      __.jmp(__.label(:done))
+
+      __.put_label(:quit!)
+        .mov(__.rax, __.imm64(exit_addr))
+        .jmp(__.rax)
+
+      __.put_label(:done)
+
+      __
+    end
+
     def handle_opt_lt current_pc, call_data
       ts = @temp_stack
 

@@ -70,4 +70,16 @@ class TenderJIT
       define_singleton_method :halt!, &jitbuf.to_function([], Fiddle::TYPE_VOID)
     end
   end
+
+  class JITTest < Test
+    def teardown
+      super
+      self.class.instance_methods(false).each do |m|
+        next if m.to_s =~ /^test_/
+
+        meth = method m
+        TenderJIT.uncompile(meth) if TenderJIT.compiled?(meth)
+      end
+    end
+  end
 end

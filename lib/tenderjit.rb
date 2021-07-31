@@ -103,6 +103,24 @@ class TenderJIT
 
   attr_reader :jit_buffer, :exit_code
 
+  # Returns true if the method has been compiled, otherwise false
+  def self.compiled? method
+    rb_iseq = RubyVM::InstructionSequence.of(method)
+    addr = RTypedData.new(Fiddle.dlwrap(rb_iseq)).data.to_i
+    rb_iseq = RbISeqT.new(addr)
+    rb_iseq.body.jit_func.to_i != 0
+  end
+
+  # Throw away any compiled code associated with the method
+  def self.uncompile method
+    rb_iseq = RubyVM::InstructionSequence.of(method)
+    addr = RTypedData.new(Fiddle.dlwrap(rb_iseq)).data.to_i
+    rb_iseq = RbISeqT.new(addr)
+    rb_iseq.body.jit_func = 0
+    cov_ptr = Fiddle.dlunwrap(rb_iseq.body.variable.coverage)
+    cov_ptr[2] = nil if cov_ptr
+  end
+
   def initialize
     @stats = Stats.malloc(Fiddle::RUBY_FREE)
     @stats.compiled_methods = 0
@@ -137,12 +155,7 @@ class TenderJIT
   end
 
   def uncompile method
-    rb_iseq = RubyVM::InstructionSequence.of(method)
-    addr = method_to_iseq_t(rb_iseq)
-    rb_iseq = RbISeqT.new(addr)
-    rb_iseq.body.jit_func = 0
-    cov_ptr = Fiddle.dlunwrap(rb_iseq.body.variable.coverage)
-    cov_ptr[2] = nil if cov_ptr
+    self.class.uncompile method
   end
 
   def enable!
