@@ -328,12 +328,16 @@ class TenderJIT
       assert_equal 0, jit.exits
     end
 
-    def call_with_block
-      a = [1, 2]
-      fun(*a)
+    def fun2 a, b
+      a < b
     end
 
-    def test_funcall_with_block
+    def call_with_block
+      a = [1, 2]
+      fun2(*a)
+    end
+
+    def test_funcall_with_splat
       jit = TenderJIT.new
       jit.compile method(:call_with_block)
       assert_equal 1, jit.compiled_methods
@@ -345,10 +349,12 @@ class TenderJIT
       jit.disable!
       assert_equal true, v
 
-      assert_equal 1, jit.compiled_methods
-      assert_equal 1, jit.executed_methods
+      # Both `call_with_block` and `fun2` get compiled. `call_with_block`
+      # bails on `opt_send_without_block` but Ruby re-enters the JIT for
+      # `fun2`.  So we get 2 compilations, 2 executions, and 1 exit
+      assert_equal 2, jit.compiled_methods
+      assert_equal 2, jit.executed_methods
       assert_equal 1, jit.exits
-      #p jit.exit_stats.find_all { |k, v| v > 0 }
     end
   end
 end

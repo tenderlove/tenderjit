@@ -62,6 +62,7 @@ class TenderJIT
         params = insns.shift(rb.insn_len(insn) - 1)
 
         if respond_to?("handle_#{name}", true)
+          #Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
           fisk = send("handle_#{name}", current_pc, *params)
           fisk.release_all_registers
           fisk.assign_registers(scratch_registers, local: true)
@@ -110,7 +111,7 @@ class TenderJIT
       }
     end
 
-    CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack)
+    CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack, :current_pc)
     COMPILE_REQUSTS = []
 
     def handle_opt_send_without_block current_pc, call_data
@@ -120,7 +121,7 @@ class TenderJIT
       ci = RbCallInfo.new cd.ci
 
       # only handle simple methods
-      return unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+      #return unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
 
       compile_request = CallCompileRequest.new
       compile_request.call_info = ci
@@ -134,10 +135,7 @@ class TenderJIT
       temp_sp = __.register "reg_sp"
 
       __.put_label(:retry)
-
-      __.lazy { |pos|
-        compile_request.patch_loc = pos
-      }
+        .lazy { |pos| compile_request.patch_loc = pos }
 
       # Flush the SP so that the next Ruby call will push a frame correctly
       __.mov(temp_sp, REG_SP)
@@ -258,6 +256,28 @@ class TenderJIT
       __ = Fisk.new
       argv = __.register "tmp"
 
+      #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
+      unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+        current_pos = jit_buffer.pos
+        jump_loc = jit_buffer.memory + current_pos
+        ## Patch the source location to jump here
+        fisk = Fisk.new
+        fisk.mov(fisk.r10, fisk.imm64(jump_loc.to_i))
+        fisk.jmp(fisk.r10)
+
+        jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
+        fisk.write_to(jit_buffer)
+        jit_buffer.seek current_pos, IO::SEEK_SET
+
+        __.mov(argv, __.imm64(compile_request.overflow_exit))
+          .jmp(argv)
+
+        __.release_all_registers
+        __.assign_registers([__.r9, __.r10], local: true)
+        __.write_to(jit_buffer)
+        return
+      end
+
       # Pop params and self from the stack
       __.lea(argv, __.m(temp_stack - ((argc + 1) * Fiddle::SIZEOF_VOIDP)))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), argv)
@@ -285,7 +305,7 @@ class TenderJIT
 
       ## Patch the source location to jump here
       fisk = Fisk.new
-      fisk.mov(fisk.r10, fisk.imm64(jump_loc))
+      fisk.mov(fisk.r10, fisk.imm64(jump_loc.to_i))
       fisk.jmp(fisk.r10)
 
       jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
@@ -302,9 +322,6 @@ class TenderJIT
         .jmp(argv)
 
       __.release_register argv
-
-        #.mov(__.r10, __.imm64(jit_buffer.memory + compile_request.return_loc))
-        #.jmp(__.r10)
 
       __.release_all_registers
       __.assign_registers([__.r9, __.r10], local: true)
@@ -494,10 +511,66 @@ class TenderJIT
       fisk
     end
 
+    def handle_splatarray current_pc, flag
+      raise NotImplementedError unless flag == 0
+
+      pop_loc = @temp_stack.pop
+      push_loc = @temp_stack.push(:object, type: T_ARRAY)
+
+      vm_splat_array Fisk.new, pop_loc, push_loc
+    end
+
+    def vm_splat_array __, read_loc, store_loc
+      call_cfunc __, __.imm64(rb.symbol_address("rb_check_to_array")), [read_loc]
+
+      # If it returned nil, make a new array
+      __.cmp(__.rax, __.imm32(Qnil))
+        .jne(__.label(:continue))
+
+      call_cfunc __, __.imm64(rb.symbol_address("rb_ary_new_from_args")), [__.imm32(1), __.rax]
+
+      __.put_label(:continue)
+        .mov(store_loc, __.rax)
+    end
+
+    # Call a C function at `func_loc` with `params`. Return value will be in RAX
+    def call_cfunc __, func_loc, params
+      raise NotImplementedError, "too many parameters" if params.length > 6
+      raise "No function location" unless func_loc.value > 0
+
+      save_regs __
+      params.each_with_index do |param, i|
+        __.mov(Fisk::Registers::CALLER_SAVED[i], param)
+      end
+      __.mov(__.rax, func_loc)
+        .call(__.rax)
+      restore_regs __
+    end
+
     def rb; Internals; end
 
     def member_size struct, member
       TenderJIT.member_size(struct, member)
+    end
+
+    def b fisk
+      fisk.int fisk.lit(3)
+    end
+
+    def print_str fisk, string
+      fisk.jmp(fisk.label(:after_bytes))
+      pos = nil
+      fisk.lazy { |x| pos = x; string.bytes.each { |b| jit_buffer.putc b } }
+      fisk.put_label(:after_bytes)
+      save_regs fisk
+      fisk.mov fisk.rdi, fisk.imm32(1)
+      fisk.lazy { |x|
+        fisk.mov fisk.rsi, fisk.imm64(jit_buffer.memory + pos)
+      }
+      fisk.mov fisk.rdx, fisk.imm32(string.bytesize)
+      fisk.mov fisk.rax, fisk.imm32(0x02000004)
+      fisk.syscall
+      restore_regs fisk
     end
   end
 end

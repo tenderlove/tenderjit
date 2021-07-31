@@ -78,6 +78,7 @@ class TenderJIT
   Qtrue  = Internals.c "Qtrue"
   Qfalse = Internals.c "Qfalse"
   Qundef = Internals.c "Qundef"
+  Qnil   = Internals.c "Qnil"
 
   T_FIXNUM = Internals.c "T_FIXNUM"
   T_ARRAY  = Internals.c "T_ARRAY"
