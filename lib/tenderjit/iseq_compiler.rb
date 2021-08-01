@@ -30,7 +30,7 @@ class TenderJIT
         return body.jit_func.to_i
       end
 
-      insns = Fiddle::CArray.unpack(body.iseq_encoded, body.iseq_size, Fiddle::TYPE_VOIDP)
+      @insns = Fiddle::CArray.unpack(body.iseq_encoded, body.iseq_size, Fiddle::TYPE_VOIDP)
 
       stats.compiled_methods += 1
 
@@ -57,9 +57,12 @@ class TenderJIT
         Fisk::Registers::R10,
       ]
 
-      while insn = insns.shift
+      @insn_idx = 0
+      while(insn, branch = @insns[@insn_idx])
+        branch.patch(jit_buffer) if branch
         name   = rb.insn_name(insn)
-        params = insns.shift(rb.insn_len(insn) - 1)
+        len    = rb.insn_len(insn)
+        params = @insns[@insn_idx + 1, len - 1]
 
         if respond_to?("handle_#{name}", true)
           #Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
@@ -72,7 +75,8 @@ class TenderJIT
           break
         end
 
-        current_pc += rb.insn_len(insn) * Fiddle::SIZEOF_VOIDP
+        @insn_idx += len
+        current_pc += len * Fiddle::SIZEOF_VOIDP
       end
 
       cb.finish = jit_buffer.memory + jit_buffer.pos
@@ -355,6 +359,33 @@ class TenderJIT
       fisk
     end
 
+    class BranchUnless < Struct.new(:pc_dst, :patch_location, :jump_end)
+      # The head of the JIT buffer is our jump location
+      def patch jit_buf
+        pos = jit_buf.pos
+        jit_buf.seek(patch_location, IO::SEEK_SET)
+        Fisk.new { |__|
+          __.jz(__.rel32(pos - jump_end))
+        }.write_to(jit_buf)
+        jit_buf.seek(pos, IO::SEEK_SET)
+      end
+    end
+
+    def handle_branchunless current_pc, dst
+      patch_request = BranchUnless.new dst
+      insn = @insns[@insn_idx]
+      len    = rb.insn_len(insn)
+
+      dst = @insn_idx + dst + len
+      @insns[dst] = [@insns[dst], patch_request]
+
+      __ = Fisk.new
+      __.test(@temp_stack.pop, __.imm32(~Qnil))
+        .lazy { |pos| patch_request.patch_location = pos }
+        .jz(__.rel32(0xCAFE))
+        .lazy { |pos| patch_request.jump_end = pos }
+    end
+
     def handle_opt_minus current_pc, call_data
       ts = @temp_stack
 
@@ -365,8 +396,6 @@ class TenderJIT
       # Generate runtime checks if we need them
       2.times do |i|
         if ts.peek(i).type != T_FIXNUM
-          exit_addr ||= exits.make_exit("opt_plus", current_pc, @temp_stack.size)
-
           # Is the argument a fixnum?
           __.test(ts.peek(i).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
             .jz(__.label(:quit!))
@@ -408,8 +437,6 @@ class TenderJIT
       # Generate runtime checks if we need them
       2.times do |i|
         if ts.peek(i).type != T_FIXNUM
-          exit_addr ||= exits.make_exit("opt_plus", current_pc, @temp_stack.size)
-
           # Is the argument a fixnum?
           __.test(ts.peek(i).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
             .jz(__.label(:quit!))
