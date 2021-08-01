@@ -4,6 +4,7 @@ require "tenderjit/exit_code"
 require "tenderjit/jit_buffer_proxy"
 require "fiddle/import"
 require "fisk"
+require "fisk/helpers"
 
 class TenderJIT
   Internals = RubyInternals.get_internals

@@ -26,7 +26,6 @@ class TenderJIT
       body  = RbISeqT.new(addr).body
 
       if body.jit_func.to_i != 0
-        puts "already compiled!"
         return body.jit_func.to_i
       end
 
@@ -40,8 +39,6 @@ class TenderJIT
       # ec is in rdi
       # cfp is in rsi
 
-      current_pos = jit_buffer.pos
-
       # Write the prologue for book keeping
       Fisk.new { |_|
         _.mov(_.r10, _.imm64(stats.to_i))
@@ -49,7 +46,6 @@ class TenderJIT
           .mov(REG_SP, _.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
       }.write_to(jit_buffer)
 
-      offset = 0
       current_pc = body.iseq_encoded.to_i
 
       scratch_registers = [
@@ -119,8 +115,6 @@ class TenderJIT
     COMPILE_REQUSTS = []
 
     def handle_opt_send_without_block current_pc, call_data
-      sizeof_sp = TenderJIT.member_size(RbControlFrameStruct, "sp")
-
       cd = RbCallData.new call_data
       ci = RbCallInfo.new cd.ci
 
@@ -391,13 +385,14 @@ class TenderJIT
 
       __ = Fisk.new
 
-      exit_addr = exits.make_exit("opt_plus", current_pc, @temp_stack.size)
+      exit_addr = exits.make_exit("opt_minus", current_pc, @temp_stack.size)
 
       # Generate runtime checks if we need them
       2.times do |i|
-        if ts.peek(i).type != T_FIXNUM
+        idx = ts.size - i - 1
+        if ts.peek(idx).type != T_FIXNUM
           # Is the argument a fixnum?
-          __.test(ts.peek(i).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
+          __.test(ts.peek(idx).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
             .jz(__.label(:quit!))
         end
       end
@@ -436,9 +431,10 @@ class TenderJIT
 
       # Generate runtime checks if we need them
       2.times do |i|
-        if ts.peek(i).type != T_FIXNUM
+        idx = ts.size - i - 1
+        if ts.peek(idx).type != T_FIXNUM
           # Is the argument a fixnum?
-          __.test(ts.peek(i).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
+          __.test(ts.peek(idx).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
             .jz(__.label(:quit!))
         end
       end
@@ -477,34 +473,35 @@ class TenderJIT
 
       # Generate runtime checks if we need them
       2.times do |i|
-        if ts.peek(i).type != T_FIXNUM
+        idx = ts.size - i - 1
+        if ts.peek(idx).type != T_FIXNUM
           exit_addr ||= exits.make_exit("opt_lt", current_pc, @temp_stack.size)
 
           # Is the argument a fixnum?
-          __.test(ts.peek(i).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
+          __.test(ts.peek(idx).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
             .jz(__.label(:quit!))
         end
       end
 
-      reg_lhs = __.register "lhs"
-      reg_rhs = __.register "rhs"
+      reg0 = __.register "lhs"
+      reg1 = __.register "rhs"
+
       rhs_loc = ts.pop
       lhs_loc = ts.pop
 
       # Copy the LHS and RHS in to registers
-      __.mov(reg_rhs, rhs_loc)
-        .mov(reg_lhs, lhs_loc)
+      __.xor(reg0, reg0)
+        .mov(reg1, lhs_loc)
 
       # Compare them
-      __.cmp(reg_lhs, reg_rhs)
+      __.cmp(reg1, rhs_loc)
 
       # Conditionally move based on the comparison
-      __.mov(reg_lhs, __.imm32(Qtrue))
-        .mov(reg_rhs, __.imm32(Qfalse))
-        .cmova(reg_lhs, reg_rhs)
+      __.mov(reg1, __.imm32(Qtrue))
+        .cmovl(reg0, reg1)
 
       # Push the result on the stack
-      __.mov(ts.push(:boolean), reg_lhs)
+      __.mov(ts.push(:boolean), reg0)
 
       # If we needed to generate runtime checks then add the labels and jumps
       if exit_addr
@@ -521,8 +518,6 @@ class TenderJIT
     end
 
     def handle_putobject_INT2FIX_1_ current_pc
-      sizeof_sp = member_size(RbControlFrameStruct, "sp")
-
       fisk = Fisk.new
 
       loc = @temp_stack.push(:literal, type: T_FIXNUM)
@@ -601,14 +596,10 @@ class TenderJIT
 
     # `leave` instruction
     def handle_leave current_pc
-      sizeof_sp = member_size(RbControlFrameStruct, "sp")
-
       loc = @temp_stack.pop
 
       # FIXME: We need to check interrupts and exit
       fisk = Fisk.new
-
-      jump_reg = fisk.register "jump to exit"
 
       __ = fisk
       # Copy top value from the stack in to rax

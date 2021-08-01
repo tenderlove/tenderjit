@@ -3,6 +3,58 @@
 require "helper"
 
 class TenderJIT
+  class MethodRecursion < JITTest
+    def fib n
+      if n < 3
+        1
+      else
+        fib(n - 1) + fib(n - 2)
+      end
+    end
+
+    def test_fib
+      jit = TenderJIT.new
+      jit.compile method(:fib)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+      assert_equal 0, jit.exits
+
+      jit.enable!
+      v = fib(5)
+      jit.disable!
+      assert_equal 5, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 9, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
+    def cool a
+      if a < 1
+        :cool
+      else
+        cool(a - 1)
+      end
+    end
+
+    def test_recursive
+      jit = TenderJIT.new
+      jit.compile method(:cool)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+      assert_equal 0, jit.exits
+
+      jit.enable!
+      v = cool(3)
+      jit.disable!
+      assert_equal :cool, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 3, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+  end
+
   class BranchUnless < JITTest
     def compare a, b
       if a < b

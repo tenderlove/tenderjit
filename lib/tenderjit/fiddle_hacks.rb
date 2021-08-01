@@ -5,7 +5,6 @@ module Fiddle
     def self.unpack ptr, len, type
       size = Fiddle::PackInfo::SIZE_MAP[type]
       bytesize = size * len
-      pack_format = Fiddle::PackInfo::PACK_MAP[type]
       ptr[0, bytesize].unpack("#{Fiddle::PackInfo::PACK_MAP[type]}#{len}")
     end
   end
