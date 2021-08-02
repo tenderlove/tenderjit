@@ -6,13 +6,36 @@ file 'lib/tendertools/dwarf/constants.rb' => ['lib/tendertools/dwarf/constants.y
   File.write t.name, erb.result(binding)
 end
 
+test_files = RubyVM::INSTRUCTION_NAMES.map do |name|
+  test_file = "test/instructions/#{name}_test.rb"
+  file test_file do |t|
+    File.open(test_file, "w") do |f|
+      f.write <<~eorb
+# frozen_string_literal: true
+
+require "helper"
+
+class TenderJIT
+  class #{name.split('_').map(&:capitalize).join}Test < JITTest
+    def test_#{name}
+      skip "Please implement #{name}!"
+    end
+  end
+end
+      eorb
+    end
+  end
+  test_file
+end
+
 require "rake/testtask"
 
 Rake::TestTask.new do |t|
   t.libs << "test"
-  t.test_files = FileList['test/*_test.rb']
+  t.test_files = FileList['test/**/*_test.rb']
   t.verbose = true
   t.warning = true
 end
 
 task :default => 'lib/tendertools/dwarf/constants.rb'
+task :test => test_files
