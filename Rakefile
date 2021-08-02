@@ -6,7 +6,7 @@ file 'lib/tendertools/dwarf/constants.rb' => ['lib/tendertools/dwarf/constants.y
   File.write t.name, erb.result(binding)
 end
 
-test_files = RubyVM::INSTRUCTION_NAMES.map do |name|
+test_files = RubyVM::INSTRUCTION_NAMES.grep_v(/^trace_/).map do |name|
   test_file = "test/instructions/#{name}_test.rb"
   file test_file do |t|
     File.open(test_file, "w") do |f|
