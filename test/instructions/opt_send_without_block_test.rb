@@ -28,5 +28,81 @@ class TenderJIT
       assert_equal 2, jit.executed_methods
       assert_equal 0, jit.exits
     end
+
+    alias :old_p :p
+    alias :old_p2 :p
+    alias :old_p3 :p
+
+    def call_p
+      !"lol"
+      :foo
+    end
+
+    alias :mm :call_p
+
+    def test_call_p
+      jit = TenderJIT.new
+      jit.compile method(:call_p)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+      assert_equal 0, jit.exits
+
+      jit.enable!
+      v = call_p
+      jit.disable!
+      assert_equal :foo, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 1, jit.exits
+    end
+
+    def call_bang
+      !"lol"
+      :foo
+    end
+
+    def test_call_bang
+      jit = TenderJIT.new
+      jit.compile method(:call_bang)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+      assert_equal 0, jit.exits
+
+      jit.enable!
+      v = call_bang
+      jit.disable!
+      assert_equal :foo, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 1, jit.exits
+    end
+
+    def one
+      three
+      :lol
+    end
+
+    def three
+      !"lol"
+    end
+
+    def test_deep_exit
+      jit = TenderJIT.new
+      jit.compile method(:one)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+      assert_equal 0, jit.exits
+
+      jit.enable!
+      v = one
+      jit.disable!
+      assert_equal :lol, v
+
+      assert_equal 2, jit.compiled_methods
+      assert_equal 2, jit.executed_methods
+      assert_equal 1, jit.exits
+    end
   end
 end

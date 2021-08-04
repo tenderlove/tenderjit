@@ -107,6 +107,7 @@ class TenderJIT
   # Returns true if the method has been compiled, otherwise false
   def self.compiled? method
     rb_iseq = RubyVM::InstructionSequence.of(method)
+    return false unless rb_iseq
     addr = RTypedData.new(Fiddle.dlwrap(rb_iseq)).data.to_i
     rb_iseq = RbISeqT.new(addr)
     rb_iseq.body.jit_func.to_i != 0
@@ -115,6 +116,7 @@ class TenderJIT
   # Throw away any compiled code associated with the method
   def self.uncompile method
     rb_iseq = RubyVM::InstructionSequence.of(method)
+    return false unless rb_iseq
     addr = RTypedData.new(Fiddle.dlwrap(rb_iseq)).data.to_i
     rb_iseq = RbISeqT.new(addr)
     rb_iseq.body.jit_func = 0

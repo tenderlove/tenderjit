@@ -46,7 +46,7 @@ class TenderJIT
           .mov(REG_SP, _.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
       }.write_to(jit_buffer)
 
-      current_pc = body.iseq_encoded.to_i
+      @current_pc = body.iseq_encoded.to_i
 
       scratch_registers = [
         Fisk::Registers::R9,
@@ -62,17 +62,17 @@ class TenderJIT
 
         if respond_to?("handle_#{name}", true)
           #Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
-          fisk = send("handle_#{name}", current_pc, *params)
+          fisk = send("handle_#{name}", @current_pc, *params)
           fisk.release_all_registers
           fisk.assign_registers(scratch_registers, local: true)
           fisk.write_to(jit_buffer)
         else
-          make_exit(name, current_pc, @temp_stack.size).write_to jit_buffer
+          make_exit(name, @current_pc, @temp_stack.size).write_to jit_buffer
           break
         end
 
         @insn_idx += len
-        current_pc += len * Fiddle::SIZEOF_VOIDP
+        @current_pc += len * Fiddle::SIZEOF_VOIDP
       end
 
       cb.finish = jit_buffer.memory + jit_buffer.pos
@@ -97,6 +97,20 @@ class TenderJIT
 
     private
 
+    def current_insn
+      insn, = @insns[@insn_idx]
+      insn
+    end
+
+    def current_pc
+      @current_pc
+    end
+
+    def next_pc
+      len = rb.insn_len(current_insn)
+      @current_pc + len * Fiddle::SIZEOF_VOIDP
+    end
+
     def jit_buffer
       @jit.jit_buffer
     end
@@ -111,7 +125,7 @@ class TenderJIT
       }
     end
 
-    CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack, :current_pc)
+    CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack, :current_pc, :next_pc)
     COMPILE_REQUSTS = []
 
     def handle_opt_send_without_block current_pc, call_data
@@ -125,8 +139,10 @@ class TenderJIT
       compile_request.call_info = ci
       compile_request.overflow_exit = exits.make_exit("opt_send_without_block", current_pc, @temp_stack.size)
       compile_request.temp_stack = @temp_stack.dup
+      compile_request.current_pc = current_pc
+      compile_request.next_pc = next_pc
 
-      COMPILE_REQUSTS << compile_request
+      COMPILE_REQUSTS << Fiddle::Pinned.new(compile_request)
 
       __ = Fisk.new
 
@@ -147,7 +163,7 @@ class TenderJIT
       save_regs __
 
       __.mov(__.rdi, __.imm64(Fiddle.dlwrap(self)))
-        .mov(__.rsi, __.imm64(rb.rb_intern("compile_method")))
+        .mov(__.rsi, __.imm64(rb.rb_intern("compile_method_call")))
         .mov(__.rdx, __.imm64(2))
         .mov(__.rcx, temp_sp)
         .mov(__.r8, __.imm64(Fiddle.dlwrap(compile_request)))
@@ -165,6 +181,10 @@ class TenderJIT
       # The method call will return here, and its return value will be in RAX
       loc = @temp_stack.push(:unknown)
       __.pop(REG_SP)
+      __.cmp(__.rax, __.imm32(Qundef))
+      __.jne(__.label(:continue))
+      __.ret
+      __.put_label(:continue)
       __.mov(loc, __.rax)
     end
 
@@ -223,7 +243,7 @@ class TenderJIT
       __.release_register tmp
     end
 
-    def compile_method stack, compile_request
+    def compile_method_call stack, compile_request
       ci = compile_request.call_info
       mid = ci.vm_ci_mid
       argc = ci.vm_ci_argc
@@ -233,9 +253,35 @@ class TenderJIT
       klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
 
       cme = RbCallableMethodEntryT.new(rb.rb_callable_method_entry(klass, mid))
+      method_definition = RbMethodDefinitionStruct.new(cme.def)
+
+      if method_definition.type != rb.c("VM_METHOD_TYPE_ISEQ")
+        current_pos = jit_buffer.pos
+        jump_loc = jit_buffer.memory + current_pos
+
+        ## Patch the source location to jump here
+        fisk = Fisk.new
+        fisk.mov(fisk.r10, fisk.imm64(jump_loc.to_i))
+        fisk.jmp(fisk.r10)
+
+        jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
+        fisk.write_to(jit_buffer)
+        jit_buffer.seek current_pos, IO::SEEK_SET
+
+        __ = Fisk.new
+        argv = __.register "tmp"
+
+        __.mov(argv, __.imm64(compile_request.overflow_exit))
+          .jmp(argv)
+
+        __.release_all_registers
+        __.assign_registers([__.r9, __.r10], local: true)
+        __.write_to(jit_buffer)
+        return
+      end
+
       iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
       iseq = RbISeqT.new(iseq_ptr)
-
       entrance_addr = ISEQCompiler.new(stats, @jit).compile iseq_ptr
 
       # `vm_call_iseq_setup`
@@ -275,6 +321,9 @@ class TenderJIT
         __.write_to(jit_buffer)
         return
       end
+
+      __.mov(argv, __.imm64(compile_request.next_pc))
+        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), argv)
 
       # Pop params and self from the stack
       __.lea(argv, __.m(temp_stack - ((argc + 1) * Fiddle::SIZEOF_VOIDP)))

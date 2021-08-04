@@ -328,12 +328,40 @@ class TenderJIT
         end
       end
 
+      def make_bitread_method loc, byte_size, bit_offset, bit_size
+        raise "Unsupported bitfield size" unless byte_size == Fiddle::SIZEOF_INT
+
+        bits = byte_size * 8
+
+        lambda {
+          mask = 0xFFFFFFFF
+          bitfield = to_ptr[loc, Fiddle::SIZEOF_INT].unpack1("i!")
+          bitfield = mask & (bitfield << bit_offset)
+          bitfield >> (bit_offset + (bits - (bit_size + bit_offset)))
+        }
+      end
+
+      def make_d5bitread_method name, bit_offset, bit_size
+        # We need to read ints, so round down to the next 32bit number then
+        int_bits = Fiddle::SIZEOF_INT * 8
+        aligned_offset = ((bit_offset >> 5) << 5)
+        buffer_loc = (aligned_offset / int_bits) * Fiddle::SIZEOF_INT
+
+        lambda {
+          bitfield = to_ptr[buffer_loc, Fiddle::SIZEOF_INT].unpack1("i!")
+          bitfield >>= (bit_offset - aligned_offset)
+          bitfield & ((1 << bit_size) - 1)
+        }
+      end
+
       def build_fiddle die, all_dies, fiddle_type
         return unless die.tag.has_children?
 
         types = []
         names = []
         reference_structs = {}
+
+        bitfield_methods = nil
 
         last_offset = -1
         die.children.each do |child|
@@ -343,6 +371,24 @@ class TenderJIT
             raise unless name
 
             type = find_type_die(child, all_dies)
+
+            if child.bit_offset # bitfields for DWARF 4
+              bitfield_methods ||= Module.new
+              x = make_bitread_method(child.data_member_location,
+                                      child.byte_size,
+                                      child.bit_offset,
+                                      child.bit_size)
+
+              bitfield_methods.define_method(name, &x)
+            end
+
+            if child.data_bit_offset
+              bitfield_methods ||= Module.new
+              x = make_d5bitread_method(name, child.data_bit_offset, child.bit_size)
+
+              bitfield_methods.define_method(name, &x)
+            end
+
             # deal with bitfield memebers
             if child.data_member_location == last_offset && fiddle_type == Fiddle::CStruct
               names.last << "|#{name}"
@@ -378,6 +424,7 @@ class TenderJIT
         if reference_structs.size > 0
           klass.instance_variable_set(:@reference_structs, reference_structs)
         end
+        klass.include(bitfield_methods) if bitfield_methods
         klass
       end
     end

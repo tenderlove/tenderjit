@@ -35,6 +35,8 @@ class TenderJIT
         mov r10, imm64(exit_pc)
         mov m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), r10
 
+        mov m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
+
         mov rax, imm64(Qundef)
         ret
       end
