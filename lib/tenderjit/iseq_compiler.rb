@@ -497,7 +497,8 @@ class TenderJIT
       __.put_label(:done)
     end
 
-    def handle_opt_gt call_data
+    # Guard stack types. They need to be in "stack" order (backwards)
+    def guard_two_fixnum
       ts = @temp_stack
 
       exit_addr = nil
@@ -506,7 +507,7 @@ class TenderJIT
       2.times do |i|
         idx = ts.size - i - 1
         if ts.peek(idx).type != T_FIXNUM
-          exit_addr ||= exits.make_exit("opt_lt", current_pc, @temp_stack.size)
+          exit_addr ||= exits.make_exit("opt_gt", current_pc, @temp_stack.size)
 
           # Is the argument a fixnum?
           __.test(ts.peek(idx).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
@@ -514,25 +515,7 @@ class TenderJIT
         end
       end
 
-      reg0 = __.register "lhs"
-      reg1 = __.register "rhs"
-
-      rhs_loc = ts.pop
-      lhs_loc = ts.pop
-
-      # Copy the LHS and RHS in to registers
-      __.xor(reg0, reg0)
-        .mov(reg1, lhs_loc)
-
-      # Compare them
-      __.cmp(reg1, rhs_loc)
-
-      # Conditionally move based on the comparison
-      __.mov(reg1, __.uimm(Qtrue))
-        .cmovg(reg0, reg1)
-
-      # Push the result on the stack
-      __.mov(ts.push(:boolean), reg0)
+      yield
 
       # If we needed to generate runtime checks then add the labels and jumps
       if exit_addr
@@ -546,53 +529,38 @@ class TenderJIT
       end
     end
 
-    def handle_opt_lt call_data
-      ts = @temp_stack
+    def compare_fixnum
+      guard_two_fixnum do
+        __.with_register do |reg0|
+          __.with_register do |reg1|
+            rhs_loc = @temp_stack.pop
+            lhs_loc = @temp_stack.pop
 
-      exit_addr = nil
+            # Copy the LHS and RHS in to registers
+            __.xor(reg0, reg0)
+              .mov(reg1, lhs_loc)
 
-      # Generate runtime checks if we need them
-      2.times do |i|
-        idx = ts.size - i - 1
-        if ts.peek(idx).type != T_FIXNUM
-          exit_addr ||= exits.make_exit("opt_lt", current_pc, @temp_stack.size)
+            # Compare them
+            __.cmp(reg1, rhs_loc)
 
-          # Is the argument a fixnum?
-          __.test(ts.peek(idx).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
-            .jz(__.label(:quit!))
+            # Conditionally move based on the comparison
+            __.mov(reg1, __.uimm(Qtrue))
+
+            yield reg0, reg1
+
+            # Push the result on the stack
+            __.mov(@temp_stack.push(:boolean), reg0)
+          end
         end
       end
+    end
 
-      reg0 = __.register "lhs"
-      reg1 = __.register "rhs"
+    def handle_opt_gt call_data
+      compare_fixnum { |reg0, reg1| __.cmovg(reg0, reg1) }
+    end
 
-      rhs_loc = ts.pop
-      lhs_loc = ts.pop
-
-      # Copy the LHS and RHS in to registers
-      __.xor(reg0, reg0)
-        .mov(reg1, lhs_loc)
-
-      # Compare them
-      __.cmp(reg1, rhs_loc)
-
-      # Conditionally move based on the comparison
-      __.mov(reg1, __.uimm(Qtrue))
-        .cmovl(reg0, reg1)
-
-      # Push the result on the stack
-      __.mov(ts.push(:boolean), reg0)
-
-      # If we needed to generate runtime checks then add the labels and jumps
-      if exit_addr
-        __.jmp(__.label(:done))
-
-        __.put_label(:quit!)
-          .mov(__.rax, __.uimm(exit_addr))
-          .jmp(__.rax)
-
-        __.put_label(:done)
-      end
+    def handle_opt_lt call_data
+      compare_fixnum { |reg0, reg1| __.cmovl(reg0, reg1) }
     end
 
     def handle_putobject_INT2FIX_1_
