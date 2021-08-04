@@ -10,16 +10,8 @@ class TenderJIT
       @temp_stack = TempStack.new
     end
 
-    # Assembles a standard prologue for JIT to Interpreter returns.  The end of
-    # every method jumps to the value stored in the CFP's PC.  This prologue
-    # sets the PC to the top level JIT exit.  JIT to JIT calls need to set the
-    # PC in the frame to return to themselves and then __skip__ these prologue
-    # bytes.
-    def self.make_top_exit_prologue __, addr
-      # Write the top exit to the PC.  JIT to JIT calls need to skip
-      # this instruction
-      __.mov(__.r10, __.imm64(addr))
-        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), __.r10)
+    def __
+      @fisk
     end
 
     def compile addr
@@ -62,10 +54,11 @@ class TenderJIT
 
         if respond_to?("handle_#{name}", true)
           #Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
-          fisk = send("handle_#{name}", @current_pc, *params)
-          fisk.release_all_registers
-          fisk.assign_registers(scratch_registers, local: true)
-          fisk.write_to(jit_buffer)
+          @fisk = Fisk.new
+          send("handle_#{name}", *params)
+          @fisk.release_all_registers
+          @fisk.assign_registers(scratch_registers, local: true)
+          @fisk.write_to(jit_buffer)
         else
           make_exit(name, @current_pc, @temp_stack.size).write_to jit_buffer
           break
@@ -128,7 +121,7 @@ class TenderJIT
     CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack, :current_pc, :next_pc)
     COMPILE_REQUSTS = []
 
-    def handle_opt_send_without_block current_pc, call_data
+    def handle_opt_send_without_block call_data
       cd = RbCallData.new call_data
       ci = RbCallInfo.new cd.ci
 
@@ -143,8 +136,6 @@ class TenderJIT
       compile_request.next_pc = next_pc
 
       COMPILE_REQUSTS << Fiddle::Pinned.new(compile_request)
-
-      __ = Fisk.new
 
       temp_sp = __.register "reg_sp"
 
@@ -387,19 +378,16 @@ class TenderJIT
       fisk.pop(REG_EC)
     end
 
-    def handle_duparray current_pc, ary
-      fisk = Fisk.new
+    def handle_duparray ary
+      write_loc = @temp_stack.push(:object, type: T_ARRAY)
 
-      loc = @temp_stack.push(:object, type: T_ARRAY)
+      save_regs __
+      __.mov(__.rdi, __.imm64(ary))
+        .mov(__.rax, __.imm64(rb.symbol_address("rb_ary_resurrect")))
+        .call(__.rax)
+      restore_regs __
 
-      save_regs fisk
-      fisk.mov(fisk.rdi, fisk.imm64(ary))
-          .mov(fisk.rax, fisk.imm64(rb.symbol_address("rb_ary_resurrect")))
-          .call(fisk.rax)
-      restore_regs fisk
-      fisk.mov loc, fisk.rax
-
-      fisk
+      __.mov write_loc, __.rax
     end
 
     class BranchUnless < Struct.new(:pc_dst, :patch_location, :jump_end)
@@ -414,7 +402,7 @@ class TenderJIT
       end
     end
 
-    def handle_branchunless current_pc, dst
+    def handle_branchunless dst
       patch_request = BranchUnless.new dst
       insn = @insns[@insn_idx]
       len    = rb.insn_len(insn)
@@ -422,17 +410,14 @@ class TenderJIT
       dst = @insn_idx + dst + len
       @insns[dst] = [@insns[dst], patch_request]
 
-      __ = Fisk.new
       __.test(@temp_stack.pop, __.imm32(~Qnil))
         .lazy { |pos| patch_request.patch_location = pos }
         .jz(__.rel32(0xCAFE))
         .lazy { |pos| patch_request.jump_end = pos }
     end
 
-    def handle_opt_minus current_pc, call_data
+    def handle_opt_minus call_data
       ts = @temp_stack
-
-      __ = Fisk.new
 
       exit_addr = exits.make_exit("opt_minus", current_pc, @temp_stack.size)
 
@@ -467,14 +452,10 @@ class TenderJIT
         .jmp(__.rax)
 
       __.put_label(:done)
-
-      __
     end
 
-    def handle_opt_plus current_pc, call_data
+    def handle_opt_plus call_data
       ts = @temp_stack
-
-      __ = Fisk.new
 
       exit_addr = exits.make_exit("opt_plus", current_pc, @temp_stack.size)
 
@@ -509,14 +490,10 @@ class TenderJIT
         .jmp(__.rax)
 
       __.put_label(:done)
-
-      __
     end
 
-    def handle_opt_lt current_pc, call_data
+    def handle_opt_lt call_data
       ts = @temp_stack
-
-      __ = Fisk.new
 
       exit_addr = nil
 
@@ -562,30 +539,20 @@ class TenderJIT
 
         __.put_label(:done)
       end
-
-      __
     end
 
-    def handle_putobject_INT2FIX_1_ current_pc
-      fisk = Fisk.new
-
+    def handle_putobject_INT2FIX_1_
       loc = @temp_stack.push(:literal, type: T_FIXNUM)
-
-      fisk.mov loc, fisk.imm32(0x3)
-
-      fisk
+      __.mov loc, __.imm32(0x3)
     end
 
-    def handle_setlocal_WC_0 current_pc, idx
+    def handle_setlocal_WC_0 idx
       loc = @temp_stack.pop
-
-      fisk = Fisk.new
-      __ = fisk
 
       addr = exits.make_exit("setlocal_WC_0", current_pc, @temp_stack.size)
 
-      reg_ep = fisk.register "ep"
-      reg_local = fisk.register "local"
+      reg_ep = __.register "ep"
+      reg_local = __.register "local"
 
       # Set the local value to the EP
       __.mov(reg_ep, __.m64(REG_CFP, RbControlFrameStruct.offsetof("ep")))
@@ -599,16 +566,12 @@ class TenderJIT
         .mov(__.m64(reg_ep, -(Fiddle::SIZEOF_VOIDP * idx)), reg_local)
     end
 
-    def handle_getlocal_WC_0 current_pc, idx
+    def handle_getlocal_WC_0 idx
       #level = 0
-      fisk = Fisk.new
-
       loc = @temp_stack.push(:local)
 
-      __ = fisk
-
-      reg_ep = fisk.register "ep"
-      reg_local = fisk.register "local"
+      reg_ep = __.register "ep"
+      reg_local = __.register "local"
 
       # Get the local value from the EP
       __.mov(reg_ep, __.m64(REG_CFP, RbControlFrameStruct.offsetof("ep")))
@@ -617,40 +580,33 @@ class TenderJIT
         .mov(loc, reg_local)
     end
 
-    def handle_putself current_pc
+    def handle_putself
       loc = @temp_stack.push(:self)
 
-      fisk = Fisk.new
-      __ = fisk
-      reg_self = fisk.register "self"
+      reg_self = __.register "self"
 
       # Get self from the CFP
       __.mov(reg_self, __.m64(REG_CFP, RbControlFrameStruct.offsetof("self")))
         .mov(loc, reg_self)
     end
 
-    def handle_putobject current_pc, literal
-      fisk = Fisk.new
-
+    def handle_putobject literal
       loc = if rb.RB_FIXNUM_P(literal)
               @temp_stack.push(:literal, type: T_FIXNUM)
             else
               @temp_stack.push(:literal)
             end
 
-      reg = fisk.register
-      fisk.mov reg, fisk.imm64(literal)
-      fisk.mov loc, reg
+      reg = __.register
+      __.mov reg, __.imm64(literal)
+      __.mov loc, reg
     end
 
     # `leave` instruction
-    def handle_leave current_pc
+    def handle_leave
       loc = @temp_stack.pop
 
       # FIXME: We need to check interrupts and exit
-      fisk = Fisk.new
-
-      __ = fisk
       # Copy top value from the stack in to rax
       __.mov __.rax, loc
 
@@ -660,17 +616,15 @@ class TenderJIT
       # Write the frame pointer back to the ec
       __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
       __.ret
-
-      fisk
     end
 
-    def handle_splatarray current_pc, flag
+    def handle_splatarray flag
       raise NotImplementedError unless flag == 0
 
       pop_loc = @temp_stack.pop
       push_loc = @temp_stack.push(:object, type: T_ARRAY)
 
-      vm_splat_array Fisk.new, pop_loc, push_loc
+      vm_splat_array __, pop_loc, push_loc
     end
 
     def vm_splat_array __, read_loc, store_loc
