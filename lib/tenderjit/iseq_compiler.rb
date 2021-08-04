@@ -95,6 +95,10 @@ class TenderJIT
       insn
     end
 
+    def insn_name
+      rb.insn_name current_insn
+    end
+
     def current_pc
       @current_pc
     end
@@ -507,7 +511,7 @@ class TenderJIT
       2.times do |i|
         idx = ts.size - i - 1
         if ts.peek(idx).type != T_FIXNUM
-          exit_addr ||= exits.make_exit("opt_gt", current_pc, @temp_stack.size)
+          exit_addr ||= exits.make_exit(insn_name, current_pc, @temp_stack.size)
 
           # Is the argument a fixnum?
           __.test(ts.peek(idx).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
@@ -559,8 +563,16 @@ class TenderJIT
       compare_fixnum { |reg0, reg1| __.cmovg(reg0, reg1) }
     end
 
+    def handle_opt_ge call_data
+      compare_fixnum { |reg0, reg1| __.cmovge(reg0, reg1) }
+    end
+
     def handle_opt_lt call_data
       compare_fixnum { |reg0, reg1| __.cmovl(reg0, reg1) }
+    end
+
+    def handle_opt_le call_data
+      compare_fixnum { |reg0, reg1| __.cmovle(reg0, reg1) }
     end
 
     def handle_putobject_INT2FIX_1_
