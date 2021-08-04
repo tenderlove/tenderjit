@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class TenderJIT
   class TempStack
     Item = Struct.new(:name, :type, :loc)
@@ -5,6 +7,14 @@ class TenderJIT
     def initialize
       @stack = []
       @sizeof_sp = TenderJIT.member_size(RbControlFrameStruct, "sp")
+    end
+
+    # Flush the SP to the CFP within the +fisk+ context
+    def flush fisk
+      temp = fisk.register
+      fisk.lea(temp, fisk.m(REG_SP, size * @sizeof_sp))
+          .mov(fisk.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), temp)
+      fisk.release_register temp
     end
 
     # Returns the info stored for stack location +idx+
