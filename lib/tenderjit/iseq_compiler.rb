@@ -53,7 +53,7 @@ class TenderJIT
         params = @insns[@insn_idx + 1, len - 1]
 
         if respond_to?("handle_#{name}", true)
-          #Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
+          Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
           @fisk = Fisk.new
           send("handle_#{name}", *params)
           @fisk.release_all_registers
@@ -580,6 +580,11 @@ class TenderJIT
       __.mov loc, __.uimm(0x3)
     end
 
+    def handle_putobject_INT2FIX_0_
+      loc = @temp_stack.push(:literal, type: T_FIXNUM)
+      __.mov loc, __.uimm(0x1)
+    end
+
     def handle_setlocal_WC_0 idx
       loc = @temp_stack.pop
 
@@ -590,7 +595,7 @@ class TenderJIT
 
       # Set the local value to the EP
       __.mov(reg_ep, __.m64(REG_CFP, RbControlFrameStruct.offsetof("ep")))
-        .test(__.m64(reg_ep, Fiddle::SIZEOF_VOIDP * rb.c("VM_ENV_FLAG_WB_REQUIRED")),
+        .test(__.m64(reg_ep, Fiddle::SIZEOF_VOIDP * VM_ENV_DATA_INDEX_FLAGS),
                        __.uimm(rb.c("VM_ENV_FLAG_WB_REQUIRED")))
         .jz(__.label(:continue))
         .mov(reg_local, __.uimm(addr))
@@ -703,7 +708,7 @@ class TenderJIT
       pos = nil
       fisk.lazy { |x| pos = x; string.bytes.each { |b| jit_buffer.putc b } }
       fisk.put_label(:after_bytes)
-      save_regs
+      save_regs fisk
       fisk.mov fisk.rdi, fisk.uimm(1)
       fisk.lazy { |x|
         fisk.mov fisk.rsi, fisk.uimm(jit_buffer.memory + pos)

@@ -72,6 +72,23 @@ class TenderJIT
   end
 
   class JITTest < Test
+    def assert_jit method, compiled:, executed:, exits:
+      jit = TenderJIT.new
+      jit.compile method
+
+      assert_equal compiled, jit.compiled_methods
+      before_executed = jit.executed_methods
+
+      jit.enable!
+      v = method.call
+      jit.disable!
+
+      assert_equal compiled, jit.compiled_methods
+      assert_equal executed, jit.executed_methods - before_executed
+      assert_equal exits, jit.exits
+      v
+    end
+
     def teardown
       super
       self.class.instance_methods(false).each do |m|
