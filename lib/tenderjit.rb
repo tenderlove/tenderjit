@@ -1,7 +1,10 @@
+# frozen_string_literal: true
+
 require "tenderjit/ruby_internals"
 require "tenderjit/fiddle_hacks"
 require "tenderjit/exit_code"
 require "tenderjit/jit_buffer_proxy"
+require "tenderjit/deferred_compilations"
 require "fiddle/import"
 require "fisk"
 require "fisk/helpers"
@@ -133,6 +136,12 @@ class TenderJIT
     @jit_buffer   = JITBufferProxy.new(Fisk::Helpers.jitbuffer(4096 * 4))
 
     @exit_code    = ExitCode.new @stats.to_i, @exit_stats.to_i
+
+    @deferred_calls = DeferredCompilations.new
+  end
+
+  def deferred_call &block
+    @deferred_calls.deferred_call(&block)
   end
 
   def exit_stats
