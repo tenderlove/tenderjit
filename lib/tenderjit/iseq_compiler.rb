@@ -366,26 +366,22 @@ class TenderJIT
       __.write_to(jit_buffer)
     end
 
-    def save_regs fisk
+    def save_regs fisk = __
       fisk.push(REG_EC)
-      fisk.push(REG_CFP)
-      fisk.push(REG_SP)
+        .push(REG_CFP)
+        .push(REG_SP)
     end
 
-    def restore_regs fisk
+    def restore_regs fisk = __
       fisk.pop(REG_SP)
-      fisk.pop(REG_CFP)
-      fisk.pop(REG_EC)
+        .pop(REG_CFP)
+        .pop(REG_EC)
     end
 
     def handle_duparray ary
       write_loc = @temp_stack.push(:object, type: T_ARRAY)
 
-      save_regs __
-      __.mov(__.rdi, __.imm64(ary))
-        .mov(__.rax, __.imm64(rb.symbol_address("rb_ary_resurrect")))
-        .call(__.rax)
-      restore_regs __
+      call_cfunc rb.symbol_address("rb_ary_resurrect"), [__.imm64(ary)]
 
       __.mov write_loc, __.rax
     end
@@ -624,34 +620,34 @@ class TenderJIT
       pop_loc = @temp_stack.pop
       push_loc = @temp_stack.push(:object, type: T_ARRAY)
 
-      vm_splat_array __, pop_loc, push_loc
+      vm_splat_array pop_loc, push_loc
     end
 
-    def vm_splat_array __, read_loc, store_loc
-      call_cfunc __, __.imm64(rb.symbol_address("rb_check_to_array")), [read_loc]
+    def vm_splat_array read_loc, store_loc
+      call_cfunc rb.symbol_address("rb_check_to_array"), [read_loc]
 
       # If it returned nil, make a new array
       __.cmp(__.rax, __.imm32(Qnil))
         .jne(__.label(:continue))
 
-      call_cfunc __, __.imm64(rb.symbol_address("rb_ary_new_from_args")), [__.imm32(1), __.rax]
+      call_cfunc rb.symbol_address("rb_ary_new_from_args"), [__.imm32(1), __.rax]
 
       __.put_label(:continue)
         .mov(store_loc, __.rax)
     end
 
     # Call a C function at `func_loc` with `params`. Return value will be in RAX
-    def call_cfunc __, func_loc, params
+    def call_cfunc func_loc, params
       raise NotImplementedError, "too many parameters" if params.length > 6
-      raise "No function location" unless func_loc.value > 0
+      raise "No function location" unless func_loc > 0
 
-      save_regs __
+      save_regs
       params.each_with_index do |param, i|
         __.mov(Fisk::Registers::CALLER_SAVED[i], param)
       end
-      __.mov(__.rax, func_loc)
+      __.mov(__.rax, __.imm64(func_loc))
         .call(__.rax)
-      restore_regs __
+      restore_regs
     end
 
     def rb; Internals; end
@@ -669,7 +665,7 @@ class TenderJIT
       pos = nil
       fisk.lazy { |x| pos = x; string.bytes.each { |b| jit_buffer.putc b } }
       fisk.put_label(:after_bytes)
-      save_regs fisk
+      save_regs
       fisk.mov fisk.rdi, fisk.imm32(1)
       fisk.lazy { |x|
         fisk.mov fisk.rsi, fisk.imm64(jit_buffer.memory + pos)
