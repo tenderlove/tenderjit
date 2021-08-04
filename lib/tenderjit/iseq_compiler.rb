@@ -33,7 +33,7 @@ class TenderJIT
 
       # Write the prologue for book keeping
       Fisk.new { |_|
-        _.mov(_.r10, _.imm64(stats.to_i))
+        _.mov(_.r10, _.uimm(stats.to_i))
           .inc(_.m64(_.r10, Stats.offsetof("executed_methods")))
           .mov(REG_SP, _.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
       }.write_to(jit_buffer)
@@ -113,7 +113,7 @@ class TenderJIT
     def make_exit exit_insn_name, exit_pc, exit_sp
       jump_addr = exits.make_exit(exit_insn_name, exit_pc, exit_sp)
       Fisk.new { |_|
-        _.mov(_.r10, _.imm64(jump_addr))
+        _.mov(_.r10, _.uimm(jump_addr))
           .jmp(_.r10)
       }
     end
@@ -137,33 +137,42 @@ class TenderJIT
 
       COMPILE_REQUSTS << Fiddle::Pinned.new(compile_request)
 
-      temp_sp = __.register "reg_sp"
+      # Dup the temp stack so that later mutations won't impact "deferred" call
+      ts = @temp_stack.dup
 
-      __.put_label(:retry)
-        .lazy { |pos| compile_request.patch_loc = pos }
+      deferred = @jit.deferred_call do |__, return_loc|
+        # Flush the SP so that the next Ruby call will push a frame correctly
+        ts.flush __
 
-      # Flush the SP so that the next Ruby call will push a frame correctly
-      __.mov(temp_sp, REG_SP)
-        .add(temp_sp, __.imm32(@temp_stack.size * TenderJIT.member_size(RbControlFrameStruct, "sp")))
-        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), temp_sp)
+        __.with_register "reg_sp" do |temp|
+          # Convert the SP to a Ruby integer
+          __.mov(temp, __.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
+          __.shl(temp, __.uimm(1))
+            .add(temp, __.uimm(1))
 
-      # Convert the SP to a Ruby integer
-      __.shl(temp_sp, __.imm8(1))
-        .add(temp_sp, __.imm8(1))
+          call_cfunc rb.symbol_address("rb_funcall"), [
+            __.uimm(Fiddle.dlwrap(self)),
+            __.uimm(rb.rb_intern("compile_method_call")),
+            __.uimm(2),
+            temp,
+            __.uimm(Fiddle.dlwrap(compile_request)),
+          ], __
 
-      save_regs __
+          __.mov(temp, __.uimm(return_loc))
+            .jmp(temp)
+        end
+      end
 
-      __.mov(__.rdi, __.imm64(Fiddle.dlwrap(self)))
-        .mov(__.rsi, __.imm64(rb.rb_intern("compile_method_call")))
-        .mov(__.rdx, __.imm64(2))
-        .mov(__.rcx, temp_sp)
-        .mov(__.r8, __.imm64(Fiddle.dlwrap(compile_request)))
-        .mov(__.rax, __.imm64(rb.symbol_address("rb_funcall")))
-        .call(__.rax)
+      __.lazy { |pos|
+        compile_request.patch_loc = pos
+        deferred.call jit_buffer.memory + pos
+      }
 
-      restore_regs __
-
-      __.jmp __.label(:retry)
+      # Jump in to the deferred compiler
+      tmp = __.register
+      __.mov(tmp, __.uimm(deferred.entry))
+        .jmp(tmp)
+      __.release_register tmp
 
       __.lazy { |pos| compile_request.return_loc = pos }
 
@@ -172,7 +181,7 @@ class TenderJIT
       # The method call will return here, and its return value will be in RAX
       loc = @temp_stack.push(:unknown)
       __.pop(REG_SP)
-      __.cmp(__.rax, __.imm32(Qundef))
+      __.cmp(__.rax, __.uimm(Qundef))
       __.jne(__.label(:continue))
       __.ret
       __.put_label(:continue)
@@ -186,7 +195,7 @@ class TenderJIT
     def vm_push_frame ec, iseq, type, _self, specval, cref_or_me, pc, sp, local_size, stack_max, compile_request, __
       # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
       # We already have the CFP in a register, so lets just increment that
-      __.sub(REG_CFP, __.imm32(RbControlFrameStruct.size))
+      __.sub(REG_CFP, __.uimm(RbControlFrameStruct.size))
 
       tmp = __.register
 
@@ -198,7 +207,7 @@ class TenderJIT
       __.lea(tmp, __.m(temp_stack + (margin + RbCallableMethodEntryT.size)))
         .cmp(REG_CFP, tmp)
         .jg(__.label(:continue))
-        .mov(tmp, __.imm64(compile_request.overflow_exit))
+        .mov(tmp, __.uimm(compile_request.overflow_exit))
         .jmp(tmp)
         .put_label(:continue)
 
@@ -206,29 +215,29 @@ class TenderJIT
       #p LOCAL_SIZE2: local_size
 
       # /* setup ep with managing data */
-      __.mov(tmp, __.imm64(cref_or_me))
+      __.mov(tmp, __.uimm(cref_or_me))
         .mov(__.m64(sp), tmp)
 
-      __.mov(tmp, __.imm64(specval))
+      __.mov(tmp, __.uimm(specval))
       __.mov(__.m64(sp, Fiddle::SIZEOF_VOIDP), tmp)
 
-      __.mov(tmp, __.imm64(type))
+      __.mov(tmp, __.uimm(type))
       __.mov(__.m64(sp, 2 * Fiddle::SIZEOF_VOIDP), tmp)
 
-      __.mov(tmp, __.imm64(pc))
+      __.mov(tmp, __.uimm(pc))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), tmp)
 
       __.lea(tmp, __.m(sp, 3 * Fiddle::SIZEOF_VOIDP))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), tmp)
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("__bp__")), tmp)
-        .sub(tmp, __.imm8(Fiddle::SIZEOF_VOIDP))
+        .sub(tmp, __.uimm(Fiddle::SIZEOF_VOIDP))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("ep")), tmp)
 
-      __.mov(tmp, __.imm64(iseq))
+      __.mov(tmp, __.uimm(iseq))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("iseq")), tmp)
-      __.mov(tmp, __.imm64(_self))
+      __.mov(tmp, __.uimm(_self))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("self")), tmp)
-      __.mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("block_code")), __.imm32(0))
+      __.mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("block_code")), __.uimm(0))
 
       __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
       __.release_register tmp
@@ -252,7 +261,7 @@ class TenderJIT
 
         ## Patch the source location to jump here
         fisk = Fisk.new
-        fisk.mov(fisk.r10, fisk.imm64(jump_loc.to_i))
+        fisk.mov(fisk.r10, fisk.uimm(jump_loc.to_i))
         fisk.jmp(fisk.r10)
 
         jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
@@ -262,7 +271,7 @@ class TenderJIT
         __ = Fisk.new
         argv = __.register "tmp"
 
-        __.mov(argv, __.imm64(compile_request.overflow_exit))
+        __.mov(argv, __.uimm(compile_request.overflow_exit))
           .jmp(argv)
 
         __.release_all_registers
@@ -297,14 +306,14 @@ class TenderJIT
         jump_loc = jit_buffer.memory + current_pos
         ## Patch the source location to jump here
         fisk = Fisk.new
-        fisk.mov(fisk.r10, fisk.imm64(jump_loc.to_i))
+        fisk.mov(fisk.r10, fisk.uimm(jump_loc.to_i))
         fisk.jmp(fisk.r10)
 
         jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
         fisk.write_to(jit_buffer)
         jit_buffer.seek current_pos, IO::SEEK_SET
 
-        __.mov(argv, __.imm64(compile_request.overflow_exit))
+        __.mov(argv, __.uimm(compile_request.overflow_exit))
           .jmp(argv)
 
         __.release_all_registers
@@ -313,7 +322,7 @@ class TenderJIT
         return
       end
 
-      __.mov(argv, __.imm64(compile_request.next_pc))
+      __.mov(argv, __.uimm(compile_request.next_pc))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), argv)
 
       # Pop params and self from the stack
@@ -343,7 +352,7 @@ class TenderJIT
 
       ## Patch the source location to jump here
       fisk = Fisk.new
-      fisk.mov(fisk.r10, fisk.imm64(jump_loc.to_i))
+      fisk.mov(fisk.r10, fisk.uimm(jump_loc.to_i))
       fisk.jmp(fisk.r10)
 
       jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
@@ -353,10 +362,10 @@ class TenderJIT
       ## Write out the method call
 
       ## Push the return location on the machine stack.  `leave` will `ret` here
-      __.mov(argv, __.imm64(jit_buffer.memory + compile_request.return_loc))
+      __.mov(argv, __.uimm(jit_buffer.memory + compile_request.return_loc))
         .push(REG_SP)
         .push(argv)
-        .mov(argv, __.imm64(entrance_addr))
+        .mov(argv, __.uimm(entrance_addr))
         .jmp(argv)
 
       __.release_register argv
@@ -381,7 +390,7 @@ class TenderJIT
     def handle_duparray ary
       write_loc = @temp_stack.push(:object, type: T_ARRAY)
 
-      call_cfunc rb.symbol_address("rb_ary_resurrect"), [__.imm64(ary)]
+      call_cfunc rb.symbol_address("rb_ary_resurrect"), [__.uimm(ary)]
 
       __.mov write_loc, __.rax
     end
@@ -406,7 +415,7 @@ class TenderJIT
       dst = @insn_idx + dst + len
       @insns[dst] = [@insns[dst], patch_request]
 
-      __.test(@temp_stack.pop, __.imm32(~Qnil))
+      __.test(@temp_stack.pop, __.imm(~Qnil))
         .lazy { |pos| patch_request.patch_location = pos }
         .jz(__.rel32(0xCAFE))
         .lazy { |pos| patch_request.jump_end = pos }
@@ -422,7 +431,7 @@ class TenderJIT
         idx = ts.size - i - 1
         if ts.peek(idx).type != T_FIXNUM
           # Is the argument a fixnum?
-          __.test(ts.peek(idx).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
+          __.test(ts.peek(idx).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
             .jz(__.label(:quit!))
         end
       end
@@ -435,7 +444,7 @@ class TenderJIT
       __.mov(tmp, lhs_loc)
         .sub(tmp, rhs_loc)
         .jo(__.label(:quit!))
-        .add(tmp, __.imm32(1))
+        .add(tmp, __.uimm(1))
 
       write_loc = ts.push(:object, type: T_FIXNUM)
 
@@ -444,7 +453,7 @@ class TenderJIT
       __.jmp(__.label(:done))
 
       __.put_label(:quit!)
-        .mov(__.rax, __.imm64(exit_addr))
+        .mov(__.rax, __.uimm(exit_addr))
         .jmp(__.rax)
 
       __.put_label(:done)
@@ -460,7 +469,7 @@ class TenderJIT
         idx = ts.size - i - 1
         if ts.peek(idx).type != T_FIXNUM
           # Is the argument a fixnum?
-          __.test(ts.peek(idx).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
+          __.test(ts.peek(idx).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
             .jz(__.label(:quit!))
         end
       end
@@ -471,7 +480,7 @@ class TenderJIT
       tmp = __.rax
 
       __.mov(tmp, lhs_loc)
-        .sub(tmp, __.imm32(1))
+        .sub(tmp, __.uimm(1))
         .add(tmp, rhs_loc)
         .jo(__.label(:quit!))
 
@@ -482,7 +491,7 @@ class TenderJIT
       __.jmp(__.label(:done))
 
       __.put_label(:quit!)
-        .mov(__.rax, __.imm64(exit_addr))
+        .mov(__.rax, __.uimm(exit_addr))
         .jmp(__.rax)
 
       __.put_label(:done)
@@ -500,7 +509,7 @@ class TenderJIT
           exit_addr ||= exits.make_exit("opt_lt", current_pc, @temp_stack.size)
 
           # Is the argument a fixnum?
-          __.test(ts.peek(idx).loc, __.imm32(rb.c("RUBY_FIXNUM_FLAG")))
+          __.test(ts.peek(idx).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
             .jz(__.label(:quit!))
         end
       end
@@ -519,7 +528,7 @@ class TenderJIT
       __.cmp(reg1, rhs_loc)
 
       # Conditionally move based on the comparison
-      __.mov(reg1, __.imm32(Qtrue))
+      __.mov(reg1, __.uimm(Qtrue))
         .cmovl(reg0, reg1)
 
       # Push the result on the stack
@@ -530,7 +539,7 @@ class TenderJIT
         __.jmp(__.label(:done))
 
         __.put_label(:quit!)
-          .mov(__.rax, __.imm64(exit_addr))
+          .mov(__.rax, __.uimm(exit_addr))
           .jmp(__.rax)
 
         __.put_label(:done)
@@ -539,7 +548,7 @@ class TenderJIT
 
     def handle_putobject_INT2FIX_1_
       loc = @temp_stack.push(:literal, type: T_FIXNUM)
-      __.mov loc, __.imm32(0x3)
+      __.mov loc, __.uimm(0x3)
     end
 
     def handle_setlocal_WC_0 idx
@@ -553,9 +562,9 @@ class TenderJIT
       # Set the local value to the EP
       __.mov(reg_ep, __.m64(REG_CFP, RbControlFrameStruct.offsetof("ep")))
         .test(__.m64(reg_ep, Fiddle::SIZEOF_VOIDP * rb.c("VM_ENV_FLAG_WB_REQUIRED")),
-                       __.imm32(rb.c("VM_ENV_FLAG_WB_REQUIRED")))
+                       __.uimm(rb.c("VM_ENV_FLAG_WB_REQUIRED")))
         .jz(__.label(:continue))
-        .mov(reg_local, __.imm64(addr))
+        .mov(reg_local, __.uimm(addr))
         .jmp(reg_local)
         .put_label(:continue)
         .mov(reg_local, loc)
@@ -571,7 +580,7 @@ class TenderJIT
 
       # Get the local value from the EP
       __.mov(reg_ep, __.m64(REG_CFP, RbControlFrameStruct.offsetof("ep")))
-        .sub(reg_ep, __.imm8(Fiddle::SIZEOF_VOIDP * idx))
+        .sub(reg_ep, __.uimm(Fiddle::SIZEOF_VOIDP * idx))
         .mov(reg_local, __.m64(reg_ep))
         .mov(loc, reg_local)
     end
@@ -594,7 +603,7 @@ class TenderJIT
             end
 
       reg = __.register
-      __.mov reg, __.imm64(literal)
+      __.mov reg, __.uimm(literal)
       __.mov loc, reg
     end
 
@@ -607,7 +616,7 @@ class TenderJIT
       __.mov __.rax, loc
 
       # Pop the frame from the stack
-      __.add(REG_CFP, __.imm32(RbControlFrameStruct.size))
+      __.add(REG_CFP, __.uimm(RbControlFrameStruct.size))
 
       # Write the frame pointer back to the ec
       __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
@@ -627,27 +636,27 @@ class TenderJIT
       call_cfunc rb.symbol_address("rb_check_to_array"), [read_loc]
 
       # If it returned nil, make a new array
-      __.cmp(__.rax, __.imm32(Qnil))
+      __.cmp(__.rax, __.uimm(Qnil))
         .jne(__.label(:continue))
 
-      call_cfunc rb.symbol_address("rb_ary_new_from_args"), [__.imm32(1), __.rax]
+      call_cfunc rb.symbol_address("rb_ary_new_from_args"), [__.uimm(1), __.rax]
 
       __.put_label(:continue)
         .mov(store_loc, __.rax)
     end
 
     # Call a C function at `func_loc` with `params`. Return value will be in RAX
-    def call_cfunc func_loc, params
+    def call_cfunc func_loc, params, fisk = __
       raise NotImplementedError, "too many parameters" if params.length > 6
       raise "No function location" unless func_loc > 0
 
-      save_regs
+      save_regs fisk
       params.each_with_index do |param, i|
-        __.mov(Fisk::Registers::CALLER_SAVED[i], param)
+        fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
       end
-      __.mov(__.rax, __.imm64(func_loc))
-        .call(__.rax)
-      restore_regs
+      fisk.mov(fisk.rax, fisk.uimm(func_loc))
+        .call(fisk.rax)
+      restore_regs fisk
     end
 
     def rb; Internals; end
@@ -666,12 +675,12 @@ class TenderJIT
       fisk.lazy { |x| pos = x; string.bytes.each { |b| jit_buffer.putc b } }
       fisk.put_label(:after_bytes)
       save_regs
-      fisk.mov fisk.rdi, fisk.imm32(1)
+      fisk.mov fisk.rdi, fisk.uimm(1)
       fisk.lazy { |x|
-        fisk.mov fisk.rsi, fisk.imm64(jit_buffer.memory + pos)
+        fisk.mov fisk.rsi, fisk.uimm(jit_buffer.memory + pos)
       }
-      fisk.mov fisk.rdx, fisk.imm32(string.bytesize)
-      fisk.mov fisk.rax, fisk.imm32(0x02000004)
+      fisk.mov fisk.rdx, fisk.uimm(string.bytesize)
+      fisk.mov fisk.rax, fisk.uimm(0x02000004)
       fisk.syscall
       restore_regs fisk
     end
