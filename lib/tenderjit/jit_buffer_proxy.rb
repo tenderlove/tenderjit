@@ -4,10 +4,6 @@ class TenderJIT
       @jb = jb
     end
 
-    def top_exit
-      @jb.memory
-    end
-
     def memory
       @jb.memory
     end
