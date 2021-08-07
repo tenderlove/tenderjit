@@ -4,8 +4,8 @@ class TenderJIT
   class ExitCode
     attr_reader :stats_addr, :exit_stats_addr
 
-    def initialize stats_addr, exit_stats_addr
-      @jit_buffer      = Fisk::Helpers.jitbuffer(4096 * 4)
+    def initialize jit_buffer, stats_addr, exit_stats_addr
+      @jit_buffer      = jit_buffer
       @stats_addr      = stats_addr
       @exit_stats_addr = exit_stats_addr
     end

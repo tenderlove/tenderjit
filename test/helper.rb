@@ -76,16 +76,15 @@ class TenderJIT
       jit = TenderJIT.new
       jit.compile method
 
-      assert_equal compiled, jit.compiled_methods
       before_executed = jit.executed_methods
 
       jit.enable!
       v = method.call
       jit.disable!
 
-      assert_equal compiled, jit.compiled_methods
-      assert_equal executed, jit.executed_methods - before_executed
-      assert_equal exits, jit.exits
+      assert_equal compiled, jit.compiled_methods, "compiled"
+      assert_equal executed, jit.executed_methods - before_executed, "executed"
+      assert_equal exits, jit.exits, "exits"
       v
     end
 

@@ -38,8 +38,10 @@ class TenderJIT
         @unions               = unions
         @encoded_instructions = read_encoded_instructions(symbol_addresses)
         @instruction_lengths  = read_instruction_lengths(symbol_addresses)
+        @instruction_ops      = read_instruction_op_types(symbol_addresses)
         @insn_to_name         = Hash[@encoded_instructions.zip(RubyVM::INSTRUCTION_NAMES)]
         @insn_len             = Hash[@encoded_instructions.zip(@instruction_lengths)]
+        @insn_to_ops          = Hash[@encoded_instructions.zip(@instruction_ops)]
       end
 
       def RB_IMMEDATE_P obj_addr
@@ -64,6 +66,29 @@ class TenderJIT
 
       def insn_len encoded_name
         @insn_len.fetch encoded_name
+      end
+
+      def insn_op_types encoded_name
+        @insn_to_ops.fetch encoded_name
+      end
+
+      def read_instruction_op_types symbol_addresses
+        # FIXME: this needs to be tested on Linux, certainly the name will be
+        # different.
+        op_types = symbol_addresses.fetch("insn_op_types.x")
+
+        insn_map = symbol_addresses.fetch("insn_op_types.y")
+
+        # FIXME: we should use DWARF data to figure out the array type rather
+        # than hardcoding "sizeof short" below
+        len  = RubyVM::INSTRUCTION_NAMES.length
+        l = Fiddle::Pointer.new(insn_map)[0, len * SIZEOF_SHORT].unpack("S#{len}")
+        str_buffer_end = l.last
+
+        while Fiddle::Pointer.new(op_types + str_buffer_end)[0] != 0
+          str_buffer_end += 1
+        end
+        Fiddle::Pointer.new(op_types)[0, str_buffer_end].unpack("Z*" * len)
       end
 
       def read_instruction_lengths symbol_addresses

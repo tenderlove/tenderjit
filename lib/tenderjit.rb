@@ -86,6 +86,7 @@ class TenderJIT
 
   T_FIXNUM = Internals.c "T_FIXNUM"
   T_ARRAY  = Internals.c "T_ARRAY"
+  T_NIL    = Internals.c "T_NIL"
 
   Internals.constants.each do |x|
     if /^(VM_CALL_.*)_bit$/ =~ x
@@ -132,21 +133,28 @@ class TenderJIT
     cov_ptr[2] = nil if cov_ptr
   end
 
+  SIZE = 4096 * (4 * 3)
+
   def initialize
     @stats = Stats.malloc(Fiddle::RUBY_FREE)
     @stats.compiled_methods = 0
     @stats.executed_methods = 0
 
     @exit_stats   = ExitStats.malloc(Fiddle::RUBY_FREE)
-    @jit_buffer   = JITBufferProxy.new(Fisk::Helpers.jitbuffer(4096 * 4))
 
-    @exit_code    = ExitCode.new @stats.to_i, @exit_stats.to_i
+    memory        = Fisk::Helpers.mmap_jit(SIZE)
+    @jit_buffer   = Fisk::Helpers::JITBuffer.new memory, SIZE / 3
 
-    @deferred_calls = DeferredCompilations.new
+    memory += SIZE / 3
+    @deferred_calls = DeferredCompilations.new(Fisk::Helpers::JITBuffer.new(memory, SIZE / 3))
+
+    memory += SIZE / 3
+    exit_buffer   = Fisk::Helpers::JITBuffer.new(memory, SIZE / 3)
+    @exit_code    = ExitCode.new exit_buffer, @stats.to_i, @exit_stats.to_i
   end
 
-  def deferred_call &block
-    @deferred_calls.deferred_call(&block)
+  def deferred_call temp_stack, &block
+    @deferred_calls.deferred_call(temp_stack, &block)
   end
 
   def exit_stats
@@ -205,16 +213,14 @@ class TenderJIT
   REG_CFP = Fisk::Registers::RSI
   REG_SP  = Fisk::Registers::RDX
 
-  CodeBlock = Struct.new(:start, :finish)
-
   # rdi, rsi, rdx, rcx, r8 - r15
   #
   # Caller saved regs:
   #    rdi, rsi, rdx, rcx, r8 - r10
 
   def compile_iseq_t addr
-    iseq_compiler = ISEQCompiler.new(@stats, self)
-    iseq_compiler.compile addr
+    iseq_compiler = ISEQCompiler.new(@stats, self, addr)
+    iseq_compiler.compile
   end
 
   # Convert a method to an rb_iseq_t *address* (so, just the memory location

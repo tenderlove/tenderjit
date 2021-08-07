@@ -3,6 +3,31 @@
 require "helper"
 
 class TenderJIT
+  class IterFib < JITTest
+    def call_fib
+      fib 50
+    end
+
+    def fib num
+      a = 0
+      b = 1
+
+      while num > 0
+        temp = a
+        a = b
+        b = temp + b
+        num -= 1
+      end
+
+      a
+    end
+
+    def test_fib_iter
+      v = assert_jit method(:call_fib), compiled: 2, executed: 2, exits: 0
+      assert_equal 12586269025, v
+    end
+  end
+
   class MethodRecursion < JITTest
     def fib n
       if n < 3

@@ -4,29 +4,40 @@ class TenderJIT
   class ISEQCompiler
     attr_reader :stats
 
-    def initialize stats, jit
+    SCRATCH_REGISTERS = [
+      Fisk::Registers::R9,
+      Fisk::Registers::R10,
+    ]
+
+    def initialize stats, jit, addr
       @stats      = stats
       @jit        = jit
       @temp_stack = TempStack.new
+      @body       = RbISeqT.new(addr).body
+      @insns      = Fiddle::CArray.unpack(@body.iseq_encoded,
+                                          @body.iseq_size,
+                                          Fiddle::TYPE_VOIDP)
+
+      @insn_idx   = nil
+      @current_pc = nil
+      @fisk       = nil
+
+      @blocks     = []
+      @compile_requests = []
     end
 
     def __
       @fisk
     end
 
-    def compile addr
-      body  = RbISeqT.new(addr).body
-
-      if body.jit_func.to_i != 0
-        return body.jit_func.to_i
+    def compile
+      if @body.jit_func.to_i != 0
+        return @body.jit_func.to_i
       end
-
-      @insns = Fiddle::CArray.unpack(body.iseq_encoded, body.iseq_size, Fiddle::TYPE_VOIDP)
 
       stats.compiled_methods += 1
 
       jit_head = jit_buffer.memory + jit_buffer.pos
-      cb = CodeBlock.new jit_head
 
       # ec is in rdi
       # cfp is in rsi
@@ -38,14 +49,42 @@ class TenderJIT
           .mov(REG_SP, _.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
       }.write_to(jit_buffer)
 
-      @current_pc = body.iseq_encoded.to_i
+      resume_compiling 0
 
-      scratch_registers = [
-        Fisk::Registers::R9,
-        Fisk::Registers::R10,
-      ]
+      ary = nil
+      cov_ptr = @body.variable.coverage
+      if cov_ptr == 0
+        ary = []
+        @body.variable.coverage = Fiddle.dlwrap(ary)
+      else
+        ary = Fiddle.dlunwrap(cov_ptr)
+      end
 
-      @insn_idx = 0
+      # COVERAGE_INDEX_LINES is 0
+      # COVERAGE_INDEX_BRANCHES is 1
+      # 2 is unused so we'll use it. :D
+      (ary[2] ||= []) << Fiddle::Pinned.new(self)
+
+      @body.jit_func = jit_head
+      jit_head
+    end
+
+    private
+
+    class Block
+      attr_reader :entry_idx, :jit_position
+
+      def initialize entry_idx, jit_position
+        @entry_idx    = entry_idx
+        @jit_position = jit_position
+      end
+    end
+
+    def resume_compiling insn_idx, finish = nil
+      @blocks << Block.new(insn_idx, jit_buffer.pos)
+      @insn_idx   = insn_idx
+      @current_pc = @body.iseq_encoded.to_i + (insn_idx * Fiddle::SIZEOF_VOIDP)
+
       while(insn, branch = @insns[@insn_idx])
         branch.patch(jit_buffer) if branch
         name   = rb.insn_name(insn)
@@ -53,12 +92,14 @@ class TenderJIT
         params = @insns[@insn_idx + 1, len - 1]
 
         if respond_to?("handle_#{name}", true)
-          Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
+          # puts "#{@insn_idx} compiling #{name}"
+          # Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
           @fisk = Fisk.new
-          send("handle_#{name}", *params)
+          v = send("handle_#{name}", *params)
           @fisk.release_all_registers
-          @fisk.assign_registers(scratch_registers, local: true)
+          @fisk.assign_registers(SCRATCH_REGISTERS, local: true)
           @fisk.write_to(jit_buffer)
+          break if v == :stop
         else
           make_exit(name, @current_pc, @temp_stack.size).write_to jit_buffer
           break
@@ -67,28 +108,7 @@ class TenderJIT
         @insn_idx += len
         @current_pc += len * Fiddle::SIZEOF_VOIDP
       end
-
-      cb.finish = jit_buffer.memory + jit_buffer.pos
-      ary = nil
-      cov_ptr = body.variable.coverage
-      if cov_ptr == 0
-        ary = []
-        body.variable.coverage = Fiddle.dlwrap(ary)
-      else
-        ary = Fiddle.dlunwrap(cov_ptr)
-      end
-
-      # COVERAGE_INDEX_LINES is 0
-      # COVERAGE_INDEX_BRANCHES is 1
-      # 2 is unused so we'll use it. :D
-      (ary[2] ||= []) << cb
-
-      body.jit_func = jit_head
-
-      jit_head.to_i
     end
-
-    private
 
     def current_insn
       insn, = @insns[@insn_idx]
@@ -101,6 +121,10 @@ class TenderJIT
 
     def current_pc
       @current_pc
+    end
+
+    def next_idx
+      @insn_idx + rb.insn_len(current_insn)
     end
 
     def next_pc
@@ -123,7 +147,6 @@ class TenderJIT
     end
 
     CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack, :current_pc, :next_pc)
-    COMPILE_REQUSTS = []
 
     def handle_opt_send_without_block call_data
       cd = RbCallData.new call_data
@@ -139,15 +162,9 @@ class TenderJIT
       compile_request.current_pc = current_pc
       compile_request.next_pc = next_pc
 
-      COMPILE_REQUSTS << Fiddle::Pinned.new(compile_request)
+      @compile_requests << Fiddle::Pinned.new(compile_request)
 
-      # Dup the temp stack so that later mutations won't impact "deferred" call
-      ts = @temp_stack.dup
-
-      deferred = @jit.deferred_call do |__, return_loc|
-        # Flush the SP so that the next Ruby call will push a frame correctly
-        ts.flush __
-
+      deferred = @jit.deferred_call(@temp_stack) do |__, return_loc|
         __.with_register "reg_sp" do |temp|
           # Convert the SP to a Ruby integer
           __.mov(temp, __.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
@@ -196,7 +213,7 @@ class TenderJIT
       Fiddle::Pointer.new(stack - (Fiddle::SIZEOF_VOIDP * (i + 1))).ptr
     end
 
-    def vm_push_frame ec, iseq, type, _self, specval, cref_or_me, pc, sp, local_size, stack_max, compile_request, __
+    def vm_push_frame ec, iseq, type, _self, specval, cref_or_me, pc, sp, local_size, stack_max, compile_request, argc, __
       # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
       # We already have the CFP in a register, so lets just increment that
       __.sub(REG_CFP, __.uimm(RbControlFrameStruct.size))
@@ -215,23 +232,25 @@ class TenderJIT
         .jmp(tmp)
         .put_label(:continue)
 
-      # FIXME: Initialize local variables
-      #p LOCAL_SIZE2: local_size
+      # FIXME: Initialize local variables to nil
 
       # /* setup ep with managing data */
+      # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
       __.mov(tmp, __.uimm(cref_or_me))
         .mov(__.m64(sp), tmp)
 
+      # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
       __.mov(tmp, __.uimm(specval))
       __.mov(__.m64(sp, Fiddle::SIZEOF_VOIDP), tmp)
 
+      # *sp++ = type;       /* ep[-0] / ENV_FLAGS *
       __.mov(tmp, __.uimm(type))
       __.mov(__.m64(sp, 2 * Fiddle::SIZEOF_VOIDP), tmp)
 
       __.mov(tmp, __.uimm(pc))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), tmp)
 
-      __.lea(tmp, __.m(sp, 3 * Fiddle::SIZEOF_VOIDP))
+      __.lea(tmp, __.m(sp, (3 + local_size) * Fiddle::SIZEOF_VOIDP))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), tmp)
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("__bp__")), tmp)
         .sub(tmp, __.uimm(Fiddle::SIZEOF_VOIDP))
@@ -245,6 +264,25 @@ class TenderJIT
 
       __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
       __.release_register tmp
+    end
+
+    def compile_jump stack, req
+      target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
+
+      unless target_block
+        resume_compiling req.jump_idx
+        target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
+      end
+
+      pos = jit_buffer.pos
+      rel_jump = 0xCAFE
+      2.times do
+        jit_buffer.seek(req.patch_jump, IO::SEEK_SET)
+        Fisk.new { |__| __.jmp(__.rel32(rel_jump)) }.write_to(jit_buffer)
+        rel_jump = target_block.jit_position - jit_buffer.pos
+      end
+      jit_buffer.seek(pos, IO::SEEK_SET)
+      @compile_requests.delete_if { |x| x.ref == req }
     end
 
     def compile_method_call stack, compile_request
@@ -286,7 +324,7 @@ class TenderJIT
 
       iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
       iseq = RbISeqT.new(iseq_ptr)
-      entrance_addr = ISEQCompiler.new(stats, @jit).compile iseq_ptr
+      entrance_addr = ISEQCompiler.new(stats, @jit, iseq_ptr).compile
 
       # `vm_call_iseq_setup`
       param_size = iseq.body.param.size
@@ -302,6 +340,7 @@ class TenderJIT
       #(ci.vm_ci_argc + 1).times { @temp_stack.pop }
 
       __ = Fisk.new
+
       argv = __.register "tmp"
 
       #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
@@ -329,8 +368,9 @@ class TenderJIT
       __.mov(argv, __.uimm(compile_request.next_pc))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), argv)
 
+      x = temp_stack - ((argc + 1) * Fiddle::SIZEOF_VOIDP)
       # Pop params and self from the stack
-      __.lea(argv, __.m(temp_stack - ((argc + 1) * Fiddle::SIZEOF_VOIDP)))
+      __.lea(argv, __.m(REG_SP, x.displacement))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), argv)
 
       __.lea(argv, __.m(REG_SP, (temp_stack.size - argc + param_size) * Fiddle::SIZEOF_VOIDP))
@@ -349,6 +389,7 @@ class TenderJIT
                     local_size - param_size,
                     iseq.body.stack_max,
                     compile_request,
+                    argc,
                     __
 
       current_pos = jit_buffer.pos
@@ -423,6 +464,189 @@ class TenderJIT
         .lazy { |pos| patch_request.patch_location = pos }
         .jz(__.rel32(0xCAFE))
         .lazy { |pos| patch_request.jump_end = pos }
+    end
+
+    class BranchIf < Struct.new(:jump_idx, :next_idx, :patch_jump, :patch_next)
+    end
+
+    def compile_branchif stack, req, jump_p
+      pos = jit_buffer.pos
+
+      if jump_p
+        target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
+
+        unless target_block
+          resume_compiling req.jump_idx
+          target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
+        end
+
+        pos = jit_buffer.pos
+        rel_jump = 0xCAFE
+        2.times do
+          jit_buffer.seek(req.patch_jump, IO::SEEK_SET)
+          Fisk.new { |__| __.jnz(__.rel32(rel_jump)) }.write_to(jit_buffer)
+          rel_jump = target_block.jit_position - jit_buffer.pos
+        end
+      else
+        target_block = @blocks.find { |b| b.entry_idx == req.next_idx }
+
+        unless target_block
+          resume_compiling req.next_idx
+          target_block = @blocks.find { |b| b.entry_idx == req.next_idx }
+        end
+
+        rel_jump = 0xCAFE
+        2.times do
+          jit_buffer.seek(req.patch_next, IO::SEEK_SET)
+          Fisk.new { |__| __.jmp(__.rel32(rel_jump)) }.write_to(jit_buffer)
+          rel_jump = target_block.jit_position - jit_buffer.pos
+        end
+      end
+
+      jit_buffer.seek(pos, IO::SEEK_SET)
+    end
+
+    def handle_branchif dst
+      insn = @insns[@insn_idx]
+      len    = rb.insn_len(insn)
+
+      jump_idx = @insn_idx + dst + len
+
+      # if this is a backwards jump, check interrupts
+      if jump_idx < @insn_idx
+        exit_addr = exits.make_exit(insn_name, current_pc, @temp_stack.size)
+
+        __.with_register do |tmp|
+          __.mov(tmp, __.m64(REG_EC, RbExecutionContextT.offsetof("interrupt_mask")))
+            .not(tmp)
+            .test(__.m64(REG_EC, RbExecutionContextT.offsetof("interrupt_flag")), tmp)
+            .jz(__.label(:continue))
+            .mov(tmp, __.uimm(exit_addr))
+            .jmp(tmp)
+            .put_label(:continue)
+        end
+      end
+
+      target_jump_block = @blocks.find { |b| b.entry_idx == jump_idx }
+
+      patch_request = BranchIf.new jump_idx, next_idx
+      @compile_requests << Fiddle::Pinned.new(patch_request)
+
+      deferred = @jit.deferred_call(@temp_stack) do |__, return_loc|
+        __.with_register "reg_sp" do |temp|
+          # Convert the SP to a Ruby integer
+          __.mov(temp, __.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
+          __.shl(temp, __.uimm(1))
+            .add(temp, __.uimm(1))
+
+          call_cfunc rb.symbol_address("rb_funcall"), [
+            __.uimm(Fiddle.dlwrap(self)),
+            __.uimm(rb.rb_intern("compile_branchif")),
+            __.uimm(3),
+            temp,
+            __.uimm(Fiddle.dlwrap(patch_request)),
+            __.rax
+          ], __
+
+          __.mov(temp, __.uimm(return_loc))
+            .jmp(temp)
+        end
+      end
+
+      __.lazy { |pos|
+        deferred.call jit_buffer.memory + pos
+      }
+
+      __.test(@temp_stack.pop, __.imm(~Qnil))
+      if target_jump_block
+        before_jump = nil
+
+        __.lazy { |pos| before_jump = pos }
+        __.jnz(__.rel32(0xCAFE))
+        __.lazy { |pos|
+          jit_buffer.seek(before_jump, IO::SEEK_SET)
+          Fisk.new { |f|
+            f.jnz(f.rel32(target_jump_block.jit_position - pos))
+          }.write_to(jit_buffer)
+          raise unless jit_buffer.pos == pos
+        }
+      else
+        __.lazy { |pos| patch_request.patch_jump = pos }
+        # Jump if value is true
+        __.jnz(__.label(:patch_request))
+      end
+      __.lazy { |pos| patch_request.patch_next = pos }
+
+      #p CONTINUE: target_continue_block
+      __.with_register do |tmp|
+        __.mov(__.rax, __.imm(Qfalse))
+        __.mov(tmp, __.uimm(deferred.entry))
+        __.jmp(tmp)
+      end
+
+      __.put_label(:patch_request)
+
+      __.with_register do |tmp|
+        __.mov(__.rax, __.imm(Qtrue))
+        __.mov(tmp, __.uimm(deferred.entry))
+        __.jmp(tmp)
+      end
+
+      :stop
+    end
+
+    class HandleJump < Struct.new(:jump_idx, :patch_jump)
+    end
+
+    def handle_jump dst
+      insn = @insns[@insn_idx]
+      len    = rb.insn_len(insn)
+
+      dst = @insn_idx + dst + len
+
+      patch_request = HandleJump.new dst
+      @compile_requests << Fiddle::Pinned.new(patch_request)
+
+      deferred = @jit.deferred_call(@temp_stack) do |__, return_loc|
+        __.with_register "reg_sp" do |temp|
+          # Convert the SP to a Ruby integer
+          __.mov(temp, __.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
+          __.shl(temp, __.uimm(1))
+            .add(temp, __.uimm(1))
+
+          call_cfunc rb.symbol_address("rb_funcall"), [
+            __.uimm(Fiddle.dlwrap(self)),
+            __.uimm(rb.rb_intern("compile_jump")),
+            __.uimm(2),
+            temp,
+            __.uimm(Fiddle.dlwrap(patch_request)),
+          ], __
+
+          __.mov(temp, __.uimm(return_loc))
+            .jmp(temp)
+        end
+      end
+
+      __.lazy { |pos|
+        deferred.call jit_buffer.memory + pos
+        patch_request.patch_jump = pos
+      }
+
+      __.with_register do |tmp|
+        __.mov(tmp, __.uimm(deferred.entry))
+        __.jmp(tmp)
+      end
+
+      :stop
+    end
+
+    def handle_putnil
+      loc = @temp_stack.push(:nil, type: T_NIL)
+      __.mov loc, __.uimm(Qnil)
+    end
+
+    def handle_pop
+      @temp_stack.pop
     end
 
     def handle_opt_minus call_data
@@ -699,7 +923,7 @@ class TenderJIT
       TenderJIT.member_size(struct, member)
     end
 
-    def b fisk
+    def break fisk = __
       fisk.int fisk.lit(3)
     end
 
