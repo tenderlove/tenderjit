@@ -2,15 +2,14 @@ require "tenderjit/temp_stack"
 
 class TenderJIT
   class ISEQCompiler
-    attr_reader :stats
-
     SCRATCH_REGISTERS = [
       Fisk::Registers::R9,
       Fisk::Registers::R10,
     ]
 
-    def initialize stats, jit, addr
-      @stats      = stats
+    attr_reader :blocks
+
+    def initialize jit, addr
       @jit        = jit
       @temp_stack = TempStack.new
       @body       = RbISeqT.new(addr).body
@@ -24,10 +23,18 @@ class TenderJIT
 
       @blocks     = []
       @compile_requests = []
+      @objects = []
     end
+
+    def stats; @jit.stats; end
 
     def __
       @fisk
+    end
+
+    def recompile!
+      @body.jit_func = 0
+      compile
     end
 
     def compile
@@ -38,6 +45,7 @@ class TenderJIT
       stats.compiled_methods += 1
 
       jit_head = jit_buffer.memory + jit_buffer.pos
+      @body.jit_func = jit_head
 
       # ec is in rdi
       # cfp is in rsi
@@ -51,21 +59,6 @@ class TenderJIT
 
       resume_compiling 0
 
-      ary = nil
-      cov_ptr = @body.variable.coverage
-      if cov_ptr == 0
-        ary = []
-        @body.variable.coverage = Fiddle.dlwrap(ary)
-      else
-        ary = Fiddle.dlunwrap(cov_ptr)
-      end
-
-      # COVERAGE_INDEX_LINES is 0
-      # COVERAGE_INDEX_BRANCHES is 1
-      # 2 is unused so we'll use it. :D
-      (ary[2] ||= []) << Fiddle::Pinned.new(self)
-
-      @body.jit_func = jit_head
       jit_head
     end
 
@@ -92,10 +85,14 @@ class TenderJIT
         params = @insns[@insn_idx + 1, len - 1]
 
         if respond_to?("handle_#{name}", true)
-          # puts "#{@insn_idx} compiling #{name}"
-          # Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
+          #puts "#{@insn_idx} compiling #{name}"
+          #Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
           @fisk = Fisk.new
           v = send("handle_#{name}", *params)
+          if v == :quit
+            make_exit(name, @current_pc, @temp_stack.size).write_to jit_buffer
+            break
+          end
           @fisk.release_all_registers
           @fisk.assign_registers(SCRATCH_REGISTERS, local: true)
           @fisk.write_to(jit_buffer)
@@ -173,7 +170,7 @@ class TenderJIT
 
           call_cfunc rb.symbol_address("rb_funcall"), [
             __.uimm(Fiddle.dlwrap(self)),
-            __.uimm(rb.rb_intern("compile_method_call")),
+            __.uimm(CFuncs.rb_intern("compile_method_call")),
             __.uimm(2),
             temp,
             __.uimm(Fiddle.dlwrap(compile_request)),
@@ -324,7 +321,7 @@ class TenderJIT
 
       iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
       iseq = RbISeqT.new(iseq_ptr)
-      entrance_addr = ISEQCompiler.new(stats, @jit, iseq_ptr).compile
+      ISEQCompiler.new(@jit, iseq_ptr).compile
 
       # `vm_call_iseq_setup`
       param_size = iseq.body.param.size
@@ -410,7 +407,8 @@ class TenderJIT
       __.mov(argv, __.uimm(jit_buffer.memory + compile_request.return_loc))
         .push(REG_SP)
         .push(argv)
-        .mov(argv, __.uimm(entrance_addr))
+        .mov(argv, __.uimm(iseq.body))
+        .mov(argv, __.m64(argv, iseq.body.class.offsetof("jit_func")))
         .jmp(argv)
 
       __.release_register argv
@@ -541,7 +539,7 @@ class TenderJIT
 
           call_cfunc rb.symbol_address("rb_funcall"), [
             __.uimm(Fiddle.dlwrap(self)),
-            __.uimm(rb.rb_intern("compile_branchif")),
+            __.uimm(CFuncs.rb_intern("compile_branchif")),
             __.uimm(3),
             temp,
             __.uimm(Fiddle.dlwrap(patch_request)),
@@ -595,6 +593,42 @@ class TenderJIT
       :stop
     end
 
+    def handle_opt_getinlinecache dst, ic
+      ic = IseqInlineConstantCache.new ic
+      if ic.entry.to_ptr.null?
+        @body.jit_func = CACHE_BUSTERS.memory.to_i
+        return :stop
+      end
+
+      ice = ic.entry
+      if ice.ic_serial != RubyVM.stat(:global_constant_state)
+        @body.jit_func = CACHE_BUSTERS.memory.to_i
+        return :stop
+      end
+
+      loc = @temp_stack.push(:cache_get, type: rb.RB_BUILTIN_TYPE(ice.value))
+
+      # FIXME: This should be a weakref probably
+      @objects << Fiddle::Pinned.new(Fiddle.dlunwrap(ice.value))
+
+      ary_head = Fiddle::Pointer.new(CONST_WATCHERS)
+      watcher_count = ary_head[0, Fiddle::SIZEOF_VOIDP].unpack1("l!")
+      watchers = ary_head[Fiddle::SIZEOF_VOIDP, Fiddle::SIZEOF_VOIDP * watcher_count].unpack("l!#{watcher_count}")
+      unless watchers.include? @body.to_i
+        watchers << @body.to_i
+        ary_head[0, Fiddle::SIZEOF_VOIDP] = [watchers.length].pack("q")
+        buf = watchers.pack("q*")
+        ary_head[Fiddle::SIZEOF_VOIDP, Fiddle::SIZEOF_VOIDP * watchers.length] = buf
+      end
+
+      __.with_register do |tmp|
+        __.mov(tmp, __.uimm(ice.value))
+          .mov(loc, tmp)
+      end
+
+      handle_jump dst
+    end
+
     class HandleJump < Struct.new(:jump_idx, :patch_jump)
     end
 
@@ -616,7 +650,7 @@ class TenderJIT
 
           call_cfunc rb.symbol_address("rb_funcall"), [
             __.uimm(Fiddle.dlwrap(self)),
-            __.uimm(rb.rb_intern("compile_jump")),
+            __.uimm(CFuncs.rb_intern("compile_jump")),
             __.uimm(2),
             temp,
             __.uimm(Fiddle.dlwrap(patch_request)),

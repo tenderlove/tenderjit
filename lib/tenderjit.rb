@@ -5,11 +5,16 @@ require "tenderjit/fiddle_hacks"
 require "tenderjit/exit_code"
 require "tenderjit/jit_buffer_proxy"
 require "tenderjit/deferred_compilations"
+require "tenderjit/c_funcs"
 require "fiddle/import"
 require "fisk"
 require "fisk/helpers"
 
 class TenderJIT
+  REG_EC  = Fisk::Registers::RDI
+  REG_CFP = Fisk::Registers::RSI
+  REG_SP  = Fisk::Registers::RDX
+
   Internals = RubyInternals.get_internals
 
   # Struct layouts
@@ -23,6 +28,9 @@ class TenderJIT
   RbCallData            = Internals.struct("rb_call_data")
   RbCallableMethodEntryT = Internals.struct("rb_callable_method_entry_t")
   RbMethodDefinitionStruct = Internals.struct("rb_method_definition_struct")
+  RbIseqConstantBody = Internals.struct("rb_iseq_constant_body")
+  IseqInlineConstantCacheEntry = Internals.struct("iseq_inline_constant_cache_entry")
+  IseqInlineConstantCache = Internals.struct("iseq_inline_constant_cache")
 
   class RbCallInfo
     CI_EMBED_TAG_bits  = 1
@@ -87,6 +95,7 @@ class TenderJIT
   T_FIXNUM = Internals.c "T_FIXNUM"
   T_ARRAY  = Internals.c "T_ARRAY"
   T_NIL    = Internals.c "T_NIL"
+  T_CLASS  = Internals.c "T_CLASS"
 
   Internals.constants.each do |x|
     if /^(VM_CALL_.*)_bit$/ =~ x
@@ -104,6 +113,7 @@ class TenderJIT
   Stats = struct [
     "uint64_t compiled_methods",
     "uint64_t executed_methods",
+    "uint64_t recompiles",
     "uint64_t exits",
   ]
 
@@ -135,10 +145,157 @@ class TenderJIT
 
   SIZE = 4096 * (4 * 3)
 
+  CACHE_BUSTERS = Fisk::Helpers.jitbuffer(4096)
+
+  def self.print_str fisk, string, jit_buffer
+    fisk.jmp(fisk.label(:after_bytes))
+    pos = nil
+    fisk.lazy { |x| pos = x; string.bytes.each { |b| jit_buffer.putc b } }
+    fisk.put_label(:after_bytes)
+    fisk.mov fisk.rdi, fisk.uimm(1)
+    fisk.lazy { |x|
+      fisk.mov fisk.rsi, fisk.uimm(jit_buffer.memory + pos)
+    }
+    fisk.mov fisk.rdx, fisk.uimm(string.bytesize)
+    fisk.mov fisk.rax, fisk.uimm(0x02000004)
+    fisk.syscall
+  end
+
+  # This will keep a list of ISeqs that are interested in
+  # `rb_clear_constant_cache` getting called
+  CONST_WATCHERS = Fiddle.malloc(4096)
+
+  STATS = Stats.malloc(Fiddle::RUBY_FREE)
+
+  # Any time `ruby_vm_global_constant_state` changes, we need to invalidate
+  # any JIT code that cares about that value.  This method monkey patches
+  # `rb_clear_constant_cache` because it is the only thing that mutates the
+  # `ruby_vm_global_constant_state` global.
+  def self.install_const_state_change_handler
+    cov_offset = RbIseqConstantBody.members.find { |name, _| name == "variable" }.last.offsetof("coverage")
+    # FIXME: This should work: RbIseqConstantBody.offsetof("variable.coverage")
+    cov_offset += RbIseqConstantBody.offsetof("call_data") + Fiddle::SIZEOF_VOIDP
+
+    save_regs = ->(__) {
+      __.push(REG_EC)
+        .push(REG_CFP)
+    }
+
+    restore_regs = ->(__) {
+      __.pop(REG_CFP)
+        .pop(REG_EC)
+    }
+
+    fisk = Fisk.new { |__|
+      __.with_register do |tmp1|
+        # Book keeping. Count the number of recompiles
+        __.mov(tmp1, __.uimm(STATS.to_i))
+          .inc(__.m64(tmp1, Stats.offsetof("recompiles")))
+
+        __.mov(REG_SP, __.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
+          .lea(tmp1, __.m(REG_SP, 0))
+          .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), tmp1)
+
+        __.mov(tmp1, __.m64(REG_CFP, RbControlFrameStruct.offsetof("iseq")))
+        save_regs.call(__)
+          .mov(__.rdi, __.m64(tmp1, RbISeqT.offsetof("body")))
+          .mov(__.rdi, __.m64(__.rdi, cov_offset))
+          .mov(__.rsi, __.uimm(2))
+          .mov(__.rax, __.uimm(Fiddle::Handle::DEFAULT["rb_ary_entry"]))
+          .push(__.r9)
+          .call(__.rax) # After this, rax should have the iseq compiler
+          .mov(__.rdi, __.rax)
+          .mov(__.rsi, __.uimm(CFuncs.rb_intern("recompile!")))
+          .mov(__.rdx, __.uimm(0))
+          .mov(__.rax, __.uimm(Fiddle::Handle::DEFAULT["rb_funcall"]))
+          .call(__.rax)
+          .pop(__.r9)
+        restore_regs.call(__)
+          .mov(__.rax, __.uimm(Qundef))
+          .ret
+      end
+    }
+    fisk.assign_registers([fisk.r9, fisk.r10], local: true)
+
+    pos = CACHE_BUSTERS.pos
+    fisk.write_to(CACHE_BUSTERS)
+    jump_loc = CACHE_BUSTERS.memory.to_i + pos
+
+    # This function will invalidate JIT code on any iseq that needs to be
+    # invalidated when ruby_vm_global_constant_state changes.
+    fisk = Fisk.new { |__|
+      __.push(__.rbp)
+        .mov(__.rbp, __.rsp)
+
+      # Increment the global constant state
+      __.mov(__.rax, __.uimm(Fiddle::Handle::DEFAULT["ruby_vm_global_constant_state"]))
+        .inc(__.m64(__.rax))
+
+      __.with_register("ary ptr") do |ary_ptr|
+        __.with_register("int i") do |i|
+          __.with_register("int x = *ptr") do |x|
+            __.with_register("jump") do |jump|
+            __.mov(ary_ptr, __.uimm(CONST_WATCHERS.to_i))
+              .xor(i, i)
+              .xor(__.rax, __.rax)
+              .mov(x, __.m64(ary_ptr))
+              .put_label(:loop)
+              .add(ary_ptr, __.uimm(Fiddle::SIZEOF_VOIDP))
+              .cmp(i, x)
+              .jge(__.label(:done))
+              .mov(__.rax, __.m64(ary_ptr))
+              .mov(jump, __.uimm(jump_loc))
+              .test(__.rax, __.rax)
+              .jz(__.label(:body_is_null))
+              .mov(__.m64(__.rax, RbIseqConstantBody.offsetof("jit_func")), jump) # Clear JIT ptr here
+              .mov(__.m64(ary_ptr), __.uimm(0))
+              .put_label(:body_is_null)
+              .inc(i)
+              .jmp(__.label(:loop))
+              .put_label(:done)
+            end
+          end
+        end
+      end
+
+      __.pop(__.rbp)
+        .ret
+    }
+
+    buffer_pos = CACHE_BUSTERS.pos
+    fisk.assign_registers(Fisk::Registers::CALLER_SAVED, local: true)
+    fisk.write_to(CACHE_BUSTERS)
+
+    monkey_patch = StringIO.new
+
+    Fisk.new { |__|
+      __.mov(__.rax, __.uimm(CACHE_BUSTERS.memory.to_i + buffer_pos))
+        .jmp(__.rax)
+    }.write_to(monkey_patch)
+
+    monkey_patch = monkey_patch.string
+
+    addr = Fiddle::Handle::DEFAULT["rb_clear_constant_cache"]
+
+    func_memory = Fiddle::Pointer.new addr
+    page_size = Etc.sysconf(Etc::SC_PAGE_SIZE)
+    page_head = addr & ~(0xFFF)
+    if CFuncs.mprotect(page_head, page_size, 0x1 | 0x4 | 0x2) != 0
+      raise NotImplementedError, "couldn't make function writeable"
+    end
+    func_memory[0, monkey_patch.bytesize] = monkey_patch
+  end
+
+  install_const_state_change_handler
+
+  attr_reader :stats
+
   def initialize
-    @stats = Stats.malloc(Fiddle::RUBY_FREE)
+    @stats = STATS
     @stats.compiled_methods = 0
     @stats.executed_methods = 0
+    @stats.recompiles       = 0
+    @stats.exits            = 0
 
     @exit_stats   = ExitStats.malloc(Fiddle::RUBY_FREE)
 
@@ -167,6 +324,10 @@ class TenderJIT
 
   def executed_methods
     @stats.executed_methods
+  end
+
+  def recompiles
+    @stats.recompiles
   end
 
   def exits
@@ -203,15 +364,11 @@ class TenderJIT
       # COVERAGE_INDEX_LINES is 0
       # COVERAGE_INDEX_BRANCHES is 1
       # 2 is unused so we'll use it. :D
-      Fiddle.dlunwrap(ptr)[2]
+      Fiddle.dlunwrap(ptr)[2]&.blocks
     end
   end
 
   private
-
-  REG_EC  = Fisk::Registers::RDI
-  REG_CFP = Fisk::Registers::RSI
-  REG_SP  = Fisk::Registers::RDX
 
   # rdi, rsi, rdx, rcx, r8 - r15
   #
@@ -219,7 +376,29 @@ class TenderJIT
   #    rdi, rsi, rdx, rcx, r8 - r10
 
   def compile_iseq_t addr
-    iseq_compiler = ISEQCompiler.new(@stats, self, addr)
+    body = RbISeqT.new(addr).body
+    ptr = body.variable.coverage
+
+    ary = nil
+    if ptr == 0
+      ary = []
+      body.variable.coverage = Fiddle.dlwrap(ary)
+    else
+      ary = Fiddle.dlunwrap(ptr)
+    end
+
+    # COVERAGE_INDEX_LINES is 0
+    # COVERAGE_INDEX_BRANCHES is 1
+    # 2 is unused so we'll use it. :D
+
+    # Cache the iseq compiler for this iseq inside the code coverage array.
+    if ary[2]
+      iseq_compiler = ary[2]
+    else
+      iseq_compiler = ISEQCompiler.new(self, addr)
+      ary[2] = iseq_compiler
+    end
+
     iseq_compiler.compile
   end
 

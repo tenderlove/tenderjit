@@ -72,6 +72,12 @@ class TenderJIT
   end
 
   class JITTest < Test
+    def assert_change thing, by: 1
+      initial = thing.call
+      yield
+      assert_equal initial + by, thing.call
+    end
+
     def assert_jit method, compiled:, executed:, exits:
       jit = TenderJIT.new
       jit.compile method

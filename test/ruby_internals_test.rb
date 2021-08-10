@@ -301,7 +301,6 @@ class TenderJIT
 
       fisk = Fisk.new
 
-      klass = self
       rb = self.rb
       binary = fisk.asm do
         push rbp
@@ -312,7 +311,7 @@ class TenderJIT
         self.or rcx, imm8(0x1)
 
         mov rdi, imm64(Fiddle.dlwrap(x))
-        mov rsi, imm64(rb.rb_intern("call"))
+        mov rsi, imm64(CFuncs.rb_intern("call"))
         mov rdx, imm32(1)
         mov r8, imm64(Fiddle::Handle::DEFAULT["rb_funcall"])
         call r8

@@ -25,7 +25,6 @@ class TenderJIT
         define_method name, &func.to_proc
       end
 
-      make_function "rb_intern", [TYPE_CONST_STRING], TYPE_INT
       make_function "rb_id2sym", [TYPE_INT], TYPE_VOIDP
       make_function "rb_callable_method_entry", [TYPE_VOIDP, TYPE_INT], TYPE_VOIDP
 
