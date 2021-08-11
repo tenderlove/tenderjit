@@ -33,6 +33,7 @@ class TenderJIT
     end
 
     def recompile!
+      @temp_stack = TempStack.new
       @body.jit_func = 0
       compile
     end
@@ -85,20 +86,23 @@ class TenderJIT
         params = @insns[@insn_idx + 1, len - 1]
 
         if respond_to?("handle_#{name}", true)
-          #puts "#{@insn_idx} compiling #{name}"
-          #Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
+          if $DEBUG
+            puts "#{@insn_idx} compiling #{name}"
+            Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
+          end
           @fisk = Fisk.new
           v = send("handle_#{name}", *params)
           if v == :quit
-            make_exit(name, @current_pc, @temp_stack.size).write_to jit_buffer
+            make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
             break
           end
+          break if v == :abort
           @fisk.release_all_registers
           @fisk.assign_registers(SCRATCH_REGISTERS, local: true)
           @fisk.write_to(jit_buffer)
           break if v == :stop
         else
-          make_exit(name, @current_pc, @temp_stack.size).write_to jit_buffer
+          make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
           break
         end
 
@@ -135,15 +139,15 @@ class TenderJIT
 
     def exits; @jit.exit_code; end
 
-    def make_exit exit_insn_name, exit_pc, exit_sp
-      jump_addr = exits.make_exit(exit_insn_name, exit_pc, exit_sp)
+    def make_exit exit_insn_name, exit_pc, temp_stack
+      jump_addr = exits.make_exit(exit_insn_name, exit_pc, temp_stack)
       Fisk.new { |_|
         _.mov(_.r10, _.uimm(jump_addr))
           .jmp(_.r10)
       }
     end
 
-    CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack, :current_pc, :next_pc)
+    CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack, :current_pc, :next_pc, :aaron_exit)
 
     def handle_opt_send_without_block call_data
       cd = RbCallData.new call_data
@@ -154,7 +158,8 @@ class TenderJIT
 
       compile_request = CallCompileRequest.new
       compile_request.call_info = ci
-      compile_request.overflow_exit = exits.make_exit("opt_send_without_block", current_pc, @temp_stack.size)
+      compile_request.overflow_exit = exits.make_exit("opt_send_without_block", current_pc, @temp_stack.dup)
+      compile_request.aaron_exit = exits.make_exit("opt_send_without_block", current_pc, @temp_stack.dup)
       compile_request.temp_stack = @temp_stack.dup
       compile_request.current_pc = current_pc
       compile_request.next_pc = next_pc
@@ -310,7 +315,7 @@ class TenderJIT
         __ = Fisk.new
         argv = __.register "tmp"
 
-        __.mov(argv, __.uimm(compile_request.overflow_exit))
+        __.mov(argv, __.uimm(compile_request.aaron_exit))
           .jmp(argv)
 
         __.release_all_registers
@@ -321,7 +326,7 @@ class TenderJIT
 
       iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
       iseq = RbISeqT.new(iseq_ptr)
-      ISEQCompiler.new(@jit, iseq_ptr).compile
+      @jit.compile_iseq_t iseq_ptr
 
       # `vm_call_iseq_setup`
       param_size = iseq.body.param.size
@@ -512,7 +517,7 @@ class TenderJIT
 
       # if this is a backwards jump, check interrupts
       if jump_idx < @insn_idx
-        exit_addr = exits.make_exit(insn_name, current_pc, @temp_stack.size)
+        exit_addr = exits.make_exit(insn_name, current_pc, @temp_stack.dup)
 
         __.with_register do |tmp|
           __.mov(tmp, __.m64(REG_EC, RbExecutionContextT.offsetof("interrupt_mask")))
@@ -597,13 +602,13 @@ class TenderJIT
       ic = IseqInlineConstantCache.new ic
       if ic.entry.to_ptr.null?
         @body.jit_func = CACHE_BUSTERS.memory.to_i
-        return :stop
+        return :abort
       end
 
       ice = ic.entry
       if ice.ic_serial != RubyVM.stat(:global_constant_state)
         @body.jit_func = CACHE_BUSTERS.memory.to_i
-        return :stop
+        return :abort
       end
 
       loc = @temp_stack.push(:cache_get, type: rb.RB_BUILTIN_TYPE(ice.value))
@@ -686,7 +691,7 @@ class TenderJIT
     def handle_opt_minus call_data
       ts = @temp_stack
 
-      exit_addr = exits.make_exit("opt_minus", current_pc, @temp_stack.size)
+      exit_addr = exits.make_exit("opt_minus", current_pc, @temp_stack.dup)
 
       # Generate runtime checks if we need them
       2.times do |i|
@@ -724,7 +729,7 @@ class TenderJIT
     def handle_opt_plus call_data
       ts = @temp_stack
 
-      exit_addr = exits.make_exit("opt_plus", current_pc, @temp_stack.size)
+      exit_addr = exits.make_exit("opt_plus", current_pc, @temp_stack.dup)
 
       # Generate runtime checks if we need them
       2.times do |i|
@@ -769,7 +774,7 @@ class TenderJIT
       2.times do |i|
         idx = ts.size - i - 1
         if ts.peek(idx).type != T_FIXNUM
-          exit_addr ||= exits.make_exit(insn_name, current_pc, @temp_stack.size)
+          exit_addr ||= exits.make_exit(insn_name, current_pc, @temp_stack.dup)
 
           # Is the argument a fixnum?
           __.test(ts.peek(idx).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
@@ -846,7 +851,7 @@ class TenderJIT
     def handle_setlocal_WC_0 idx
       loc = @temp_stack.pop
 
-      addr = exits.make_exit("setlocal_WC_0", current_pc, @temp_stack.size)
+      addr = exits.make_exit("setlocal_WC_0", current_pc, @temp_stack.dup)
 
       reg_ep = __.register "ep"
       reg_local = __.register "local"

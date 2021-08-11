@@ -9,6 +9,7 @@ require "tenderjit/c_funcs"
 require "fiddle/import"
 require "fisk"
 require "fisk/helpers"
+require "etc"
 
 class TenderJIT
   REG_EC  = Fisk::Registers::RDI
@@ -368,8 +369,6 @@ class TenderJIT
     end
   end
 
-  private
-
   # rdi, rsi, rdx, rcx, r8 - r15
   #
   # Caller saved regs:
@@ -401,6 +400,8 @@ class TenderJIT
 
     iseq_compiler.compile
   end
+
+  private
 
   # Convert a method to an rb_iseq_t *address* (so, just the memory location
   # where the iseq exists)

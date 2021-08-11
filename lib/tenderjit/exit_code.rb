@@ -10,7 +10,7 @@ class TenderJIT
       @exit_stats_addr = exit_stats_addr
     end
 
-    def make_exit exit_insn_name, exit_pc, exit_sp
+    def make_exit exit_insn_name, exit_pc, temp_stack
       fisk = Fisk.new
 
       sizeof_sp = TenderJIT.member_size(RbControlFrameStruct, "sp")
@@ -18,28 +18,27 @@ class TenderJIT
       stats_addr = fisk.imm64(self.stats_addr)
       exit_stats_addr = fisk.imm64(self.exit_stats_addr)
 
-      fisk.instance_eval do
+      __ = fisk
+      __.with_register do |tmp|
         # increment the exits counter
-        mov r10, stats_addr
-        inc m64(r10, Stats.offsetof("exits"))
+        __.mov(tmp, stats_addr)
+          .inc(__.m64(tmp, Stats.offsetof("exits")))
 
         # increment the instruction specific counter
-        mov r10, exit_stats_addr
-        inc m64(r10, ExitStats.offsetof(exit_insn_name))
+        __.mov(tmp, exit_stats_addr)
+          .inc(__.m64(tmp, ExitStats.offsetof(exit_insn_name)))
 
         # increment the SP
-        add REG_SP, imm32(sizeof_sp * exit_sp)
-        mov m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), REG_SP
+        temp_stack.flush(__)
 
         # Set the PC on the CFP
-        mov r10, imm64(exit_pc)
-        mov m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), r10
+        __.mov(tmp, __.uimm(exit_pc))
+          .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), tmp)
 
-        mov m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
-
-        mov rax, imm64(Qundef)
-        ret
+        __.mov(__.rax, __.uimm(Qundef))
+          .ret
       end
+      __.assign_registers(ISEQCompiler::SCRATCH_REGISTERS, local: true)
 
       jump_location = @jit_buffer.memory.to_i + @jit_buffer.pos
       fisk.write_to(@jit_buffer)
