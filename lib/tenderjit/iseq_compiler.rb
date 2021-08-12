@@ -55,7 +55,7 @@ class TenderJIT
       Fisk.new { |_|
         _.mov(_.r10, _.uimm(stats.to_i))
           .inc(_.m64(_.r10, Stats.offsetof("executed_methods")))
-          .mov(REG_SP, _.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
+          .mov(REG_BP, _.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
       }.write_to(jit_buffer)
 
       resume_compiling 0
@@ -147,7 +147,7 @@ class TenderJIT
       }
     end
 
-    CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack, :current_pc, :next_pc, :aaron_exit)
+    CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack, :current_pc, :next_pc)
 
     def handle_opt_send_without_block call_data
       cd = RbCallData.new call_data
@@ -159,7 +159,6 @@ class TenderJIT
       compile_request = CallCompileRequest.new
       compile_request.call_info = ci
       compile_request.overflow_exit = exits.make_exit("opt_send_without_block", current_pc, @temp_stack.dup)
-      compile_request.aaron_exit = exits.make_exit("opt_send_without_block", current_pc, @temp_stack.dup)
       compile_request.temp_stack = @temp_stack.dup
       compile_request.current_pc = current_pc
       compile_request.next_pc = next_pc
@@ -203,7 +202,7 @@ class TenderJIT
 
       # The method call will return here, and its return value will be in RAX
       loc = @temp_stack.push(:unknown)
-      __.pop(REG_SP)
+      __.pop(REG_BP)
       __.cmp(__.rax, __.uimm(Qundef))
       __.jne(__.label(:continue))
       __.ret
@@ -315,7 +314,7 @@ class TenderJIT
         __ = Fisk.new
         argv = __.register "tmp"
 
-        __.mov(argv, __.uimm(compile_request.aaron_exit))
+        __.mov(argv, __.uimm(compile_request.overflow_exit))
           .jmp(argv)
 
         __.release_all_registers
@@ -372,10 +371,10 @@ class TenderJIT
 
       x = temp_stack - ((argc + 1) * Fiddle::SIZEOF_VOIDP)
       # Pop params and self from the stack
-      __.lea(argv, __.m(REG_SP, x.displacement))
+      __.lea(argv, __.m(REG_BP, x.displacement))
         .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), argv)
 
-      __.lea(argv, __.m(REG_SP, (temp_stack.size - argc + param_size) * Fiddle::SIZEOF_VOIDP))
+      __.lea(argv, __.m(REG_BP, (temp_stack.size - argc + param_size) * Fiddle::SIZEOF_VOIDP))
 
       # `vm_call_iseq_setup_normal`
 
@@ -410,7 +409,7 @@ class TenderJIT
 
       ## Push the return location on the machine stack.  `leave` will `ret` here
       __.mov(argv, __.uimm(jit_buffer.memory + compile_request.return_loc))
-        .push(REG_SP)
+        .push(REG_BP)
         .push(argv)
         .mov(argv, __.uimm(iseq.body))
         .mov(argv, __.m64(argv, iseq.body.class.offsetof("jit_func")))
@@ -426,11 +425,11 @@ class TenderJIT
     def save_regs fisk = __
       fisk.push(REG_EC)
         .push(REG_CFP)
-        .push(REG_SP)
+        .push(REG_BP)
     end
 
     def restore_regs fisk = __
-      fisk.pop(REG_SP)
+      fisk.pop(REG_BP)
         .pop(REG_CFP)
         .pop(REG_EC)
     end

@@ -14,7 +14,7 @@ require "etc"
 class TenderJIT
   REG_EC  = Fisk::Registers::RDI
   REG_CFP = Fisk::Registers::RSI
-  REG_SP  = Fisk::Registers::RDX
+  REG_BP  = Fisk::Registers::RDX
 
   Internals = RubyInternals.get_internals
 
@@ -193,8 +193,8 @@ class TenderJIT
         __.mov(tmp1, __.uimm(STATS.to_i))
           .inc(__.m64(tmp1, Stats.offsetof("recompiles")))
 
-        __.mov(REG_SP, __.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
-          .lea(tmp1, __.m(REG_SP, 0))
+        __.mov(REG_BP, __.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
+          .lea(tmp1, __.m(REG_BP, 0))
           .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), tmp1)
 
         __.mov(tmp1, __.m64(REG_CFP, RbControlFrameStruct.offsetof("iseq")))

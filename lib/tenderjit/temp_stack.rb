@@ -12,7 +12,7 @@ class TenderJIT
     # Flush the SP to the CFP within the +fisk+ context
     def flush fisk
       temp = fisk.register
-      fisk.lea(temp, fisk.m(REG_SP, size * @sizeof_sp))
+      fisk.lea(temp, fisk.m(REG_BP, size * @sizeof_sp))
           .mov(fisk.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), temp)
       fisk.release_register temp
     end
@@ -29,7 +29,7 @@ class TenderJIT
     # Push a value on the temp stack. Returns the memory location where
     # to write the actual value in machine code.
     def push name, type: nil
-      m = Fisk::M64.new(REG_SP, @stack.length * @sizeof_sp)
+      m = Fisk::M64.new(REG_BP, @stack.length * @sizeof_sp)
       @stack.push Item.new(name, type, m)
       m
     end
@@ -46,12 +46,12 @@ class TenderJIT
 
     # Get an operand for the stack pointer plus some bytes
     def + bytes
-      Fisk::M64.new(REG_SP, (@stack.length * @sizeof_sp) + bytes)
+      Fisk::M64.new(REG_BP, (@stack.length * @sizeof_sp) + bytes)
     end
 
     # Get an operand for the stack pointer plus some bytes
     def - bytes
-      Fisk::M64.new(REG_SP, (@stack.length * @sizeof_sp) - bytes)
+      Fisk::M64.new(REG_BP, (@stack.length * @sizeof_sp) - bytes)
     end
 
     def size
