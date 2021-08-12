@@ -286,6 +286,24 @@ class TenderJIT
       @compile_requests.delete_if { |x| x.ref == req }
     end
 
+    def patch_source_jump jit_buffer, compile_request
+      ## Patch the source location to jump here
+      current_pos = jit_buffer.pos
+      jump_loc = jit_buffer.memory + current_pos
+      fisk = Fisk.new { |__|
+        __.with_register do |tmp|
+          __.mov(tmp, __.uimm(jump_loc.to_i))
+          __.jmp(tmp)
+        end
+      }
+
+      fisk.assign_registers(SCRATCH_REGISTERS, local: true)
+
+      jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
+      fisk.write_to(jit_buffer)
+      jit_buffer.seek current_pos, IO::SEEK_SET
+    end
+
     def compile_method_call stack, compile_request
       ci = compile_request.call_info
       mid = ci.vm_ci_mid
@@ -299,17 +317,7 @@ class TenderJIT
       method_definition = RbMethodDefinitionStruct.new(cme.def)
 
       if method_definition.type != rb.c("VM_METHOD_TYPE_ISEQ")
-        current_pos = jit_buffer.pos
-        jump_loc = jit_buffer.memory + current_pos
-
-        ## Patch the source location to jump here
-        fisk = Fisk.new
-        fisk.mov(fisk.r10, fisk.uimm(jump_loc.to_i))
-        fisk.jmp(fisk.r10)
-
-        jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
-        fisk.write_to(jit_buffer)
-        jit_buffer.seek current_pos, IO::SEEK_SET
+        patch_source_jump jit_buffer, compile_request
 
         __ = Fisk.new
         argv = __.register "tmp"
@@ -318,7 +326,7 @@ class TenderJIT
           .jmp(argv)
 
         __.release_all_registers
-        __.assign_registers([__.r9, __.r10], local: true)
+        __.assign_registers(SCRATCH_REGISTERS, local: true)
         __.write_to(jit_buffer)
         return
       end
@@ -326,6 +334,8 @@ class TenderJIT
       iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
       iseq = RbISeqT.new(iseq_ptr)
       @jit.compile_iseq_t iseq_ptr
+
+      patch_source_jump jit_buffer, compile_request
 
       # `vm_call_iseq_setup`
       param_size = iseq.body.param.size
@@ -346,22 +356,12 @@ class TenderJIT
 
       #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
       unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
-        current_pos = jit_buffer.pos
-        jump_loc = jit_buffer.memory + current_pos
-        ## Patch the source location to jump here
-        fisk = Fisk.new
-        fisk.mov(fisk.r10, fisk.uimm(jump_loc.to_i))
-        fisk.jmp(fisk.r10)
-
-        jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
-        fisk.write_to(jit_buffer)
-        jit_buffer.seek current_pos, IO::SEEK_SET
 
         __.mov(argv, __.uimm(compile_request.overflow_exit))
           .jmp(argv)
 
         __.release_all_registers
-        __.assign_registers([__.r9, __.r10], local: true)
+        __.assign_registers(SCRATCH_REGISTERS, local: true)
         __.write_to(jit_buffer)
         return
       end
@@ -392,18 +392,6 @@ class TenderJIT
                     compile_request,
                     argc,
                     __
-
-      current_pos = jit_buffer.pos
-      jump_loc = jit_buffer.memory + current_pos
-
-      ## Patch the source location to jump here
-      fisk = Fisk.new
-      fisk.mov(fisk.r10, fisk.uimm(jump_loc.to_i))
-      fisk.jmp(fisk.r10)
-
-      jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
-      fisk.write_to(jit_buffer)
-      jit_buffer.seek current_pos, IO::SEEK_SET
 
       ## Write out the method call
 
