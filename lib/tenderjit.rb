@@ -99,8 +99,11 @@ class TenderJIT
   T_CLASS  = Internals.c "T_CLASS"
 
   Internals.constants.each do |x|
-    if /^(VM_CALL_.*)_bit$/ =~ x
+    case x
+    when /^(VM_CALL_.*)_bit$/
       const_set $1, 1 << Internals.c(x)
+    when /^VM_(?:FRAME|ENV|METHOD).*$/
+      const_set x, Internals.c(x)
     end
   end
 

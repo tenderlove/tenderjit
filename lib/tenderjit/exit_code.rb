@@ -13,8 +13,6 @@ class TenderJIT
     def make_exit exit_insn_name, exit_pc, temp_stack
       fisk = Fisk.new
 
-      sizeof_sp = TenderJIT.member_size(RbControlFrameStruct, "sp")
-
       stats_addr = fisk.imm64(self.stats_addr)
       exit_stats_addr = fisk.imm64(self.exit_stats_addr)
 

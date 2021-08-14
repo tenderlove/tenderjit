@@ -104,5 +104,36 @@ class TenderJIT
       assert_equal 2, jit.executed_methods
       assert_equal 1, jit.exits
     end
+
+    def cfunc x
+      Fiddle.dlwrap x
+    end
+
+    def test_cfunc
+      obj = Object.new
+      expected = Fiddle.dlwrap obj
+
+      success = false
+      jit = TenderJIT.new
+      jit.compile(method(:cfunc))
+      5.times do
+        recompiles = jit.recompiles
+        exits = jit.exits
+        jit.enable!
+        cfunc(obj)
+        jit.disable!
+        if recompiles == jit.recompiles && exits == jit.exits
+          success = true
+          break
+        end
+      end
+
+      assert success, "method couldn't be heated"
+
+      jit.enable!
+      v = cfunc(obj)
+      jit.disable!
+      assert_equal expected, v
+    end
   end
 end

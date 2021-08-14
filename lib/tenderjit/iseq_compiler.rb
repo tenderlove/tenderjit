@@ -35,6 +35,13 @@ class TenderJIT
     def recompile!
       @temp_stack = TempStack.new
       @body.jit_func = 0
+      @insn_idx   = nil
+      @current_pc = nil
+      @fisk       = nil
+
+      @blocks     = []
+      @compile_requests = []
+      @objects = []
       compile
     end
 
@@ -88,7 +95,7 @@ class TenderJIT
         if respond_to?("handle_#{name}", true)
           if $DEBUG
             puts "#{@insn_idx} compiling #{name}"
-            Fisk.new { |_| print_str(_, name + "\n") }.write_to(jit_buffer)
+            Fisk.new { |_| print_str(_, "RT #{@insn_idx} #{name}" + "\n") }.write_to(jit_buffer)
           end
           @fisk = Fisk.new
           v = send("handle_#{name}", *params)
@@ -96,7 +103,10 @@ class TenderJIT
             make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
             break
           end
-          break if v == :abort
+          if v == :abort
+            make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
+            break
+          end
           @fisk.release_all_registers
           @fisk.assign_registers(SCRATCH_REGISTERS, local: true)
           @fisk.write_to(jit_buffer)
@@ -214,24 +224,30 @@ class TenderJIT
       Fiddle::Pointer.new(stack - (Fiddle::SIZEOF_VOIDP * (i + 1))).ptr
     end
 
+    def check_vm_stack_overflow __, compile_request, local_size, stack_max
+      temp_stack = compile_request.temp_stack
+
+      # /* check stack overflow */
+      # CHECK_VM_STACK_OVERFLOW0(cfp, sp, local_size + stack_max);
+      margin = local_size + stack_max + RbControlFrameStruct.size
+      __.with_register do |tmp|
+        __.lea(tmp, __.m(temp_stack + (margin + RbCallableMethodEntryT.size)))
+          .cmp(REG_CFP, tmp)
+          .jg(__.label(:continue))
+          .mov(tmp, __.uimm(compile_request.overflow_exit))
+          .jmp(tmp)
+          .put_label(:continue)
+      end
+    end
+
     def vm_push_frame ec, iseq, type, _self, specval, cref_or_me, pc, sp, local_size, stack_max, compile_request, argc, __
+      check_vm_stack_overflow __, compile_request, local_size, stack_max
+
       # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
       # We already have the CFP in a register, so lets just increment that
       __.sub(REG_CFP, __.uimm(RbControlFrameStruct.size))
 
       tmp = __.register
-
-      temp_stack = compile_request.temp_stack
-
-      # /* check stack overflow */
-      # CHECK_VM_STACK_OVERFLOW0(cfp, sp, local_size + stack_max);
-      margin = local_size + stack_max
-      __.lea(tmp, __.m(temp_stack + (margin + RbCallableMethodEntryT.size)))
-        .cmp(REG_CFP, tmp)
-        .jg(__.label(:continue))
-        .mov(tmp, __.uimm(compile_request.overflow_exit))
-        .jmp(tmp)
-        .put_label(:continue)
 
       # FIXME: Initialize local variables to nil
 
@@ -316,97 +332,155 @@ class TenderJIT
       cme = RbCallableMethodEntryT.new(rb.rb_callable_method_entry(klass, mid))
       method_definition = RbMethodDefinitionStruct.new(cme.def)
 
-      if method_definition.type != rb.c("VM_METHOD_TYPE_ISEQ")
-        patch_source_jump jit_buffer, compile_request
-
-        __ = Fisk.new
-        argv = __.register "tmp"
-
-        __.mov(argv, __.uimm(compile_request.overflow_exit))
-          .jmp(argv)
-
-        __.release_all_registers
-        __.assign_registers(SCRATCH_REGISTERS, local: true)
-        __.write_to(jit_buffer)
-        return
+      # If we find an iseq method, compile it, even if we don't enter.
+      if method_definition.type == VM_METHOD_TYPE_ISEQ
+        iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
+        iseq = RbISeqT.new(iseq_ptr)
+        @jit.compile_iseq_t iseq_ptr
       end
 
-      iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
-      iseq = RbISeqT.new(iseq_ptr)
-      @jit.compile_iseq_t iseq_ptr
+      # Bail on any method calls that aren't "simple".  Not handling *args,
+      # kwargs, etc right now
+      #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
+      unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+        patch_source_jump jit_buffer, compile_request
 
-      patch_source_jump jit_buffer, compile_request
+        fisk = Fisk.new do |__|
+          __.with_register do |tmp|
+            __.mov(tmp, __.uimm(compile_request.overflow_exit))
+              .jmp(tmp)
+          end
+        end
+        fisk.assign_registers(SCRATCH_REGISTERS, local: true)
+        fisk.write_to(jit_buffer)
 
-      # `vm_call_iseq_setup`
-      param_size = iseq.body.param.size
-      local_size = iseq.body.local_table_size
-      opt_pc     = 0 # we don't handle optional parameters rn
-
-      # `vm_call_iseq_setup_2` FIXME: we need to deal with TAILCALL
-      # `vm_call_iseq_setup_normal` FIXME: we need to deal with TAILCALL
-
-      temp_stack = compile_request.temp_stack
-
-      # pop locals and recv off the stack
-      #(ci.vm_ci_argc + 1).times { @temp_stack.pop }
+        return
+      end
 
       __ = Fisk.new
 
-      argv = __.register "tmp"
+      case method_definition.type
+      when VM_METHOD_TYPE_CFUNC
+        cfunc = RbMethodDefinitionStruct.new(cme.def).body.cfunc
+        param_size = if cfunc.argc == -1
+                       argc
+                     elsif cfunc.argc < 0
+                       raise NotImplementedError
+                     else
+                       cfunc.argc
+                     end
 
-      #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
-      unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+        frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL;
 
-        __.mov(argv, __.uimm(compile_request.overflow_exit))
+        patch_source_jump jit_buffer, compile_request
+
+        temp_stack = compile_request.temp_stack
+        __.with_register do |argv|
+          # Write next PC to CFP
+          __.mov(argv, __.uimm(compile_request.next_pc))
+            .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), argv)
+
+          idx = temp_stack.size - (argc + 1)
+          x = temp_stack.peek(idx).loc
+          ## Pop params and self from the stack
+          __.lea(argv, __.m(REG_BP, x.displacement))
+            .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), argv)
+          __.lea(argv, __.m(REG_BP, ((temp_stack.size - argc) + param_size + 1) * Fiddle::SIZEOF_VOIDP))
+
+          vm_push_frame(REG_EC,
+                        0,
+                        frame_type,
+                        recv,
+                        0, #ci.block_handler,
+                        cme,
+                        0,
+                        argv,
+                        0,
+                        0,
+                        compile_request,
+                        argc,
+                        __)
+
+          __.lea(argv, __.m(REG_BP, ((temp_stack.size - argc)) * Fiddle::SIZEOF_VOIDP))
+
+          call_cfunc cfunc.invoker.to_i, [__.uimm(recv), __.uimm(argc), argv, __.uimm(cfunc.func.to_i)], __
+          __.push(REG_BP) # Caller expects to pop REG_BP
+          __.mov(argv, __.uimm(jit_buffer.memory + compile_request.return_loc))
+            .push(argv)
+        end
+
+
+        __.add(REG_CFP, __.uimm(RbControlFrameStruct.size))
+        __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
+        __.ret
+
+      when VM_METHOD_TYPE_ISEQ
+        # `vm_call_iseq_setup`
+        param_size = iseq.body.param.size
+        local_size = iseq.body.local_table_size
+        opt_pc     = 0 # we don't handle optional parameters rn
+
+        # `vm_call_iseq_setup_2` FIXME: we need to deal with TAILCALL
+        # `vm_call_iseq_setup_normal` FIXME: we need to deal with TAILCALL
+
+        temp_stack = compile_request.temp_stack
+
+        # pop locals and recv off the stack
+        #(ci.vm_ci_argc + 1).times { @temp_stack.pop }
+
+        patch_source_jump jit_buffer, compile_request
+
+        argv = __.register "tmp"
+
+        # Write next PC to CFP
+        __.mov(argv, __.uimm(compile_request.next_pc))
+          .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), argv)
+
+        # Pop params and self from the stack
+        x = temp_stack - ((argc + 1) * Fiddle::SIZEOF_VOIDP)
+        __.lea(argv, __.m(REG_BP, x.displacement))
+          .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), argv)
+
+        __.lea(argv, __.m(REG_BP, (temp_stack.size - argc + param_size) * Fiddle::SIZEOF_VOIDP))
+
+        # `vm_call_iseq_setup_normal`
+
+        # `vm_push_frame`
+        vm_push_frame REG_EC,
+          iseq_ptr,
+          VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL,
+          recv,
+          0, #ci.block_handler,
+          cme,
+          iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
+          argv,
+          local_size - param_size,
+          iseq.body.stack_max,
+          compile_request,
+          argc,
+          __
+
+        ## Write out the method call
+
+        ## Push the return location on the machine stack.  `leave` will `ret` here
+        __.mov(argv, __.uimm(jit_buffer.memory + compile_request.return_loc))
+          .push(REG_BP)
+          .push(argv)
+          .mov(argv, __.uimm(iseq.body))
+          .mov(argv, __.m64(argv, iseq.body.class.offsetof("jit_func")))
           .jmp(argv)
 
-        __.release_all_registers
-        __.assign_registers(SCRATCH_REGISTERS, local: true)
-        __.write_to(jit_buffer)
-        return
+        __.release_register argv
+      else
+        patch_source_jump jit_buffer, compile_request
+
+        __.with_register do |argv|
+          __.mov(argv, __.uimm(compile_request.overflow_exit))
+            .jmp(argv)
+        end
       end
 
-      __.mov(argv, __.uimm(compile_request.next_pc))
-        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), argv)
-
-      x = temp_stack - ((argc + 1) * Fiddle::SIZEOF_VOIDP)
-      # Pop params and self from the stack
-      __.lea(argv, __.m(REG_BP, x.displacement))
-        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), argv)
-
-      __.lea(argv, __.m(REG_BP, (temp_stack.size - argc + param_size) * Fiddle::SIZEOF_VOIDP))
-
-      # `vm_call_iseq_setup_normal`
-
-      # `vm_push_frame`
-      vm_push_frame REG_EC,
-                    iseq_ptr,
-                    rb.c("VM_FRAME_MAGIC_METHOD") | rb.c("VM_ENV_FLAG_LOCAL"),
-                    recv,
-                    0, #ci.block_handler,
-                    cme,
-                    iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-                    argv,
-                    local_size - param_size,
-                    iseq.body.stack_max,
-                    compile_request,
-                    argc,
-                    __
-
-      ## Write out the method call
-
-      ## Push the return location on the machine stack.  `leave` will `ret` here
-      __.mov(argv, __.uimm(jit_buffer.memory + compile_request.return_loc))
-        .push(REG_BP)
-        .push(argv)
-        .mov(argv, __.uimm(iseq.body))
-        .mov(argv, __.m64(argv, iseq.body.class.offsetof("jit_func")))
-        .jmp(argv)
-
-      __.release_register argv
-
-      __.release_all_registers
-      __.assign_registers([__.r9, __.r10], local: true)
+      __.assign_registers(SCRATCH_REGISTERS, local: true)
       __.write_to(jit_buffer)
     end
 
