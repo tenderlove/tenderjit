@@ -135,5 +135,17 @@ class TenderJIT
       jit.disable!
       assert_equal expected, v
     end
+
+    define_method :bmethod do |a, b|
+      a + b
+    end
+
+    def call_bmethod
+      bmethod(1, 2)
+    end
+
+    def test_cfunc
+      assert_jit method(:call_bmethod), compiled: 2, executed: 2, exits: 0
+    end
   end
 end

@@ -229,9 +229,9 @@ class TenderJIT
 
       # /* check stack overflow */
       # CHECK_VM_STACK_OVERFLOW0(cfp, sp, local_size + stack_max);
-      margin = local_size + stack_max + RbControlFrameStruct.size
+      margin = ((local_size + stack_max) * Fiddle::SIZEOF_VOIDP) + RbControlFrameStruct.size
       __.with_register do |tmp|
-        __.lea(tmp, __.m(temp_stack + (margin + RbCallableMethodEntryT.size)))
+        __.lea(tmp, __.m(temp_stack.+(margin + RbCallableMethodEntryT.size)))
           .cmp(REG_CFP, tmp)
           .jg(__.label(:continue))
           .mov(tmp, __.uimm(compile_request.overflow_exit))
@@ -471,6 +471,60 @@ class TenderJIT
           .jmp(argv)
 
         __.release_register argv
+      when VM_METHOD_TYPE_BMETHOD
+        opt_pc     = 0 # we don't handle optional parameters rn
+        proc_obj = RbMethodDefinitionStruct.new(cme.def).body.bmethod.proc
+        proc = RData.new(proc_obj).data
+        rb_block_t    = RbProcT.new(proc).block
+        if rb_block_t.type != rb.c("block_type_iseq")
+          raise NotImplementedError
+        end
+        ec = REG_EC
+        captured = rb_block_t.as.captured
+        _self = recv
+        type = VM_FRAME_MAGIC_BLOCK
+        iseq = RbISeqT.new(captured.code.iseq)
+
+        param_size = iseq.body.param.size
+
+        @jit.compile_iseq_t iseq.to_i
+
+        patch_source_jump jit_buffer, compile_request
+
+        temp_stack = compile_request.temp_stack
+
+        __.with_register do |argv|
+          __.mov(argv, __.uimm(compile_request.next_pc))
+            .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), argv)
+
+          # Pop params and self from the stack
+          x = temp_stack.-((argc + 1) * Fiddle::SIZEOF_VOIDP)
+          __.lea(argv, __.m(REG_BP, x.displacement))
+            .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), argv)
+
+          __.lea(argv, __.m(REG_BP, (temp_stack.size - argc + param_size) * Fiddle::SIZEOF_VOIDP))
+
+          vm_push_frame REG_EC,
+            iseq.to_i,
+            type | VM_FRAME_FLAG_BMETHOD,
+            recv,
+            VM_GUARDED_PREV_EP(captured.ep),
+            cme,
+            iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
+            argv,
+            iseq.body.local_table_size - param_size,
+            iseq.body.stack_max,
+            compile_request,
+            argc,
+            __
+
+          __.mov(argv, __.uimm(jit_buffer.memory + compile_request.return_loc))
+            .push(REG_BP)
+            .push(argv)
+            .mov(argv, __.uimm(iseq.body))
+            .mov(argv, __.m64(argv, iseq.body.class.offsetof("jit_func")))
+            .jmp(argv)
+        end
       else
         patch_source_jump jit_buffer, compile_request
 
@@ -1041,6 +1095,10 @@ class TenderJIT
       fisk.mov fisk.rax, fisk.uimm(0x02000004)
       fisk.syscall
       restore_regs fisk
+    end
+
+    def VM_GUARDED_PREV_EP ep
+      ep.to_i | 0x01
     end
   end
 end

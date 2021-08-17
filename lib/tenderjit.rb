@@ -22,7 +22,9 @@ class TenderJIT
 
   RBasic                = Internals.struct("RBasic")
   RTypedData            = Internals.struct("RTypedData")
+  RData                 = Internals.struct("RData")
   RbISeqT               = Internals.struct("rb_iseq_t")
+  RbProcT               = Internals.struct("rb_proc_t")
   RbControlFrameStruct  = Internals.struct("rb_control_frame_struct")
   RbExecutionContextT   = Internals.struct("rb_execution_context_t")
   RbCallInfo            = Internals.struct("rb_callinfo")
@@ -71,6 +73,10 @@ class TenderJIT
       else
         argc
       end
+    end
+
+    def is_args_kw_splat?
+      (vm_ci_flag & VM_CALL_KWARG) != 0
     end
   end
 
