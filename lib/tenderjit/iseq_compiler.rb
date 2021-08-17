@@ -479,7 +479,6 @@ class TenderJIT
         if rb_block_t.type != rb.c("block_type_iseq")
           raise NotImplementedError
         end
-        ec = REG_EC
         captured = rb_block_t.as.captured
         _self = recv
         type = VM_FRAME_MAGIC_BLOCK

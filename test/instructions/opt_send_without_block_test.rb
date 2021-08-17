@@ -144,8 +144,9 @@ class TenderJIT
       bmethod(1, 2)
     end
 
-    def test_cfunc
-      assert_jit method(:call_bmethod), compiled: 2, executed: 2, exits: 0
+    def test_call_bmethod
+      v = assert_jit method(:call_bmethod), compiled: 2, executed: 2, exits: 0
+      assert_equal 3, v
     end
   end
 end
