@@ -310,6 +310,7 @@ class TenderJIT
     @exit_stats   = ExitStats.malloc(Fiddle::RUBY_FREE)
 
     memory        = Fisk::Helpers.mmap_jit(SIZE)
+    CFuncs.memset(memory, 0xCC, SIZE)
     @jit_buffer   = Fisk::Helpers::JITBuffer.new memory, SIZE / 3
 
     memory += SIZE / 3

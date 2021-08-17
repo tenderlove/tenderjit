@@ -11,8 +11,13 @@ class TenderJIT
     attr_reader :blocks
 
     def initialize jit, addr
+      if $DEBUG
+        puts "Compiling iseq addr: #{sprintf("%#x", addr)}"
+      end
+
       @jit        = jit
       @temp_stack = TempStack.new
+      @iseq       = addr
       @body       = RbISeqT.new(addr).body
       @insns      = Fiddle::CArray.unpack(@body.iseq_encoded,
                                           @body.iseq_size,
@@ -54,7 +59,6 @@ class TenderJIT
       stats.compiled_methods += 1
 
       jit_head = jit_buffer.memory + jit_buffer.pos
-      @body.jit_func = jit_head
 
       # ec is in rdi
       # cfp is in rsi
@@ -66,7 +70,9 @@ class TenderJIT
           .mov(REG_BP, _.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
       }.write_to(jit_buffer)
 
-      resume_compiling 0
+      unless resume_compiling(0) == :abort
+        @body.jit_func = jit_head
+      end
 
       jit_head
     end
@@ -85,7 +91,8 @@ class TenderJIT
     def resume_compiling insn_idx, finish = nil
       @blocks << Block.new(insn_idx, jit_buffer.pos)
       @insn_idx   = insn_idx
-      @current_pc = @body.iseq_encoded.to_i + (insn_idx * Fiddle::SIZEOF_VOIDP)
+      enc = @body.iseq_encoded
+      @current_pc = enc.to_i + (insn_idx * Fiddle::SIZEOF_VOIDP)
 
       while(insn, branch = @insns[@insn_idx])
         branch.patch(jit_buffer) if branch
@@ -93,10 +100,12 @@ class TenderJIT
         len    = rb.insn_len(insn)
         params = @insns[@insn_idx + 1, len - 1]
 
+        if $DEBUG
+          puts "#{@insn_idx} compiling #{name} #{sprintf("%#x", @iseq.to_i)}"
+        end
         if respond_to?("handle_#{name}", true)
           if $DEBUG
-            puts "#{@insn_idx} compiling #{name}"
-            Fisk.new { |_| print_str(_, "RT #{@insn_idx} #{name}" + "\n") }.write_to(jit_buffer)
+            Fisk.new { |_| print_str(_, "RT #{@insn_idx} #{name} #{sprintf("%#x", @iseq.to_i)}\n") }.write_to(jit_buffer)
           end
           @fisk = Fisk.new
           v = send("handle_#{name}", *params)
@@ -106,7 +115,7 @@ class TenderJIT
           end
           if v == :abort
             make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
-            break
+            return v
           end
           @fisk.release_all_registers
           @fisk.assign_registers(SCRATCH_REGISTERS, local: true)

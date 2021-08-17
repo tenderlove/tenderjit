@@ -171,4 +171,26 @@ class TenderJIT
       assert_equal 1, jit.exits
     end
   end
+
+  class CompileItself < JITTest
+    def fib n
+      if n < 3
+        1
+      else
+        fib(n-1) + fib(n-2)
+      end
+    end
+
+    def test_it_does_not_crash
+      jit = TenderJIT.new
+      jit.compile(jit.method(:compile))
+      6.times do
+        jit.enable!
+        jit.compile(method(:fib))
+        jit.disable!
+      end
+
+      assert true
+    end
+  end
 end
