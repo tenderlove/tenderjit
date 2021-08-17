@@ -1,4 +1,5 @@
 require "tenderjit/temp_stack"
+require "tenderjit/runtime"
 
 class TenderJIT
   class ISEQCompiler
@@ -243,44 +244,56 @@ class TenderJIT
     def vm_push_frame ec, iseq, type, _self, specval, cref_or_me, pc, sp, local_size, stack_max, compile_request, argc, __
       check_vm_stack_overflow __, compile_request, local_size, stack_max
 
-      # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
-      # We already have the CFP in a register, so lets just increment that
-      __.sub(REG_CFP, __.uimm(RbControlFrameStruct.size))
+      Runtime.new(__) do |rt|
+        sp_ptr = rt.pointer sp
+        ec_ptr = rt.pointer REG_EC, RbExecutionContextT
+        cfp_ptr = rt.pointer REG_CFP, RbControlFrameStruct
 
-      tmp = __.register
+        # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
+        cfp_ptr.sub # like -- in C
 
-      # FIXME: Initialize local variables to nil
+        # FIXME: Initialize local variables to nil
+        # for (int i=0; i < local_size; i++) {
+        #     *sp++ = Qnil;
+        # }
 
-      # /* setup ep with managing data */
-      # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
-      __.mov(tmp, __.uimm(cref_or_me))
-        .mov(__.m64(sp), tmp)
+        # /* setup ep with managing data */
+        # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
+        # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
+        # *sp++ = type;       /* ep[-0] / ENV_FLAGS */
+        sp_ptr[0] = cref_or_me
+        sp_ptr[1] = specval
+        sp_ptr[2] = type
 
-      # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
-      __.mov(tmp, __.uimm(specval))
-      __.mov(__.m64(sp, Fiddle::SIZEOF_VOIDP), tmp)
+        # /* setup new frame */
+        # *cfp = (const struct rb_control_frame_struct) {
+        #     .pc         = pc,
+        #     .sp         = sp,
+        #     .iseq       = iseq,
+        #     .self       = self,
+        #     .ep         = sp - 1,
+        #     .block_code = NULL,
+        #     .__bp__     = sp,
+        #     .bp_check   = sp,
+        #     .jit_return = NULL
+        # };
+        cfp_ptr.pc = pc
 
-      # *sp++ = type;       /* ep[-0] / ENV_FLAGS *
-      __.mov(tmp, __.uimm(type))
-      __.mov(__.m64(sp, 2 * Fiddle::SIZEOF_VOIDP), tmp)
+        sp_ptr.with_ref(3 + local_size) do |new_sp|
+          cfp_ptr.sp     = new_sp
+          cfp_ptr.__bp__ = new_sp
 
-      __.mov(tmp, __.uimm(pc))
-        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), tmp)
+          new_sp.sub
+          cfp_ptr.ep     = new_sp
+        end
 
-      __.lea(tmp, __.m(sp, (3 + local_size) * Fiddle::SIZEOF_VOIDP))
-        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), tmp)
-        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("__bp__")), tmp)
-        .sub(tmp, __.uimm(Fiddle::SIZEOF_VOIDP))
-        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("ep")), tmp)
+        cfp_ptr.iseq = iseq
+        cfp_ptr.self = _self
+        cfp_ptr.block_code = 0
 
-      __.mov(tmp, __.uimm(iseq))
-        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("iseq")), tmp)
-      __.mov(tmp, __.uimm(_self))
-        .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("self")), tmp)
-      __.mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("block_code")), __.uimm(0))
-
-      __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
-      __.release_register tmp
+        # ec->cfp = cfp;
+        ec_ptr.cfp = cfp_ptr
+      end
     end
 
     def compile_jump stack, req
