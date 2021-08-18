@@ -94,8 +94,7 @@ class TenderJIT
       enc = @body.iseq_encoded
       @current_pc = enc.to_i + (insn_idx * Fiddle::SIZEOF_VOIDP)
 
-      while(insn, branch = @insns[@insn_idx])
-        branch.patch(jit_buffer) if branch
+      while(insn = @insns[@insn_idx])
         name   = rb.insn_name(insn)
         len    = rb.insn_len(insn)
         params = @insns[@insn_idx + 1, len - 1]
@@ -143,8 +142,7 @@ class TenderJIT
     end
 
     def current_insn
-      insn, = @insns[@insn_idx]
-      insn
+      @insns[@insn_idx]
     end
 
     def insn_name
