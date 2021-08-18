@@ -89,8 +89,8 @@ class TenderJIT
     end
 
     def resume_compiling insn_idx, finish = nil
-      @blocks << Block.new(insn_idx, jit_buffer.pos)
       @insn_idx   = insn_idx
+      @blocks << Block.new(@insn_idx, jit_buffer.pos)
       enc = @body.iseq_encoded
       @current_pc = enc.to_i + (insn_idx * Fiddle::SIZEOF_VOIDP)
 
@@ -121,6 +121,10 @@ class TenderJIT
           @fisk.assign_registers(SCRATCH_REGISTERS, local: true)
           @fisk.write_to(jit_buffer)
           break if v == :stop
+
+          if v == :continue
+            @blocks << Block.new(@insn_idx + len, jit_buffer.pos)
+          end
         else
           make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
           break
@@ -129,6 +133,13 @@ class TenderJIT
         @insn_idx += len
         @current_pc += len * Fiddle::SIZEOF_VOIDP
       end
+    end
+
+    def flush
+      @fisk.release_all_registers
+      @fisk.assign_registers(SCRATCH_REGISTERS, local: true)
+      @fisk.write_to(jit_buffer)
+      @fisk = Fisk.new
     end
 
     def current_insn
@@ -579,30 +590,84 @@ class TenderJIT
       __.mov write_loc, __.rax
     end
 
-    class BranchUnless < Struct.new(:pc_dst, :patch_location, :jump_end)
-      # The head of the JIT buffer is our jump location
-      def patch jit_buf
-        pos = jit_buf.pos
-        jit_buf.seek(patch_location, IO::SEEK_SET)
-        Fisk.new { |__|
-          __.jz(__.rel32(pos - jump_end))
-        }.write_to(jit_buf)
-        jit_buf.seek(pos, IO::SEEK_SET)
-      end
+    class BranchUnless < Struct.new(:jump_idx, :patch_jump, :temp_stack)
     end
 
     def handle_branchunless dst
-      patch_request = BranchUnless.new dst
       insn = @insns[@insn_idx]
       len    = rb.insn_len(insn)
 
-      dst = @insn_idx + dst + len
-      @insns[dst] = [@insns[dst], patch_request]
+      jump_pc = @insn_idx + dst + len
+
+      target_jump_block = @blocks.find { |b| b.entry_idx == jump_pc }
+
+      if target_jump_block
+        raise NotImplementedError, "FIXME"
+      end
+
+      next_pc = self.next_pc
+      target_next_block = @blocks.find { |b| b.entry_idx == next_pc }
+
+      if target_next_block
+        raise NotImplementedError, "FIXME"
+      end
+
+      patch_request = BranchUnless.new jump_pc
+
+      deferred = @jit.deferred_call(@temp_stack) do |__, return_loc|
+        call_cfunc rb.symbol_address("rb_funcall"), [
+          __.uimm(Fiddle.dlwrap(self)),
+          __.uimm(CFuncs.rb_intern("compile_branchunless")),
+          __.uimm(1),
+          __.uimm(Fiddle.dlwrap(patch_request))
+        ], __
+
+        __.with_register do |tmp|
+          __.mov(tmp, __.uimm(return_loc))
+            .jmp(tmp)
+        end
+      end
+
+      flush
+
+      deferred.call(jit_buffer.memory + jit_buffer.pos)
 
       __.test(@temp_stack.pop, __.imm(~Qnil))
-        .lazy { |pos| patch_request.patch_location = pos }
-        .jz(__.rel32(0xCAFE))
-        .lazy { |pos| patch_request.jump_end = pos }
+
+      patch_request.temp_stack = @temp_stack.dup
+
+      flush
+
+      patch_request.patch_jump = jit_buffer.pos
+
+      pos = jit_buffer.pos
+      rel_jump = 0xCAFE
+      2.times do
+        jit_buffer.seek(pos, IO::SEEK_SET)
+        Fisk.new { |__| __.jz(__.rel32(rel_jump)) }.write_to(jit_buffer)
+        rel_jump = deferred.entry.to_i - (jit_buffer.memory.to_i + jit_buffer.pos)
+      end
+
+      :continue # create a new block and keep compiling
+    end
+
+    def compile_branchunless req
+      target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
+
+      unless target_block
+        resume_compiling req.jump_idx
+        target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
+      end
+
+      pos = jit_buffer.pos
+      rel_jump = 0xCAFE
+      2.times do
+        jit_buffer.seek(req.patch_jump, IO::SEEK_SET)
+        Fisk.new { |__| __.jz(__.rel32(rel_jump)) }.write_to(jit_buffer)
+        rel_jump = target_block.jit_position - jit_buffer.pos
+      end
+      jit_buffer.seek(pos, IO::SEEK_SET)
+      @compile_requests.delete_if { |x| x.ref == req }
     end
 
     class BranchIf < Struct.new(:jump_idx, :next_idx, :patch_jump, :patch_next)
@@ -1054,6 +1119,7 @@ class TenderJIT
       # Write the frame pointer back to the ec
       __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
       __.ret
+      :continue
     end
 
     def handle_splatarray flag
