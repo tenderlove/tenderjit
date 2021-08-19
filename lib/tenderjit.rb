@@ -182,9 +182,7 @@ class TenderJIT
   # `rb_clear_constant_cache` because it is the only thing that mutates the
   # `ruby_vm_global_constant_state` global.
   def self.install_const_state_change_handler
-    cov_offset = RbIseqConstantBody.members.find { |name, _| name == "variable" }.last.offsetof("coverage")
-    # FIXME: This should work: RbIseqConstantBody.offsetof("variable.coverage")
-    cov_offset += RbIseqConstantBody.offsetof("call_data") + Fiddle::SIZEOF_VOIDP
+    cov_offset = RbIseqConstantBody.offsetof("variable.coverage")
 
     save_regs = ->(__) {
       __.push(REG_EC)

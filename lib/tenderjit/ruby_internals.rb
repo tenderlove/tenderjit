@@ -426,7 +426,7 @@ class TenderJIT
               last_offset = child.data_member_location
               fiddle_subtype = find_fiddle_type(type, all_dies)
               if fiddle_subtype.is_a?(Class)
-                names << [name, fiddle_subtype]
+                names << [name, fiddle_subtype.members]
               else
                 if type.tag.identifier == :DW_TAG_pointer_type
                   pointer_type = find_type_die(type, all_dies)
