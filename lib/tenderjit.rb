@@ -11,9 +11,9 @@ require "fisk/helpers"
 require "etc"
 
 class TenderJIT
-  REG_EC  = Fisk::Registers::RDI
-  REG_CFP = Fisk::Registers::RSI
-  REG_BP  = Fisk::Registers::RDX
+  REG_EC  = Fisk::Registers::R13
+  REG_CFP = Fisk::Registers::R14
+  REG_BP  = Fisk::Registers::R15
 
   Internals = RubyInternals.get_internals
 
@@ -187,17 +187,10 @@ class TenderJIT
   def self.install_const_state_change_handler
     cov_offset = RbIseqConstantBody.offsetof("variable.coverage")
 
-    save_regs = ->(__) {
-      __.push(REG_EC)
-        .push(REG_CFP)
-    }
-
-    restore_regs = ->(__) {
-      __.pop(REG_CFP)
-        .pop(REG_EC)
-    }
-
     fisk = Fisk.new { |__|
+      __.mov(REG_EC, __.rdi)
+        .mov(REG_CFP, __.rsi)
+
       __.with_register do |tmp1|
         # Book keeping. Count the number of recompiles
         __.mov(tmp1, __.uimm(STATS.to_i))
@@ -208,7 +201,6 @@ class TenderJIT
           .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), tmp1)
 
         __.mov(tmp1, __.m64(REG_CFP, RbControlFrameStruct.offsetof("iseq")))
-        save_regs.call(__)
           .mov(__.rdi, __.m64(tmp1, RbISeqT.offsetof("body")))
           .mov(__.rdi, __.m64(__.rdi, cov_offset))
           .mov(__.rsi, __.uimm(2))
@@ -221,7 +213,6 @@ class TenderJIT
           .mov(__.rax, __.uimm(Fiddle::Handle::DEFAULT["rb_funcall"]))
           .call(__.rax)
           .pop(__.r9)
-        restore_regs.call(__)
           .mov(__.rax, __.uimm(Qundef))
           .ret
       end
@@ -410,6 +401,7 @@ class TenderJIT
     end
 
     iseq_compiler.compile
+    iseq_compiler
   end
 
   private

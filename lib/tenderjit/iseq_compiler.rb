@@ -58,10 +58,17 @@ class TenderJIT
 
       stats.compiled_methods += 1
 
-      jit_head = jit_buffer.memory + jit_buffer.pos
+      jit_head = jit_buffer.address
 
       # ec is in rdi
       # cfp is in rsi
+
+      Fisk.new { |__|
+        __.mov(REG_EC, __.rdi)
+          .mov(REG_CFP, __.rsi)
+      }.write_to(jit_buffer)
+
+      @skip_bytes = jit_buffer.address - jit_head
 
       # Write the prologue for book keeping
       Fisk.new { |_|
@@ -568,6 +575,7 @@ class TenderJIT
           .push(argv)
           .mov(argv, __.uimm(iseq.body))
           .mov(argv, __.m64(argv, iseq.body.class.offsetof("jit_func")))
+          .add(argv, __.uimm(@skip_bytes))
           .jmp(argv)
 
         __.release_register argv
@@ -622,6 +630,7 @@ class TenderJIT
             .push(argv)
             .mov(argv, __.uimm(iseq.body))
             .mov(argv, __.m64(argv, iseq.body.class.offsetof("jit_func")))
+            .add(argv, __.uimm(@skip_bytes))
             .jmp(argv)
         end
       else
@@ -635,18 +644,6 @@ class TenderJIT
 
       __.assign_registers(SCRATCH_REGISTERS, local: true)
       __.write_to(jit_buffer)
-    end
-
-    def save_regs fisk = __
-      fisk.push(REG_EC)
-        .push(REG_CFP)
-        .push(REG_BP)
-    end
-
-    def restore_regs fisk = __
-      fisk.pop(REG_BP)
-        .pop(REG_CFP)
-        .pop(REG_EC)
     end
 
     def handle_duparray ary
@@ -1183,13 +1180,13 @@ class TenderJIT
       raise NotImplementedError, "too many parameters" if params.length > 6
       raise "No function location" unless func_loc > 0
 
-      save_regs fisk
+      fisk.push(fisk.rsp) # alignment
       params.each_with_index do |param, i|
         fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
       end
       fisk.mov(fisk.rax, fisk.uimm(func_loc))
         .call(fisk.rax)
-      restore_regs fisk
+      fisk.pop(fisk.rsp) # alignment
     end
 
     def rb; Internals; end
@@ -1207,7 +1204,7 @@ class TenderJIT
       pos = nil
       fisk.lazy { |x| pos = x; string.bytes.each { |b| jit_buffer.putc b } }
       fisk.put_label(:after_bytes)
-      save_regs fisk
+      fisk.push(fisk.rsp) # alignment
       fisk.mov fisk.rdi, fisk.uimm(1)
       fisk.lazy { |x|
         fisk.mov fisk.rsi, fisk.uimm(jit_buffer.memory + pos)
@@ -1215,7 +1212,7 @@ class TenderJIT
       fisk.mov fisk.rdx, fisk.uimm(string.bytesize)
       fisk.mov fisk.rax, fisk.uimm(0x02000004)
       fisk.syscall
-      restore_regs fisk
+      fisk.pop(fisk.rsp) # alignment
     end
 
     def VM_GUARDED_PREV_EP ep
