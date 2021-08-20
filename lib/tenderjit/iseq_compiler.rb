@@ -80,17 +80,18 @@ class TenderJIT
     private
 
     class Block
-      attr_reader :entry_idx, :jit_position
+      attr_reader :entry_idx, :jit_position, :start_address
 
-      def initialize entry_idx, jit_position
-        @entry_idx    = entry_idx
-        @jit_position = jit_position
+      def initialize entry_idx, jit_position, start_address
+        @entry_idx     = entry_idx
+        @jit_position  = jit_position
+        @start_address = start_address
       end
     end
 
     def resume_compiling insn_idx, finish = nil
       @insn_idx   = insn_idx
-      @blocks << Block.new(@insn_idx, jit_buffer.pos)
+      @blocks << Block.new(@insn_idx, jit_buffer.pos, jit_buffer.address)
       enc = @body.iseq_encoded
       @current_pc = enc.to_i + (insn_idx * Fiddle::SIZEOF_VOIDP)
 
@@ -122,7 +123,7 @@ class TenderJIT
           break if v == :stop
 
           if v == :continue
-            @blocks << Block.new(@insn_idx + len, jit_buffer.pos)
+            @blocks << Block.new(@insn_idx + len, jit_buffer.pos, jit_buffer.address)
           end
         else
           make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
@@ -199,16 +200,7 @@ class TenderJIT
 
       ivar_idx = value.ptr.to_int
 
-      pos = jit_buffer.pos
-      position = jit_buffer.memory.to_i + pos
-
-      rel_jump = 0xCAFE
-      2.times do
-        jit_buffer.seek(req.patch_loc, IO::SEEK_SET)
-        Fisk.new { |__| __.jmp(__.rel32(rel_jump)) }.write_to(jit_buffer)
-        rel_jump = position - (jit_buffer.memory.to_i + jit_buffer.pos)
-      end
-      jit_buffer.seek(pos, IO::SEEK_SET)
+      jit_buffer.patch_jump at: req.patch_loc, to: jit_buffer.address
 
       fisk = Fisk.new
 
@@ -273,20 +265,13 @@ class TenderJIT
       end
 
       flush
-      pos = jit_buffer.pos
-      req.patch_loc = pos
 
       # jump back to the re-written jmp
-      deferred.call jit_buffer.memory.to_i + pos
+      deferred.call jit_buffer.address
 
-      rel_jump = 0xCAFE
-      2.times do
-        jit_buffer.seek(pos, IO::SEEK_SET)
-        Fisk.new { |__| __.jmp(__.rel32(rel_jump)) }.write_to(jit_buffer)
-        rel_jump = deferred.entry.to_i - (jit_buffer.memory.to_i + jit_buffer.pos)
-      end
-
-      req.return_loc = jit_buffer.memory.to_i + jit_buffer.pos
+      req.patch_loc = jit_buffer.pos
+      jit_buffer.write_jump to: deferred.entry.to_i
+      req.return_loc = jit_buffer.address
     end
 
     def handle_opt_send_without_block call_data
@@ -325,10 +310,10 @@ class TenderJIT
         end
       end
 
-      __.lazy { |pos|
-        compile_request.patch_loc = pos
-        deferred.call jit_buffer.memory + pos
-      }
+      flush
+
+      compile_request.patch_loc = jit_buffer.pos
+      deferred.call jit_buffer.address
 
       # Jump in to the deferred compiler
       tmp = __.register
@@ -431,33 +416,15 @@ class TenderJIT
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
       end
 
-      pos = jit_buffer.pos
-      rel_jump = 0xCAFE
-      2.times do
-        jit_buffer.seek(req.patch_jump, IO::SEEK_SET)
-        Fisk.new { |__| __.jmp(__.rel32(rel_jump)) }.write_to(jit_buffer)
-        rel_jump = target_block.jit_position - jit_buffer.pos
-      end
-      jit_buffer.seek(pos, IO::SEEK_SET)
+      jit_buffer.patch_jump at: req.patch_jump, to: target_block.start_address
+
       @compile_requests.delete_if { |x| x.ref == req }
     end
 
     def patch_source_jump jit_buffer, compile_request
       ## Patch the source location to jump here
-      current_pos = jit_buffer.pos
-      jump_loc = jit_buffer.memory + current_pos
-      fisk = Fisk.new { |__|
-        __.with_register do |tmp|
-          __.mov(tmp, __.uimm(jump_loc.to_i))
-          __.jmp(tmp)
-        end
-      }
-
-      fisk.assign_registers(SCRATCH_REGISTERS, local: true)
-
-      jit_buffer.seek compile_request.patch_loc, IO::SEEK_SET
-      fisk.write_to(jit_buffer)
-      jit_buffer.seek current_pos, IO::SEEK_SET
+      jit_buffer.patch_jump at: compile_request.patch_loc,
+                            to: jit_buffer.address
     end
 
     def compile_method_call stack, compile_request
@@ -485,14 +452,7 @@ class TenderJIT
       unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
         patch_source_jump jit_buffer, compile_request
 
-        fisk = Fisk.new do |__|
-          __.with_register do |tmp|
-            __.mov(tmp, __.uimm(compile_request.overflow_exit))
-              .jmp(tmp)
-          end
-        end
-        fisk.assign_registers(SCRATCH_REGISTERS, local: true)
-        fisk.write_to(jit_buffer)
+        jit_buffer.write_jump to: compile_request.overflow_exit
 
         return
       end
@@ -737,7 +697,7 @@ class TenderJIT
 
       flush
 
-      deferred.call(jit_buffer.memory + jit_buffer.pos)
+      deferred.call(jit_buffer.address)
 
       __.test(@temp_stack.pop, __.imm(~Qnil))
 
@@ -747,13 +707,7 @@ class TenderJIT
 
       patch_request.patch_jump = jit_buffer.pos
 
-      pos = jit_buffer.pos
-      rel_jump = 0xCAFE
-      2.times do
-        jit_buffer.seek(pos, IO::SEEK_SET)
-        Fisk.new { |__| __.jz(__.rel32(rel_jump)) }.write_to(jit_buffer)
-        rel_jump = deferred.entry.to_i - (jit_buffer.memory.to_i + jit_buffer.pos)
-      end
+      jit_buffer.write_jump to: deferred.entry.to_i, type: :jz
 
       :continue # create a new block and keep compiling
     end
@@ -766,14 +720,10 @@ class TenderJIT
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
       end
 
-      pos = jit_buffer.pos
-      rel_jump = 0xCAFE
-      2.times do
-        jit_buffer.seek(req.patch_jump, IO::SEEK_SET)
-        Fisk.new { |__| __.jz(__.rel32(rel_jump)) }.write_to(jit_buffer)
-        rel_jump = target_block.jit_position - jit_buffer.pos
-      end
-      jit_buffer.seek(pos, IO::SEEK_SET)
+      jit_buffer.patch_jump at: req.patch_jump,
+                            to: target_block.start_address,
+                            type: :jz
+
       @compile_requests.delete_if { |x| x.ref == req }
     end
 
@@ -781,8 +731,6 @@ class TenderJIT
     end
 
     def compile_branchif stack, req, jump_p
-      pos = jit_buffer.pos
-
       if jump_p
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
@@ -791,13 +739,9 @@ class TenderJIT
           target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
         end
 
-        pos = jit_buffer.pos
-        rel_jump = 0xCAFE
-        2.times do
-          jit_buffer.seek(req.patch_jump, IO::SEEK_SET)
-          Fisk.new { |__| __.jnz(__.rel32(rel_jump)) }.write_to(jit_buffer)
-          rel_jump = target_block.jit_position - jit_buffer.pos
-        end
+        jit_buffer.patch_jump at: req.patch_jump,
+                              to: target_block.start_address,
+                              type: :jnz
       else
         target_block = @blocks.find { |b| b.entry_idx == req.next_idx }
 
@@ -806,15 +750,10 @@ class TenderJIT
           target_block = @blocks.find { |b| b.entry_idx == req.next_idx }
         end
 
-        rel_jump = 0xCAFE
-        2.times do
-          jit_buffer.seek(req.patch_next, IO::SEEK_SET)
-          Fisk.new { |__| __.jmp(__.rel32(rel_jump)) }.write_to(jit_buffer)
-          rel_jump = target_block.jit_position - jit_buffer.pos
-        end
+        jit_buffer.patch_jump at: req.patch_next,
+                              to: target_block.start_address,
+                              type: :jmp
       end
-
-      jit_buffer.seek(pos, IO::SEEK_SET)
     end
 
     def handle_branchif dst
@@ -864,25 +803,17 @@ class TenderJIT
         end
       end
 
-      __.lazy { |pos|
-        deferred.call jit_buffer.memory + pos
-      }
+      deferred.call jit_buffer.address
 
       __.test(@temp_stack.pop, __.imm(~Qnil))
-      if target_jump_block
-        before_jump = nil
 
-        __.lazy { |pos| before_jump = pos }
-        __.jnz(__.rel32(0xCAFE))
-        __.lazy { |pos|
-          jit_buffer.seek(before_jump, IO::SEEK_SET)
-          Fisk.new { |f|
-            f.jnz(f.rel32(target_jump_block.jit_position - pos))
-          }.write_to(jit_buffer)
-          raise unless jit_buffer.pos == pos
-        }
+      flush
+
+      if target_jump_block
+        jit_buffer.write_jump to: target_jump_block.start_address,
+                              type: :jnz
       else
-        __.lazy { |pos| patch_request.patch_jump = pos }
+        patch_request.patch_jump = jit_buffer.pos
         # Jump if value is true
         __.jnz(__.label(:patch_request))
       end
@@ -974,15 +905,11 @@ class TenderJIT
         end
       end
 
-      __.lazy { |pos|
-        deferred.call jit_buffer.memory + pos
-        patch_request.patch_jump = pos
-      }
+      flush
 
-      __.with_register do |tmp|
-        __.mov(tmp, __.uimm(deferred.entry))
-        __.jmp(tmp)
-      end
+      deferred.call jit_buffer.address
+
+      patch_request.patch_jump = jit_buffer.write_jump(to: deferred.entry.to_i)
 
       :stop
     end
