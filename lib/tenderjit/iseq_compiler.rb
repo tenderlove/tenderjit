@@ -178,6 +178,117 @@ class TenderJIT
 
     CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack, :current_pc, :next_pc)
 
+    IVarRequest = Struct.new(:id, :current_pc, :next_pc, :write_loc, :patch_loc, :return_loc)
+
+    def compile_ivar_read recv, req
+      if rb.RB_SPECIAL_CONST_P(recv)
+        raise NotImplementedError, "no ivar reads on non-heap objects"
+      end
+
+      if rb.RB_BUILTIN_TYPE(recv) != T_OBJECT
+        raise NotImplementedError, "no ivar reads on non objects"
+      end
+
+      klass        = RBasic.new(recv).klass
+      iv_index_tbl = RClass.new(klass).ptr.iv_index_tbl
+      value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
+
+      if 0 == CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
+        raise NotImplementedError, "no support for unknown ivar reads"
+      end
+
+      ivar_idx = value.ptr.to_int
+
+      pos = jit_buffer.pos
+      position = jit_buffer.memory.to_i + pos
+
+      rel_jump = 0xCAFE
+      2.times do
+        jit_buffer.seek(req.patch_loc, IO::SEEK_SET)
+        Fisk.new { |__| __.jmp(__.rel32(rel_jump)) }.write_to(jit_buffer)
+        rel_jump = position - (jit_buffer.memory.to_i + jit_buffer.pos)
+      end
+      jit_buffer.seek(pos, IO::SEEK_SET)
+
+      fisk = Fisk.new
+
+      Runtime.new(fisk, jit_buffer) do |rt|
+        cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+        temp = rt.temp_var
+        temp.write cfp_ptr.self
+
+        self_ptr = rt.pointer(temp, type: RObject)
+        sp_ptr   = rt.pointer(req.write_loc.register, offset: req.write_loc.displacement)
+
+        # If the object class is the same, continue
+        rt.if_eq(self_ptr.basic.klass, klass) {
+
+          # If it's an embedded object, read the ivar out of the object
+          rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
+            sp_ptr[0] = self_ptr.as.ary[ivar_idx]
+
+          }.else { # Otherwise, check the extended table
+            temp.write self_ptr.as.heap.ivptr
+            sp_ptr[0] = rt.pointer(temp)[ivar_idx]
+          }
+
+        }.else { # Otherwise we need to recompile
+          rt.break
+        }
+
+        temp.release!
+
+        rt.jump req.return_loc
+      end
+
+      @compile_requests.delete_if { |x| x.ref == req }
+    end
+
+    def handle_getinstancevariable id, ic
+      write_loc = @temp_stack.push(:unknown)
+
+      req = IVarRequest.new(id, current_pc, next_pc, write_loc)
+      @compile_requests << Fiddle::Pinned.new(req)
+
+      deferred = @jit.deferred_call(@temp_stack) do |__, return_loc|
+        __.with_register "reg_sp" do |temp|
+          #__.int(__.lit(3))
+          # Convert the SP to a Ruby integer
+          __.mov(temp, __.m64(REG_CFP, RbControlFrameStruct.offsetof("self")))
+          __.shl(temp, __.uimm(1))
+            .add(temp, __.uimm(1))
+
+          call_cfunc rb.symbol_address("rb_funcall"), [
+            __.uimm(Fiddle.dlwrap(self)),
+            __.uimm(CFuncs.rb_intern("compile_ivar_read")),
+            __.uimm(2),
+            temp,
+            __.uimm(Fiddle.dlwrap(req)),
+          ], __
+
+          __.mov(temp, __.uimm(return_loc))
+            .jmp(temp)
+        end
+      end
+
+      flush
+      pos = jit_buffer.pos
+      req.patch_loc = pos
+
+      # jump back to the re-written jmp
+      deferred.call jit_buffer.memory.to_i + pos
+
+      rel_jump = 0xCAFE
+      2.times do
+        jit_buffer.seek(pos, IO::SEEK_SET)
+        Fisk.new { |__| __.jmp(__.rel32(rel_jump)) }.write_to(jit_buffer)
+        rel_jump = deferred.entry.to_i - (jit_buffer.memory.to_i + jit_buffer.pos)
+      end
+
+      req.return_loc = jit_buffer.memory.to_i + jit_buffer.pos
+    end
+
     def handle_opt_send_without_block call_data
       cd = RbCallData.new call_data
       ci = RbCallInfo.new cd.ci
@@ -262,10 +373,10 @@ class TenderJIT
     def vm_push_frame ec, iseq, type, _self, specval, cref_or_me, pc, sp, local_size, stack_max, compile_request, argc, __
       check_vm_stack_overflow __, compile_request, local_size, stack_max
 
-      Runtime.new(__) do |rt|
+      Runtime.new(__, jit_buffer) do |rt|
         sp_ptr = rt.pointer sp
-        ec_ptr = rt.pointer REG_EC, RbExecutionContextT
-        cfp_ptr = rt.pointer REG_CFP, RbControlFrameStruct
+        ec_ptr = rt.pointer REG_EC, type: RbExecutionContextT
+        cfp_ptr = rt.pointer REG_CFP, type: RbControlFrameStruct
 
         # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
         cfp_ptr.sub # like -- in C
@@ -291,9 +402,7 @@ class TenderJIT
         #     .self       = self,
         #     .ep         = sp - 1,
         #     .block_code = NULL,
-        #     .__bp__     = sp,
-        #     .bp_check   = sp,
-        #     .jit_return = NULL
+        #     .__bp__     = sp
         # };
         cfp_ptr.pc = pc
 

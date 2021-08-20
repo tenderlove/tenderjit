@@ -21,6 +21,8 @@ class TenderJIT
   # Struct layouts
 
   RBasic                = Internals.struct("RBasic")
+  RClass                = Internals.struct("RClass")
+  RObject               = Internals.struct("RObject")
   RTypedData            = Internals.struct("RTypedData")
   RData                 = Internals.struct("RData")
   RbISeqT               = Internals.struct("rb_iseq_t")
@@ -103,6 +105,8 @@ class TenderJIT
   T_ARRAY  = Internals.c "T_ARRAY"
   T_NIL    = Internals.c "T_NIL"
   T_CLASS  = Internals.c "T_CLASS"
+  T_OBJECT  = Internals.c "T_OBJECT"
+  ROBJECT_EMBED = Internals.c("ROBJECT_EMBED")
 
   Internals.constants.each do |x|
     case x

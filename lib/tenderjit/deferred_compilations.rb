@@ -18,7 +18,7 @@ class TenderJIT
 
         @block.call fisk, ret_loc
         fisk.release_all_registers
-        fisk.assign_registers([fisk.r9, fisk.r10], local: true)
+        fisk.assign_registers(TenderJIT::ISEQCompiler::SCRATCH_REGISTERS, local: true)
         fisk.write_to @jit_buffer
       end
     end

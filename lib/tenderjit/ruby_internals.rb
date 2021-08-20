@@ -48,7 +48,7 @@ class TenderJIT
       end
 
       def RB_TEST obj_addr
-        (obj_addr & ~c("RUBY_Qnil")) != 0
+        (obj_addr & ~Qnil) != 0
       end
 
       def RB_SPECIAL_CONST_P obj_addr
