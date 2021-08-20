@@ -3,7 +3,6 @@
 require "tenderjit/ruby_internals"
 require "tenderjit/fiddle_hacks"
 require "tenderjit/exit_code"
-require "tenderjit/jit_buffer_proxy"
 require "tenderjit/deferred_compilations"
 require "tenderjit/c_funcs"
 require "fiddle/import"
