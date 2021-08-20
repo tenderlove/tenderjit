@@ -1,5 +1,6 @@
 require "tenderjit/temp_stack"
 require "tenderjit/runtime"
+require "tenderjit/jit_context"
 
 class TenderJIT
   class ISEQCompiler
@@ -250,28 +251,15 @@ class TenderJIT
       req = IVarRequest.new(id, current_pc, next_pc, write_loc)
       @compile_requests << Fiddle::Pinned.new(req)
 
-      deferred = @jit.deferred_call(@temp_stack) do |__, return_loc|
-        __.with_register "reg_sp" do |temp|
-          #__.int(__.lit(3))
-          # Convert the SP to a Ruby integer
-          __.mov(temp, __.m64(REG_CFP, RbControlFrameStruct.offsetof("self")))
-          __.shl(temp, __.uimm(1))
-            .add(temp, __.uimm(1))
+      deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
+        ctx.with_runtime do |rt|
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          call_cfunc rb.symbol_address("rb_funcall"), [
-            __.uimm(Fiddle.dlwrap(self)),
-            __.uimm(CFuncs.rb_intern("compile_ivar_read")),
-            __.uimm(2),
-            temp,
-            __.uimm(Fiddle.dlwrap(req)),
-          ], __
+          rt.rb_funcall self, :compile_ivar_read, [cfp_ptr.self, req]
 
-          __.mov(temp, __.uimm(return_loc))
-            .jmp(temp)
+          rt.jump return_loc
         end
       end
-
-      flush
 
       # jump back to the re-written jmp
       deferred.call jit_buffer.address
@@ -297,23 +285,13 @@ class TenderJIT
 
       @compile_requests << Fiddle::Pinned.new(compile_request)
 
-      deferred = @jit.deferred_call(@temp_stack) do |__, return_loc|
-        __.with_register "reg_sp" do |temp|
-          # Convert the SP to a Ruby integer
-          __.mov(temp, __.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
-          __.shl(temp, __.uimm(1))
-            .add(temp, __.uimm(1))
+      deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
+        ctx.with_runtime do |rt|
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          call_cfunc rb.symbol_address("rb_funcall"), [
-            __.uimm(Fiddle.dlwrap(self)),
-            __.uimm(CFuncs.rb_intern("compile_method_call")),
-            __.uimm(2),
-            temp,
-            __.uimm(Fiddle.dlwrap(compile_request)),
-          ], __
+          rt.rb_funcall self, :compile_method_call, [cfp_ptr.sp, compile_request]
 
-          __.mov(temp, __.uimm(return_loc))
-            .jmp(temp)
+          rt.jump return_loc
         end
       end
 
@@ -678,17 +656,10 @@ class TenderJIT
 
       patch_request = BranchUnless.new jump_pc
 
-      deferred = @jit.deferred_call(@temp_stack) do |__, return_loc|
-        call_cfunc rb.symbol_address("rb_funcall"), [
-          __.uimm(Fiddle.dlwrap(self)),
-          __.uimm(CFuncs.rb_intern("compile_branchunless")),
-          __.uimm(1),
-          __.uimm(Fiddle.dlwrap(patch_request))
-        ], __
-
-        __.with_register do |tmp|
-          __.mov(tmp, __.uimm(return_loc))
-            .jmp(tmp)
+      deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
+        ctx.with_runtime do |rt|
+          rt.rb_funcall self, :compile_branchunless, [patch_request]
+          rt.jump return_loc
         end
       end
 
@@ -779,24 +750,13 @@ class TenderJIT
       patch_request = BranchIf.new jump_idx, next_idx
       @compile_requests << Fiddle::Pinned.new(patch_request)
 
-      deferred = @jit.deferred_call(@temp_stack) do |__, return_loc|
-        __.with_register "reg_sp" do |temp|
-          # Convert the SP to a Ruby integer
-          __.mov(temp, __.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
-          __.shl(temp, __.uimm(1))
-            .add(temp, __.uimm(1))
+      deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
+        ctx.with_runtime do |rt|
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          call_cfunc rb.symbol_address("rb_funcall"), [
-            __.uimm(Fiddle.dlwrap(self)),
-            __.uimm(CFuncs.rb_intern("compile_branchif")),
-            __.uimm(3),
-            temp,
-            __.uimm(Fiddle.dlwrap(patch_request)),
-            __.rax
-          ], __
+          rt.rb_funcall self, :compile_branchif, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
 
-          __.mov(temp, __.uimm(return_loc))
-            .jmp(temp)
+          rt.jump return_loc
         end
       end
 
@@ -867,6 +827,8 @@ class TenderJIT
           .mov(loc, tmp)
       end
 
+      flush
+
       handle_jump dst
     end
 
@@ -882,27 +844,15 @@ class TenderJIT
       patch_request = HandleJump.new dst
       @compile_requests << Fiddle::Pinned.new(patch_request)
 
-      deferred = @jit.deferred_call(@temp_stack) do |__, return_loc|
-        __.with_register "reg_sp" do |temp|
-          # Convert the SP to a Ruby integer
-          __.mov(temp, __.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
-          __.shl(temp, __.uimm(1))
-            .add(temp, __.uimm(1))
+      deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
+        ctx.with_runtime do |rt|
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          call_cfunc rb.symbol_address("rb_funcall"), [
-            __.uimm(Fiddle.dlwrap(self)),
-            __.uimm(CFuncs.rb_intern("compile_jump")),
-            __.uimm(2),
-            temp,
-            __.uimm(Fiddle.dlwrap(patch_request)),
-          ], __
+          rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request]
 
-          __.mov(temp, __.uimm(return_loc))
-            .jmp(temp)
+          rt.jump return_loc
         end
       end
-
-      flush
 
       deferred.call jit_buffer.address
 

@@ -5,18 +5,42 @@ class TenderJIT
       @labels     = []
       @jit_buffer = jit_buffer
 
-      yield self
+      yield self if block_given?
+    end
+
+    def rb_funcall recv, method_name, params
+      raise "Too many parameters!" if params.length > 3
+
+      func_addr = Internals.symbol_address "rb_funcall"
+
+      @fisk.mov(Fisk::Registers::CALLER_SAVED[0], @fisk.uimm(Fiddle.dlwrap(recv)))
+      @fisk.mov(Fisk::Registers::CALLER_SAVED[1], @fisk.uimm(CFuncs.rb_intern(method_name.to_s)))
+      @fisk.mov(Fisk::Registers::CALLER_SAVED[2], @fisk.uimm(params.length))
+
+      params.each_with_index do |param, i|
+        i += 3
+
+        if param.is_a?(Fisk::Operand)
+          @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
+
+          if param.memory?
+            @fisk.shl(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(1))
+            @fisk.inc(Fisk::Registers::CALLER_SAVED[i])
+          end
+        else
+          @fisk.mov(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(Fiddle.dlwrap(param)))
+        end
+      end
+
+      @fisk.push(@fisk.rsp) # alignment
+      @fisk.mov(@fisk.rax, @fisk.uimm(func_addr))
+        .call(@fisk.rax)
+      @fisk.pop(@fisk.rsp) # alignment
     end
 
     def jump location
       flush
-      pos = @jit_buffer.pos
-      rel_jump = 0xcafe
-      2.times do
-        @jit_buffer.seek(pos, IO::SEEK_SET)
-        Fisk.new { |__| __.jmp(__.rel32(rel_jump)) }.write_to(@jit_buffer)
-        rel_jump = location - (@jit_buffer.memory.to_i + @jit_buffer.pos)
-      end
+      @jit_buffer.write_jump to: location
     end
 
     def flush

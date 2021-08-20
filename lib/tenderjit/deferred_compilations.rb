@@ -1,4 +1,5 @@
 require "fisk"
+require "tenderjit/jit_context"
 
 class TenderJIT
   class DeferredCompilations
@@ -16,10 +17,11 @@ class TenderJIT
         fisk = Fisk.new
         @ts.flush fisk
 
-        @block.call fisk, ret_loc
-        fisk.release_all_registers
-        fisk.assign_registers(TenderJIT::ISEQCompiler::SCRATCH_REGISTERS, local: true)
-        fisk.write_to @jit_buffer
+        ctx = JITContext.new(fisk, @jit_buffer)
+
+        @block.call ctx, ret_loc
+
+        ctx.write!
       end
     end
 
