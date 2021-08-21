@@ -322,25 +322,23 @@ class TenderJIT
       Fiddle::Pointer.new(stack - (Fiddle::SIZEOF_VOIDP * (i + 1))).ptr
     end
 
-    def check_vm_stack_overflow __, compile_request, local_size, stack_max
+    def check_vm_stack_overflow compile_request, local_size, stack_max
       temp_stack = compile_request.temp_stack
-
-      # /* check stack overflow */
-      # CHECK_VM_STACK_OVERFLOW0(cfp, sp, local_size + stack_max);
       margin = ((local_size + stack_max) * Fiddle::SIZEOF_VOIDP) + RbControlFrameStruct.size
-      __.with_register do |tmp|
-        __.lea(tmp, __.m(temp_stack.+(margin + RbCallableMethodEntryT.size)))
-          .cmp(REG_CFP, tmp)
-          .jg(__.label(:continue))
-          .mov(tmp, __.uimm(compile_request.overflow_exit))
-          .jmp(tmp)
-          .put_label(:continue)
+
+      with_runtime do |rt|
+        stack = rt.pointer temp_stack.last.loc
+        stack.with_address(margin / stack.size) do |reg|
+          rt.if(reg, :>, REG_CFP) {
+            # do nothing
+          }.else {
+            rt.jump(compile_request.overflow_exit)
+          }
+        end
       end
     end
 
-    def vm_push_frame ec, iseq, type, _self, specval, cref_or_me, pc, sp, local_size, stack_max, compile_request, argc, __
-      check_vm_stack_overflow __, compile_request, local_size, stack_max
-
+    def vm_push_frame iseq, type, _self, specval, cref_or_me, pc, sp, local_size, __
       Runtime.new(__, jit_buffer, @temp_stack) do |rt|
         sp_ptr = rt.pointer sp
         ec_ptr = rt.pointer REG_EC, type: RbExecutionContextT
@@ -474,8 +472,9 @@ class TenderJIT
             .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), argv)
           __.lea(argv, __.m(REG_BP, ((temp_stack.size - argc) + param_size + 1) * Fiddle::SIZEOF_VOIDP))
 
-          vm_push_frame(REG_EC,
-                        0,
+          check_vm_stack_overflow compile_request, 0, 0
+
+          vm_push_frame(0,
                         frame_type,
                         recv,
                         0, #ci.block_handler,
@@ -483,9 +482,6 @@ class TenderJIT
                         0,
                         argv,
                         0,
-                        0,
-                        compile_request,
-                        argc,
                         __)
 
           __.lea(argv, __.m(REG_BP, ((temp_stack.size - argc)) * Fiddle::SIZEOF_VOIDP))
@@ -532,9 +528,10 @@ class TenderJIT
 
         # `vm_call_iseq_setup_normal`
 
+        check_vm_stack_overflow compile_request, local_size - param_size, iseq.body.stack_max
+
         # `vm_push_frame`
-        vm_push_frame REG_EC,
-          iseq_ptr,
+        vm_push_frame iseq_ptr,
           VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL,
           recv,
           0, #ci.block_handler,
@@ -542,9 +539,6 @@ class TenderJIT
           iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
           argv,
           local_size - param_size,
-          iseq.body.stack_max,
-          compile_request,
-          argc,
           __
 
         ## Write out the method call
@@ -591,8 +585,10 @@ class TenderJIT
 
           __.lea(argv, __.m(REG_BP, (temp_stack.size - argc + param_size) * Fiddle::SIZEOF_VOIDP))
 
-          vm_push_frame REG_EC,
-            iseq.to_i,
+          local_size = iseq.body.local_table_size - param_size
+          check_vm_stack_overflow compile_request, local_size, iseq.body.stack_max
+
+          vm_push_frame iseq.to_i,
             type | VM_FRAME_FLAG_BMETHOD,
             recv,
             VM_GUARDED_PREV_EP(captured.ep),
@@ -600,9 +596,6 @@ class TenderJIT
             iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
             argv,
             iseq.body.local_table_size - param_size,
-            iseq.body.stack_max,
-            compile_request,
-            argc,
             __
 
           __.mov(argv, __.uimm(jit_buffer.memory + compile_request.return_loc))
@@ -1178,7 +1171,9 @@ class TenderJIT
     end
 
     def with_runtime
-      yield Runtime.new(Fisk.new, jit_buffer, @temp_stack)
+      rt = Runtime.new(Fisk.new, jit_buffer, @temp_stack)
+      yield rt
+      rt.write!
     end
   end
 end

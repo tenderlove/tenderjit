@@ -24,6 +24,7 @@ class TenderJIT
       fisk.release_all_registers
       fisk.assign_registers(TenderJIT::ISEQCompiler::SCRATCH_REGISTERS, local: true)
       fisk.write_to @jit_buffer
+      @fisk.freeze
     end
   end
 end

@@ -40,19 +40,26 @@ class TenderJIT
     end
 
     def jump location
-      flush
-      @jit_buffer.write_jump to: location
+      @fisk.jmp @fisk.absolute(location)
     end
 
     def flush
+      write!
+      @fisk = Fisk.new
+    end
+
+    def write!
       @fisk.assign_registers(TenderJIT::ISEQCompiler::SCRATCH_REGISTERS, local: true)
       @fisk.write_to(@jit_buffer)
-      @fisk = Fisk.new
+      @fisk.freeze
     end
 
     def pointer reg, type: Fiddle::TYPE_VOIDP, offset: 0
       if reg.is_a? TemporaryVariable
         reg = reg.reg
+      elsif reg.is_a?(Fisk::Operand) && reg.memory?
+        offset = reg.displacement
+        reg = reg.register
       end
       Pointer.new reg, type, find_size(type), offset, self
     end
@@ -106,6 +113,22 @@ class TenderJIT
       rhs = cast_to_fisk flags
       @fisk.test lhs, rhs
       @fisk.jz push_label  # else label
+      finish_label = push_label
+      yield
+      @fisk.jmp finish_label # finish label
+      self
+    end
+
+    def if lhs, op, rhs
+      lhs = cast_to_fisk lhs
+      rhs = cast_to_fisk rhs
+
+      maybe_reg lhs do |op1|
+        maybe_reg rhs do |op2|
+          @fisk.cmp op1, op2
+        end
+      end
+      @fisk.jg push_label # else label
       finish_label = push_label
       yield
       @fisk.jmp finish_label # finish label
@@ -234,6 +257,13 @@ class TenderJIT
         @size   = size
         @base   = base
         @ec     = event_coordinator
+      end
+
+      # Yield a register that contains the address of this pointer
+      def with_address offset = 0
+        @ec.with_ref(@reg, @base + (offset * size)) do |reg|
+          yield reg
+        end
       end
 
       def [] idx
