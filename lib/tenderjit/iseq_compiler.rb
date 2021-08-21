@@ -210,9 +210,7 @@ class TenderJIT
 
       jit_buffer.patch_jump at: req.patch_loc, to: jit_buffer.address
 
-      fisk = Fisk.new
-
-      Runtime.new(fisk, jit_buffer) do |rt|
+      with_runtime do |rt|
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
         temp = rt.temp_var
@@ -343,7 +341,7 @@ class TenderJIT
     def vm_push_frame ec, iseq, type, _self, specval, cref_or_me, pc, sp, local_size, stack_max, compile_request, argc, __
       check_vm_stack_overflow __, compile_request, local_size, stack_max
 
-      Runtime.new(__, jit_buffer) do |rt|
+      Runtime.new(__, jit_buffer, @temp_stack) do |rt|
         sp_ptr = rt.pointer sp
         ec_ptr = rt.pointer REG_EC, type: RbExecutionContextT
         cfp_ptr = rt.pointer REG_CFP, type: RbControlFrameStruct
@@ -416,7 +414,11 @@ class TenderJIT
       ci = compile_request.call_info
       mid = ci.vm_ci_mid
       argc = ci.vm_ci_argc
-      recv = topn(stack, ci.vm_ci_argc)
+      recv = topn(stack, ci.vm_ci_argc).to_i
+
+      if rb.RB_SPECIAL_CONST_P(recv)
+        raise NotImplementedError, "no ivar reads on non-heap objects"
+      end
 
       ## Compile the target method
       klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
@@ -1051,17 +1053,23 @@ class TenderJIT
     end
 
     def handle_getlocal_WC_0 idx
-      #level = 0
-      loc = @temp_stack.push(:local)
+      with_runtime do |rt|
+        cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+        rt.temp_var do |temp|
 
-      reg_ep = __.register "ep"
-      reg_local = __.register "local"
+          # Get the local value from the EP
+          temp.write cfp_ptr.ep
+          temp.sub idx
 
-      # Get the local value from the EP
-      __.mov(reg_ep, __.m64(REG_CFP, RbControlFrameStruct.offsetof("ep")))
-        .sub(reg_ep, __.uimm(Fiddle::SIZEOF_VOIDP * idx))
-        .mov(reg_local, __.m64(reg_ep))
-        .mov(loc, reg_local)
+          # dereference the temp var
+          temp.write temp[0]
+
+          # push it on the stack
+          rt.push temp, type: :local
+        end
+
+        rt.flush
+      end
     end
 
     def handle_putself
@@ -1167,6 +1175,10 @@ class TenderJIT
 
     def VM_GUARDED_PREV_EP ep
       ep.to_i | 0x01
+    end
+
+    def with_runtime
+      yield Runtime.new(Fisk.new, jit_buffer, @temp_stack)
     end
   end
 end

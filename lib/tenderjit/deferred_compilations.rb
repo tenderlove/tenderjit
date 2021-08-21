@@ -6,18 +6,18 @@ class TenderJIT
     class DeferralRequest
       attr_reader :entry
 
-      def initialize ts, jit_buf, block
+      def initialize temp_stack, jit_buf, block
         @jit_buffer = jit_buf
-        @ts    = ts
+        @temp_stack    = temp_stack
         @entry = @jit_buffer.memory.to_i + @jit_buffer.pos
         @block = block
       end
 
       def call ret_loc
         fisk = Fisk.new
-        @ts.flush fisk
+        @temp_stack.flush fisk
 
-        ctx = JITContext.new(fisk, @jit_buffer)
+        ctx = JITContext.new(fisk, @jit_buffer, @temp_stack)
 
         @block.call ctx, ret_loc
 

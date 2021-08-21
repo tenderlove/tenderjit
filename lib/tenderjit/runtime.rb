@@ -1,9 +1,10 @@
 class TenderJIT
   class Runtime
-    def initialize fisk, jit_buffer
+    def initialize fisk, jit_buffer, temp_stack
       @fisk       = fisk
       @labels     = []
       @jit_buffer = jit_buffer
+      @temp_stack = temp_stack
 
       yield self if block_given?
     end
@@ -88,8 +89,12 @@ class TenderJIT
       end
     end
 
-    def write_register dst, offset, src
+    def write_to_mem dst, offset, src
       @fisk.mov(@fisk.m64(dst, offset), src)
+    end
+
+    def write dst, src
+      @fisk.mov(dst, src)
     end
 
     def break
@@ -143,28 +148,30 @@ class TenderJIT
       end
     end
 
-    class TemporaryVariable
-      attr_reader :reg
+    # Create a temporary variable
+    def temp_var
+      tv = TemporaryVariable.new @fisk.register, Fiddle::TYPE_VOIDP, Fiddle::SIZEOF_VOIDP, 0, self
 
-      def initialize reg, fisk
-        @reg  = reg
-        @fisk = fisk
-      end
-
-      # Write something to the temporary variable
-      def write operand
-        @fisk.mov(@reg, operand)
-      end
-
-      # Release the temporary variable (say you are done using its value)
-      def release!
-        @fisk.release_register @reg
+      if block_given?
+        yield tv
+        tv.release!
+      else
+        tv
       end
     end
 
-    # Create a temporary variable
-    def temp_var
-      TemporaryVariable.new @fisk.register, @fisk
+    # Push a value on the stack
+    def push val, type:
+      loc = @temp_stack.push type
+      if val.is_a?(TemporaryVariable)
+        write loc, val.reg
+      else
+        raise NotImplementedError
+      end
+    end
+
+    def release_temp temp
+      @fisk.release_register temp.reg
     end
 
     private
@@ -247,8 +254,8 @@ class TenderJIT
 
       # Mutates this pointer.  Subtracts the size from itself.  Similar to
       # C's `--` operator
-      def sub
-        @ec.sub reg, size
+      def sub num = 1
+        @ec.sub reg, size * num
       end
 
       def with_ref offset
@@ -297,11 +304,23 @@ class TenderJIT
 
         else
           if v.is_a?(Pointer)
-            @ec.write_register @reg, type.offsetof(member), v.reg
+            @ec.write_to_mem @reg, type.offsetof(member), v.reg
           else
             @ec.write_immediate @reg, type.offsetof(member), v.to_i
           end
         end
+      end
+    end
+
+    class TemporaryVariable < Pointer
+      # Write something to the temporary variable
+      def write operand
+        @ec.write reg, operand
+      end
+
+      # Release the temporary variable (say you are done using its value)
+      def release!
+        @ec.release_temp self
       end
     end
   end
