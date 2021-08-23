@@ -40,7 +40,11 @@ class TenderJIT
     end
 
     def jump location
-      @fisk.jmp @fisk.absolute(location)
+      if location.is_a?(TemporaryVariable)
+        @fisk.jmp location.reg
+      else
+        @fisk.jmp @fisk.absolute(location)
+      end
     end
 
     def flush
@@ -55,17 +59,15 @@ class TenderJIT
     end
 
     def pointer reg, type: Fiddle::TYPE_VOIDP, offset: 0
-      if reg.is_a? TemporaryVariable
-        reg = reg.reg
-      elsif reg.is_a?(Fisk::Operand) && reg.memory?
-        offset = reg.displacement
-        reg = reg.register
-      end
-      Pointer.new reg, type, find_size(type), offset, self
+      Pointer.new reg.to_register, type, find_size(type), offset, self
     end
 
     def sub reg, val
       @fisk.sub reg, @fisk.uimm(val)
+    end
+
+    def add reg, val
+      @fisk.add reg.to_register, @fisk.uimm(val)
     end
 
     def write_memory reg, offset, val
@@ -75,11 +77,19 @@ class TenderJIT
       end
     end
 
+    def write_register reg, offset, val
+      @fisk.mov(@fisk.m64(reg, offset), val)
+    end
+
     def write_immediate reg, offset, val
       @fisk.with_register do |tmp|
         @fisk.mov(tmp, @fisk.uimm(val))
         @fisk.mov(@fisk.m64(reg, offset), tmp)
       end
+    end
+
+    def write_immediate_to_reg reg, val
+      @fisk.mov(reg, @fisk.uimm(val))
     end
 
     def read_to_reg src, offset
@@ -89,7 +99,11 @@ class TenderJIT
       end
     end
 
-    def with_ref reg, offset
+    def with_ref reg, offset = 0
+      if reg.memory?
+        offset = reg.displacement
+        reg = reg.register
+      end
       @fisk.with_register do |tmp|
         @fisk.lea(tmp, @fisk.m(reg, offset))
         yield tmp
@@ -183,14 +197,35 @@ class TenderJIT
       end
     end
 
+    # Push a register on the machine stack
+    def push_reg reg
+      @fisk.push reg.to_register
+    end
+
     # Push a value on the stack
     def push val, type:
       loc = @temp_stack.push type
-      if val.is_a?(TemporaryVariable)
-        write loc, val.reg
-      else
-        raise NotImplementedError
+      write loc, val.to_register
+    end
+
+    def call_cfunc func_loc, params
+      raise NotImplementedError, "too many parameters" if params.length > 6
+      raise "No function location" unless func_loc > 0
+
+      @fisk.push(@fisk.rsp) # alignment
+      params.each_with_index do |param, i|
+        case param
+        when Integer
+          @fisk.mov(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(param))
+        when Fisk::Operand
+          @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
+        else
+          raise NotImplementedError
+        end
       end
+      @fisk.mov(@fisk.rax, @fisk.uimm(func_loc))
+        .call(@fisk.rax)
+      @fisk.pop(@fisk.rsp) # alignment
     end
 
     def release_temp temp
@@ -288,6 +323,12 @@ class TenderJIT
         @ec.sub reg, size * num
       end
 
+      # Mutates this pointer.  Adds the size to itself.  Similar to
+      # C's `++` operator
+      def add num = 1
+        @ec.add reg, size * num
+      end
+
       def with_ref offset
         @ec.with_ref(@reg, @base + (offset * size)) do |reg|
           yield Pointer.new(reg, type, size, 0, @ec)
@@ -336,7 +377,11 @@ class TenderJIT
           if v.is_a?(Pointer)
             @ec.write_to_mem @reg, type.offsetof(member), v.reg
           else
-            @ec.write_immediate @reg, type.offsetof(member), v.to_i
+            if v.is_a?(Fisk::Operand)
+              @ec.write_register @reg, type.offsetof(member), v
+            else
+              @ec.write_immediate @reg, type.offsetof(member), v.to_i
+            end
           end
         end
       end
@@ -345,7 +390,15 @@ class TenderJIT
     class TemporaryVariable < Pointer
       # Write something to the temporary variable
       def write operand
-        @ec.write reg, operand
+        if operand.is_a?(Fisk::Operand)
+          @ec.write reg, operand
+        else
+          @ec.write_immediate_to_reg reg, operand
+        end
+      end
+
+      def to_register
+        reg
       end
 
       # Release the temporary variable (say you are done using its value)

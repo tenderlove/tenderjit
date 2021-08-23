@@ -22,6 +22,13 @@ class TenderJIT
       @stack.fetch idx
     end
 
+    # Returns the stack location +idx+.
+    def [] idx
+      @stack.fetch(idx) {
+        return Fisk::M64.new(REG_BP, idx * @sizeof_sp)
+      }.loc
+    end
+
     def last
       @stack.last
     end
