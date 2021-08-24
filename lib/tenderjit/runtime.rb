@@ -9,6 +9,28 @@ class TenderJIT
       yield self if block_given?
     end
 
+    def flush_pc_and_sp pc, sp
+      cfp_ptr = pointer REG_CFP, type: RbControlFrameStruct
+      cfp_ptr.pc = pc
+
+      with_ref(sp) do |reg|
+        cfp_ptr.sp = reg
+      end
+    end
+
+    def check_vm_stack_overflow temp_stack, exit_location, local_size, stack_max
+      margin = ((local_size + stack_max) * Fiddle::SIZEOF_VOIDP) + RbControlFrameStruct.size
+
+      loc = temp_stack.last.loc + (margin / Fiddle::SIZEOF_VOIDP)
+      with_ref(loc) do |reg|
+        self.if(reg, :>, REG_CFP) {
+          # do nothing
+        }.else {
+          jump(exit_location)
+        }
+      end
+    end
+
     def rb_funcall recv, method_name, params
       raise "Too many parameters!" if params.length > 3
 

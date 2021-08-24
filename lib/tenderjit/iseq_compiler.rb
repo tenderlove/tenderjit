@@ -337,22 +337,6 @@ class TenderJIT
       Fiddle::Pointer.new(stack - (Fiddle::SIZEOF_VOIDP * (i + 1))).ptr
     end
 
-    def check_vm_stack_overflow compile_request, local_size, stack_max
-      temp_stack = compile_request.temp_stack
-      margin = ((local_size + stack_max) * Fiddle::SIZEOF_VOIDP) + RbControlFrameStruct.size
-
-      with_runtime do |rt|
-        loc = temp_stack.last.loc + (margin / Fiddle::SIZEOF_VOIDP)
-        rt.with_ref(loc) do |reg|
-          rt.if(reg, :>, REG_CFP) {
-            # do nothing
-          }.else {
-            rt.jump(compile_request.overflow_exit)
-          }
-        end
-      end
-    end
-
     def vm_push_frame iseq, type, _self, specval, cref_or_me, pc, argv, local_size
       with_runtime do |rt|
         rt.with_ref(argv) do |sp|
@@ -444,11 +428,10 @@ class TenderJIT
       # Write next PC to CFP
       # Pop params and self from the stack
       idx = temp_stack.size - (argc + 1)
-      flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
-
-      # `vm_call_iseq_setup_normal`
-
-      check_vm_stack_overflow compile_request, local_size - param_size, iseq.body.stack_max
+      with_runtime do |rt|
+        rt.flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
+        rt.check_vm_stack_overflow compile_request.temp_stack, compile_request.overflow_exit, local_size - param_size, iseq.body.stack_max
+      end
 
       # `vm_push_frame`
       vm_push_frame iseq_ptr,
@@ -464,8 +447,9 @@ class TenderJIT
         # Save the base pointer
         rt.push_reg REG_BP
 
+        ret_loc = jit_buffer.memory.to_i + compile_request.return_loc
         var = rt.temp_var
-        var.write jit_buffer.memory.to_i + compile_request.return_loc
+        var.write ret_loc
 
         # Callee will `ret` to return which will pop this address from the
         # stack and jump to it
@@ -505,9 +489,11 @@ class TenderJIT
       idx = temp_stack.size - (argc + 1)
 
       ## Pop params and self from the stack
-      flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
+      with_runtime do |rt|
+        rt.flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
 
-      check_vm_stack_overflow compile_request, 0, 0
+        rt.check_vm_stack_overflow compile_request.temp_stack, compile_request.overflow_exit, 0, 0
+      end
 
       vm_push_frame(0,
                     frame_type,
@@ -557,12 +543,14 @@ class TenderJIT
 
       temp_stack = compile_request.temp_stack
 
-      ## Pop params and self from the stack
       idx = temp_stack.size - (argc + 1)
-      flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
-
       local_size = iseq.body.local_table_size - param_size
-      check_vm_stack_overflow compile_request, local_size, iseq.body.stack_max
+
+      with_runtime do |rt|
+        ## Pop params and self from the stack
+        rt.flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
+        rt.check_vm_stack_overflow compile_request.temp_stack, compile_request.overflow_exit, local_size, iseq.body.stack_max
+      end
 
       vm_push_frame iseq.to_i,
         type | VM_FRAME_FLAG_BMETHOD,
@@ -638,6 +626,9 @@ class TenderJIT
           rt.jump compile_request.overflow_exit
         end
       end
+    end
+
+    def handle_nop
     end
 
     def handle_duparray ary
