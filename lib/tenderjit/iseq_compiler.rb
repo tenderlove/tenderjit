@@ -4,6 +4,8 @@ require "tenderjit/jit_context"
 
 class TenderJIT
   class ISEQCompiler
+    LJUST = 22
+
     SCRATCH_REGISTERS = [
       Fisk::Registers::R9,
       Fisk::Registers::R10,
@@ -13,7 +15,7 @@ class TenderJIT
 
     def initialize jit, addr
       if $DEBUG
-        puts "Compiling iseq addr: #{sprintf("%#x", addr)}"
+        puts "New ISEQ Compiler iseq addr: #{sprintf("%#x", addr)}"
       end
 
       @jit        = jit
@@ -40,7 +42,10 @@ class TenderJIT
     end
 
     def recompile!
-      @temp_stack = TempStack.new
+      if $DEBUG
+        $stderr.puts "RECOMPILE"
+      end
+      @temp_stack = nil
       @body.jit_func = 0
       @insn_idx   = nil
       @current_pc = nil
@@ -53,6 +58,10 @@ class TenderJIT
     end
 
     def compile
+      if $DEBUG
+        puts "Compiling iseq addr: #{sprintf("%#x", @iseq)}"
+      end
+
       if @body.jit_func.to_i != 0
         return @body.jit_func.to_i
       end
@@ -64,21 +73,26 @@ class TenderJIT
       # ec is in rdi
       # cfp is in rsi
 
-      Fisk.new { |__|
-        __.mov(REG_EC, __.rdi)
-          .mov(REG_CFP, __.rsi)
-      }.write_to(jit_buffer)
+      @jit.interpreter_call.each_byte { |byte| jit_buffer.putc byte }
 
-      @skip_bytes = jit_buffer.address - jit_head
+      @skip_bytes = @jit.interpreter_call.bytesize
 
       # Write the prologue for book keeping
       Fisk.new { |_|
         _.mov(_.r10, _.uimm(stats.to_i))
           .inc(_.m64(_.r10, Stats.offsetof("executed_methods")))
           .mov(REG_BP, _.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
+          #.int(_.lit(3))
       }.write_to(jit_buffer)
 
-      unless resume_compiling(0) == :abort
+      if resume_compiling(0, TempStack.new) == :abort
+        if $DEBUG
+          $stderr.puts "ABORTED #{sprintf("%#x", @body.jit_func.to_i)}"
+        end
+      else
+        if $DEBUG
+          $stderr.puts "NEW ENTRY HEAD #{sprintf("%#x", jit_head.to_i)}"
+        end
         @body.jit_func = jit_head
       end
 
@@ -97,7 +111,8 @@ class TenderJIT
       end
     end
 
-    def resume_compiling insn_idx, finish = nil
+    def resume_compiling insn_idx, temp_stack
+      @temp_stack = temp_stack
       @insn_idx   = insn_idx
       @blocks << Block.new(@insn_idx, jit_buffer.pos, jit_buffer.address)
       enc = @body.iseq_encoded
@@ -109,11 +124,11 @@ class TenderJIT
         params = @insns[@insn_idx + 1, len - 1]
 
         if $DEBUG
-          puts "#{@insn_idx} compiling #{name} #{sprintf("%#x", @iseq.to_i)}"
+          puts "#{@insn_idx} compiling #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)}"
         end
         if respond_to?("handle_#{name}", true)
           if $DEBUG
-            Fisk.new { |_| print_str(_, "RT #{@insn_idx} #{name} #{sprintf("%#x", @iseq.to_i)}\n") }.write_to(jit_buffer)
+            Fisk.new { |_| print_str(_, "#{@insn_idx} running   #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)}\n") }.write_to(jit_buffer)
           end
           @fisk = Fisk.new
           v = send("handle_#{name}", *params)
@@ -391,41 +406,11 @@ class TenderJIT
       end
     end
 
-    def flush_pc pc
-      with_runtime do |rt|
-        cfp_ptr = rt.pointer REG_CFP, type: RbControlFrameStruct
-        cfp_ptr.pc = pc
-        rt.flush
-      end
-    end
-
-    def flush_sp sp
-      with_runtime do |rt|
-        rt.with_ref(sp) do |reg|
-          cfp_ptr = rt.pointer REG_CFP, type: RbControlFrameStruct
-          cfp_ptr.sp = reg
-        end
-        rt.flush
-      end
-    end
-
-    def flush_pc_and_sp pc, sp
-      with_runtime do |rt|
-        cfp_ptr = rt.pointer REG_CFP, type: RbControlFrameStruct
-        cfp_ptr.pc = pc
-
-        rt.with_ref(sp) do |reg|
-          cfp_ptr.sp = reg
-        end
-        rt.flush
-      end
-    end
-
     def compile_jump stack, req
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
       unless target_block
-        resume_compiling req.jump_idx
+        resume_compiling req.jump_idx, req.temp_stack
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
       end
 
@@ -488,6 +473,9 @@ class TenderJIT
 
         # Dereference the JIT function address, skipping the REG_* assigments
         # and jump to it
+        if $DEBUG
+          $stderr.puts "Should return to #{sprintf("%#x", ret_loc)}"
+        end
         var.write iseq.body.to_i
         iseq_body = rt.pointer(var, type: RbIseqConstantBody)
         var.write iseq_body.jit_func
@@ -712,7 +700,7 @@ class TenderJIT
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
       unless target_block
-        resume_compiling req.jump_idx
+        resume_compiling req.jump_idx, req.temp_stack
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
       end
 
@@ -723,7 +711,7 @@ class TenderJIT
       @compile_requests.delete_if { |x| x.ref == req }
     end
 
-    class BranchIf < Struct.new(:jump_idx, :next_idx, :patch_jump, :patch_next)
+    class BranchIf < Struct.new(:jump_idx, :next_idx, :patch_jump, :patch_next, :temp_stack)
     end
 
     def compile_branchif stack, req, jump_p
@@ -731,7 +719,7 @@ class TenderJIT
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
         unless target_block
-          resume_compiling req.jump_idx
+          resume_compiling req.jump_idx, req.temp_stack
           target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
         end
 
@@ -742,7 +730,7 @@ class TenderJIT
         target_block = @blocks.find { |b| b.entry_idx == req.next_idx }
 
         unless target_block
-          resume_compiling req.next_idx
+          resume_compiling req.next_idx, req.temp_stack
           target_block = @blocks.find { |b| b.entry_idx == req.next_idx }
         end
 
@@ -776,6 +764,7 @@ class TenderJIT
       target_jump_block = @blocks.find { |b| b.entry_idx == jump_idx }
 
       patch_request = BranchIf.new jump_idx, next_idx
+      patch_request.temp_stack = @temp_stack.dup
       @compile_requests << Fiddle::Pinned.new(patch_request)
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
@@ -860,7 +849,7 @@ class TenderJIT
       handle_jump dst
     end
 
-    class HandleJump < Struct.new(:jump_idx, :patch_jump)
+    class HandleJump < Struct.new(:jump_idx, :patch_jump, :temp_stack)
     end
 
     def handle_jump dst
@@ -870,6 +859,7 @@ class TenderJIT
       dst = @insn_idx + dst + len
 
       patch_request = HandleJump.new dst
+      patch_request.temp_stack = @temp_stack.dup
       @compile_requests << Fiddle::Pinned.new(patch_request)
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
@@ -1188,7 +1178,6 @@ class TenderJIT
       pos = nil
       fisk.lazy { |x| pos = x; string.bytes.each { |b| jit_buffer.putc b } }
       fisk.put_label(:after_bytes)
-      fisk.push(fisk.rsp) # alignment
       fisk.mov fisk.rdi, fisk.uimm(1)
       fisk.lazy { |x|
         fisk.mov fisk.rsi, fisk.uimm(jit_buffer.memory + pos)
@@ -1196,7 +1185,6 @@ class TenderJIT
       fisk.mov fisk.rdx, fisk.uimm(string.bytesize)
       fisk.mov fisk.rax, fisk.uimm(0x02000004)
       fisk.syscall
-      fisk.pop(fisk.rsp) # alignment
     end
 
     def VM_GUARDED_PREV_EP ep

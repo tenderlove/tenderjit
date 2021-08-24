@@ -33,10 +33,8 @@ class TenderJIT
         end
       end
 
-      @fisk.push(@fisk.rsp) # alignment
       @fisk.mov(@fisk.rax, @fisk.uimm(func_addr))
         .call(@fisk.rax)
-      @fisk.pop(@fisk.rsp) # alignment
     end
 
     def jump location

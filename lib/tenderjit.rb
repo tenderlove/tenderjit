@@ -184,13 +184,12 @@ class TenderJIT
   # any JIT code that cares about that value.  This method monkey patches
   # `rb_clear_constant_cache` because it is the only thing that mutates the
   # `ruby_vm_global_constant_state` global.
-  def self.install_const_state_change_handler
+  def self.install_const_state_change_handler interpreter_call_prelude
     cov_offset = RbIseqConstantBody.offsetof("variable.coverage")
 
-    fisk = Fisk.new { |__|
-      __.mov(REG_EC, __.rdi)
-        .mov(REG_CFP, __.rsi)
+    interpreter_call_prelude.each_byte { |byte| CACHE_BUSTERS.putc byte }
 
+    fisk = Fisk.new { |__|
       __.with_register do |tmp1|
         # Book keeping. Count the number of recompiles
         __.mov(tmp1, __.uimm(STATS.to_i))
@@ -205,14 +204,12 @@ class TenderJIT
           .mov(__.rdi, __.m64(__.rdi, cov_offset))
           .mov(__.rsi, __.uimm(2))
           .mov(__.rax, __.uimm(Fiddle::Handle::DEFAULT["rb_ary_entry"]))
-          .push(__.r9)
           .call(__.rax) # After this, rax should have the iseq compiler
           .mov(__.rdi, __.rax)
           .mov(__.rsi, __.uimm(CFuncs.rb_intern("recompile!")))
           .mov(__.rdx, __.uimm(0))
           .mov(__.rax, __.uimm(Fiddle::Handle::DEFAULT["rb_funcall"]))
           .call(__.rax)
-          .pop(__.r9)
           .mov(__.rax, __.uimm(Qundef))
           .ret
       end
@@ -288,9 +285,38 @@ class TenderJIT
     func_memory[0, monkey_patch.bytesize] = monkey_patch
   end
 
-  install_const_state_change_handler
+  def self.interpreter_call
+    buf = StringIO.new(''.b)
+
+    Fisk.new { |__|
+      __.push(REG_EC) # Push "don't care" reg for alignment
+        .push(REG_EC)
+        .push(REG_CFP)
+        .push(REG_BP)
+        .lea(__.rax, __.rip(__.label(:return)))
+        .push(__.rax)
+        .jmp(__.label(:skip_return))
+        .put_label(:return)
+        .pop(REG_BP)
+        .pop(REG_CFP)
+        .pop(REG_EC)
+        .pop(REG_EC)
+        .ret
+
+      __.put_label(:skip_return)
+      __.mov(REG_EC, __.rdi)
+        .mov(REG_CFP, __.rsi)
+    }.write_to(buf)
+
+    buf.string
+  end
+
+  INTERPRETER_CALL = interpreter_call.freeze
+
+  install_const_state_change_handler(INTERPRETER_CALL)
 
   attr_reader :stats
+  attr_reader :interpreter_call
 
   def initialize
     @stats = STATS
@@ -304,6 +330,8 @@ class TenderJIT
     memory        = Fisk::Helpers.mmap_jit(SIZE)
     CFuncs.memset(memory, 0xCC, SIZE)
     @jit_buffer   = Fisk::Helpers::JITBuffer.new memory, SIZE / 3
+
+    @interpreter_call = INTERPRETER_CALL
 
     memory += SIZE / 3
     @deferred_calls = DeferredCompilations.new(Fisk::Helpers::JITBuffer.new(memory, SIZE / 3))
