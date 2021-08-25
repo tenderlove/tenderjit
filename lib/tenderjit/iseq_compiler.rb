@@ -702,11 +702,10 @@ class TenderJIT
       @compile_requests.delete_if { |x| x.ref == req }
     end
 
-    class BranchIf < Struct.new(:jump_idx, :next_idx, :patch_jump, :patch_next, :temp_stack)
+    class BranchIf < Struct.new(:jump_idx, :jump_type, :temp_stack, :patch_jump)
     end
 
-    def compile_branchif stack, req, jump_p
-      if jump_p
+    def compile_branchif stack, req
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
         unless target_block
@@ -716,19 +715,7 @@ class TenderJIT
 
         jit_buffer.patch_jump at: req.patch_jump,
                               to: target_block.start_address,
-                              type: :jnz
-      else
-        target_block = @blocks.find { |b| b.entry_idx == req.next_idx }
-
-        unless target_block
-          resume_compiling req.next_idx, req.temp_stack
-          target_block = @blocks.find { |b| b.entry_idx == req.next_idx }
-        end
-
-        jit_buffer.patch_jump at: req.patch_next,
-                              to: target_block.start_address,
-                              type: :jmp
-      end
+                              type: req.jump_type
     end
 
     def handle_branchif dst
@@ -754,21 +741,26 @@ class TenderJIT
 
       target_jump_block = @blocks.find { |b| b.entry_idx == jump_idx }
 
-      patch_request = BranchIf.new jump_idx, next_idx
-      patch_request.temp_stack = @temp_stack.dup
-      @compile_requests << Fiddle::Pinned.new(patch_request)
+      patch_false = BranchIf.new next_idx, :jmp, @temp_stack.dup
+      @compile_requests << Fiddle::Pinned.new(patch_false)
 
-      deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
-        ctx.with_runtime do |rt|
-          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+      patch_true = BranchIf.new jump_idx, :jnz, @temp_stack.dup
+      @compile_requests << Fiddle::Pinned.new(patch_true)
 
-          rt.rb_funcall self, :compile_branchif, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
+      deferred_true, deferred_false = [patch_true, patch_false].map do |patch|
+        req = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
+          ctx.with_runtime do |rt|
+            cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.jump return_loc
+            rt.rb_funcall self, :compile_branchif, [cfp_ptr.sp, patch]
+
+            rt.jump return_loc
+          end
         end
-      end
 
-      deferred.call jit_buffer.address
+        req.call jit_buffer.address
+        req
+      end
 
       __.test(@temp_stack.pop, __.imm(~Qnil))
 
@@ -778,26 +770,15 @@ class TenderJIT
         jit_buffer.write_jump to: target_jump_block.start_address,
                               type: :jnz
       else
-        patch_request.patch_jump = jit_buffer.pos
+        patch_true.patch_jump = jit_buffer.pos
         # Jump if value is true
-        __.jnz(__.label(:patch_request))
-      end
-      __.lazy { |pos| patch_request.patch_next = pos }
-
-      #p CONTINUE: target_continue_block
-      __.with_register do |tmp|
-        __.mov(__.rax, __.imm(Qfalse))
-        __.mov(tmp, __.uimm(deferred.entry))
-        __.jmp(tmp)
+        __.jnz(__.absolute(deferred_true.entry))
       end
 
-      __.put_label(:patch_request)
+      flush
 
-      __.with_register do |tmp|
-        __.mov(__.rax, __.imm(Qtrue))
-        __.mov(tmp, __.uimm(deferred.entry))
-        __.jmp(tmp)
-      end
+      patch_false.patch_jump = jit_buffer.pos
+      __.jmp(__.absolute(deferred_false.entry))
 
       :stop
     end
