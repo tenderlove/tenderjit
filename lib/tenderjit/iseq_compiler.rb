@@ -390,7 +390,7 @@ class TenderJIT
       end
     end
 
-    def compile_jump stack, req
+    def compile_jump stack, req, patch_loc
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
       unless target_block
@@ -398,7 +398,11 @@ class TenderJIT
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
       end
 
-      jit_buffer.patch_jump at: req.patch_jump, to: target_block.start_address
+      patch_loc = patch_loc - jit_buffer.memory.to_i
+
+      jit_buffer.patch_jump at: patch_loc,
+                            to: target_block.start_address,
+                            type: req.jump_type
 
       @compile_requests.delete_if { |x| x.ref == req }
     end
@@ -639,7 +643,7 @@ class TenderJIT
       __.mov write_loc, __.rax
     end
 
-    class BranchUnless < Struct.new(:jump_idx, :patch_jump, :temp_stack)
+    class BranchUnless < Struct.new(:jump_idx, :jump_type, :temp_stack)
     end
 
     def handle_branchunless dst
@@ -661,11 +665,14 @@ class TenderJIT
         raise NotImplementedError, "FIXME"
       end
 
-      patch_request = BranchUnless.new jump_pc
+      patch_request = BranchUnless.new jump_pc, :jz, @temp_stack.dup
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
         ctx.with_runtime do |rt|
-          rt.rb_funcall self, :compile_branchunless, [patch_request]
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+          rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
+
           rt.jump return_loc
         end
       end
@@ -675,47 +682,13 @@ class TenderJIT
       deferred.call(jit_buffer.address)
 
       __.test(@temp_stack.pop, __.imm(~Qnil))
-
-      patch_request.temp_stack = @temp_stack.dup
-
-      flush
-
-      patch_request.patch_jump = jit_buffer.pos
-
-      jit_buffer.write_jump to: deferred.entry.to_i, type: :jz
+        .lea(__.rax, __.rip)
+        .jz(__.absolute(deferred.entry.to_i))
 
       :continue # create a new block and keep compiling
     end
 
-    def compile_branchunless req
-      target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
-
-      unless target_block
-        resume_compiling req.jump_idx, req.temp_stack
-        target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
-      end
-
-      jit_buffer.patch_jump at: req.patch_jump,
-                            to: target_block.start_address,
-                            type: :jz
-
-      @compile_requests.delete_if { |x| x.ref == req }
-    end
-
-    class BranchIf < Struct.new(:jump_idx, :jump_type, :temp_stack, :patch_jump)
-    end
-
-    def compile_branchif stack, req
-        target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
-
-        unless target_block
-          resume_compiling req.jump_idx, req.temp_stack
-          target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
-        end
-
-        jit_buffer.patch_jump at: req.patch_jump,
-                              to: target_block.start_address,
-                              type: req.jump_type
+    class BranchIf < Struct.new(:jump_idx, :jump_type, :temp_stack)
     end
 
     def handle_branchif dst
@@ -752,7 +725,7 @@ class TenderJIT
           ctx.with_runtime do |rt|
             cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-            rt.rb_funcall self, :compile_branchif, [cfp_ptr.sp, patch]
+            rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch, ctx.fisk.rax]
 
             rt.jump return_loc
           end
@@ -770,14 +743,12 @@ class TenderJIT
         jit_buffer.write_jump to: target_jump_block.start_address,
                               type: :jnz
       else
-        patch_true.patch_jump = jit_buffer.pos
         # Jump if value is true
+        __.lea(__.rax, __.rip)
         __.jnz(__.absolute(deferred_true.entry))
       end
 
-      flush
-
-      patch_false.patch_jump = jit_buffer.pos
+      __.lea(__.rax, __.rip)
       __.jmp(__.absolute(deferred_false.entry))
 
       :stop
@@ -821,7 +792,7 @@ class TenderJIT
       handle_jump dst
     end
 
-    class HandleJump < Struct.new(:jump_idx, :patch_jump, :temp_stack)
+    class HandleJump < Struct.new(:jump_idx, :jump_type, :temp_stack)
     end
 
     def handle_jump dst
@@ -830,15 +801,14 @@ class TenderJIT
 
       dst = @insn_idx + dst + len
 
-      patch_request = HandleJump.new dst
-      patch_request.temp_stack = @temp_stack.dup
+      patch_request = HandleJump.new dst, :jmp, @temp_stack.dup
       @compile_requests << Fiddle::Pinned.new(patch_request)
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request]
+          rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
 
           rt.jump return_loc
         end
@@ -846,7 +816,8 @@ class TenderJIT
 
       deferred.call jit_buffer.address
 
-      patch_request.patch_jump = jit_buffer.write_jump(to: deferred.entry.to_i)
+      __.lea(__.rax, __.rip)
+      __.jmp(__.absolute(deferred.entry.to_i))
 
       :stop
     end

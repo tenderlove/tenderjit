@@ -46,10 +46,10 @@ class TenderJIT
         if param.is_a?(Fisk::Operand)
           @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
 
-          if param.memory?
+          #if param.memory?
             @fisk.shl(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(1))
             @fisk.inc(Fisk::Registers::CALLER_SAVED[i])
-          end
+          #end
         else
           @fisk.mov(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(Fiddle.dlwrap(param)))
         end
