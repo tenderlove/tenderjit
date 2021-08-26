@@ -249,8 +249,7 @@ class TenderJIT
           }
 
         }.else { # Otherwise we need to recompile
-          rt.load_address(rt.return_value, rt.ip)
-          rt.jump req.deferred_entry
+          rt.patchable_jump req.deferred_entry
         }
 
         temp.release!

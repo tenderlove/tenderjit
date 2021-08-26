@@ -40,13 +40,9 @@ class TenderJIT
       @fisk.rax
     end
 
-    def ip
-      @fisk.rip
-    end
-
-    # Load the address of +src+ in to the +dest+ register
-    def load_address dest, src
-      @fisk.lea(dest, src)
+    def patchable_jump dest
+      @fisk.lea(return_value, @fisk.rip)
+      jump dest
     end
 
     def rb_funcall recv, method_name, params
