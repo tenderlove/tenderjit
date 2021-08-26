@@ -200,9 +200,9 @@ class TenderJIT
       }
     end
 
-    CallCompileRequest = Struct.new(:call_info, :patch_loc, :overflow_exit, :temp_stack, :current_pc, :next_pc)
+    CallCompileRequest = Struct.new(:call_info, :overflow_exit, :temp_stack, :current_pc, :next_pc)
 
-    IVarRequest = Struct.new(:id, :current_pc, :next_pc, :write_loc, :patch_loc)
+    IVarRequest = Struct.new(:id, :current_pc, :next_pc, :write_loc)
 
     def compile_ivar_read recv, req, loc
       if rb.RB_SPECIAL_CONST_P(recv)
@@ -224,7 +224,8 @@ class TenderJIT
       ivar_idx = value.ptr.to_int
 
       code_start = jit_buffer.address
-      return_loc = patch_source_jump jit_buffer, req
+      return_loc = patch_source_jump jit_buffer, at: (loc - jit_buffer.memory.to_i),
+                                                 to: code_start
 
       with_runtime do |rt|
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
@@ -283,8 +284,6 @@ class TenderJIT
       deferred.call
 
       __.lea(__.rax, __.rip)
-      flush
-      req.patch_loc = jit_buffer.pos
       __.jmp(__.absolute(deferred.entry.to_i))
     end
 
@@ -308,7 +307,7 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.rb_funcall self, :compile_method_call, [cfp_ptr.sp, compile_request]
+          rt.rb_funcall self, :compile_method_call, [cfp_ptr.sp, compile_request, ctx.fisk.rax]
 
           rt.NUM2INT(rt.return_value)
 
@@ -319,7 +318,7 @@ class TenderJIT
       deferred.call
 
       # Jump in to the deferred compiler
-      compile_request.patch_loc = jit_buffer.pos
+      __.lea(__.rax, __.rip)
       __.jmp(__.absolute(deferred.entry))
 
       (ci.vm_ci_argc + 1).times { @temp_stack.pop }
@@ -410,17 +409,16 @@ class TenderJIT
       target_block.start_address
     end
 
-    def patch_source_jump jit_buffer, compile_request, to: jit_buffer.address
+    def patch_source_jump jit_buffer, at:, to: jit_buffer.address
       ## Patch the source location to jump here
       pos = jit_buffer.pos
-      jit_buffer.write_jump at: compile_request.patch_loc,
-                            to: to
+      jit_buffer.write_jump at: at, to: to
       return_loc = jit_buffer.pos
       jit_buffer.seek pos, IO::SEEK_SET
       return_loc
     end
 
-    def compile_call_iseq iseq, compile_request, argc, iseq_ptr, recv, cme
+    def compile_call_iseq iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
       # `vm_call_iseq_setup`
       param_size = iseq.body.param.size
       local_size = iseq.body.local_table_size
@@ -436,7 +434,7 @@ class TenderJIT
 
       entry_location = jit_buffer.address
 
-      return_loc = patch_source_jump jit_buffer, compile_request
+      return_loc = patch_source_jump jit_buffer, at: patch_loc
 
       # Write next PC to CFP
       # Pop params and self from the stack
@@ -486,7 +484,7 @@ class TenderJIT
       entry_location
     end
 
-    def compile_call_cfunc iseq, compile_request, argc, iseq_ptr, recv, cme
+    def compile_call_cfunc iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
       cfunc = RbMethodDefinitionStruct.new(cme.def).body.cfunc
       param_size = if cfunc.argc == -1
                      argc
@@ -500,7 +498,7 @@ class TenderJIT
 
       method_entry_addr = jit_buffer.address
 
-      return_loc = patch_source_jump jit_buffer, compile_request
+      return_loc = patch_source_jump jit_buffer, at: patch_loc
 
       temp_stack = compile_request.temp_stack
       idx = temp_stack.size - (argc + 1)
@@ -541,7 +539,7 @@ class TenderJIT
       method_entry_addr
     end
 
-    def compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme
+    def compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
       opt_pc     = 0 # we don't handle optional parameters rn
       proc_obj = RbMethodDefinitionStruct.new(cme.def).body.bmethod.proc
       proc = RData.new(proc_obj).data
@@ -560,7 +558,7 @@ class TenderJIT
 
       entry_location = jit_buffer.address
 
-      return_loc = patch_source_jump jit_buffer, compile_request
+      return_loc = patch_source_jump jit_buffer, at: patch_loc
 
       temp_stack = compile_request.temp_stack
 
@@ -603,7 +601,7 @@ class TenderJIT
       entry_location
     end
 
-    def compile_method_call stack, compile_request
+    def compile_method_call stack, compile_request, loc
       ci = compile_request.call_info
       mid = ci.vm_ci_mid
       argc = ci.vm_ci_argc
@@ -613,12 +611,14 @@ class TenderJIT
         raise NotImplementedError, "no ivar reads on non-heap objects"
       end
 
+      patch_loc = loc - jit_buffer.memory.to_i
+
       ## Compile the target method
       klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
 
       cme_ptr = rb.rb_callable_method_entry(klass, mid)
       if cme_ptr.null?
-        patch_source_jump jit_buffer, compile_request, to: compile_request.overflow_exit
+        patch_source_jump jit_buffer, at: patch_loc, to: compile_request.overflow_exit
         return compile_request.overflow_exit
       end
 
@@ -636,19 +636,19 @@ class TenderJIT
       # kwargs, etc right now
       #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
       unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
-        patch_source_jump jit_buffer, compile_request, to: compile_request.overflow_exit
+        patch_source_jump jit_buffer, at: patch_loc, to: compile_request.overflow_exit
         return compile_request.overflow_exit
       end
 
       case method_definition.type
       when VM_METHOD_TYPE_CFUNC
-        compile_call_cfunc iseq, compile_request, argc, iseq_ptr, recv, cme
+        compile_call_cfunc iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
       when VM_METHOD_TYPE_ISEQ
-        compile_call_iseq iseq, compile_request, argc, iseq_ptr, recv, cme
+        compile_call_iseq iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
       when VM_METHOD_TYPE_BMETHOD
-        compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme
+        compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
       else
-        patch_source_jump jit_buffer, compile_request, to: compile_request.overflow_exit
+        patch_source_jump jit_buffer, at: patch_loc, to: compile_request.overflow_exit
         compile_request.overflow_exit
       end
     end
