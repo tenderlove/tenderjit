@@ -21,6 +21,17 @@ class TenderJIT
       end
     end
 
+    class Parent
+      def initialize
+        @read = 10
+      end
+
+      def read; @read; end
+    end
+
+    class Subclass < Parent
+    end
+
     def test_getinstancevariable_embedded
       jit = TenderJIT.new
       jit.compile(Foo.instance_method(:read))
@@ -43,6 +54,22 @@ class TenderJIT
       v = foo.read
       jit.disable!
       assert_equal "a", v
+      assert_equal 0, jit.exits
+    ensure
+      jit.uncompile(Foo.instance_method(:read))
+    end
+
+    def test_getinstancevariable_subclass
+      jit = TenderJIT.new
+      jit.compile(Parent.instance_method(:read))
+
+      Parent.new.read # populate the iv table
+
+      foo = Subclass.new
+      jit.enable!
+      v = foo.read
+      jit.disable!
+      assert_equal 10, v
       assert_equal 0, jit.exits
     ensure
       jit.uncompile(Foo.instance_method(:read))

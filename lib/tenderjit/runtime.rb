@@ -40,6 +40,15 @@ class TenderJIT
       @fisk.rax
     end
 
+    def ip
+      @fisk.rip
+    end
+
+    # Load the address of +src+ in to the +dest+ register
+    def load_address dest, src
+      @fisk.lea(dest, src)
+    end
+
     def rb_funcall recv, method_name, params
       raise "Too many parameters!" if params.length > 3
 

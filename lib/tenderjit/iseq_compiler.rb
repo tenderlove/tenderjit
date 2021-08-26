@@ -202,7 +202,7 @@ class TenderJIT
 
     CallCompileRequest = Struct.new(:call_info, :overflow_exit, :temp_stack, :current_pc, :next_pc)
 
-    IVarRequest = Struct.new(:id, :current_pc, :next_pc, :write_loc)
+    IVarRequest = Struct.new(:id, :current_pc, :next_pc, :write_loc, :deferred_entry)
 
     def compile_ivar_read recv, req, loc
       if rb.RB_SPECIAL_CONST_P(recv)
@@ -249,15 +249,14 @@ class TenderJIT
           }
 
         }.else { # Otherwise we need to recompile
-          rt.break
+          rt.load_address(rt.return_value, rt.ip)
+          rt.jump req.deferred_entry
         }
 
         temp.release!
 
         rt.jump jit_buffer.memory.to_i + return_loc
       end
-
-      @compile_requests.delete_if { |x| x.ref == req }
 
       code_start
     end
@@ -282,6 +281,8 @@ class TenderJIT
 
       # jump back to the re-written jmp
       deferred.call
+
+      req.deferred_entry = deferred.entry.to_i
 
       __.lea(__.rax, __.rip)
       __.jmp(__.absolute(deferred.entry.to_i))
