@@ -31,6 +31,15 @@ class TenderJIT
       end
     end
 
+    # Converts the Ruby Numer stored in +val+ to an int
+    def NUM2INT val
+      @fisk.shr(val, @fisk.lit(1))
+    end
+
+    def return_value
+      @fisk.rax
+    end
+
     def rb_funcall recv, method_name, params
       raise "Too many parameters!" if params.length > 3
 
@@ -60,8 +69,11 @@ class TenderJIT
     end
 
     def jump location
-      if location.is_a?(TemporaryVariable)
+      case location
+      when TemporaryVariable
         @fisk.jmp location.reg
+      when Fisk::Operand
+        @fisk.jmp location
       else
         @fisk.jmp @fisk.absolute(location)
       end

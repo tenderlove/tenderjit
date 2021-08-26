@@ -13,13 +13,13 @@ class TenderJIT
         @block = block
       end
 
-      def call ret_loc
+      def call
         fisk = Fisk.new
         @temp_stack.flush fisk
 
         ctx = JITContext.new(fisk, @jit_buffer, @temp_stack)
 
-        @block.call ctx, ret_loc
+        @block.call ctx
 
         ctx.write!
       end

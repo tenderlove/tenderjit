@@ -200,11 +200,11 @@ class TenderJIT
       }
     end
 
-    CallCompileRequest = Struct.new(:call_info, :patch_loc, :return_loc, :overflow_exit, :temp_stack, :current_pc, :next_pc)
+    CallCompileRequest = Struct.new(:call_info, :patch_loc, :overflow_exit, :temp_stack, :current_pc, :next_pc)
 
-    IVarRequest = Struct.new(:id, :current_pc, :next_pc, :write_loc, :patch_loc, :return_loc)
+    IVarRequest = Struct.new(:id, :current_pc, :next_pc, :write_loc, :patch_loc)
 
-    def compile_ivar_read recv, req
+    def compile_ivar_read recv, req, loc
       if rb.RB_SPECIAL_CONST_P(recv)
         raise NotImplementedError, "no ivar reads on non-heap objects"
       end
@@ -223,7 +223,8 @@ class TenderJIT
 
       ivar_idx = value.ptr.to_int
 
-      jit_buffer.patch_jump at: req.patch_loc, to: jit_buffer.address
+      code_start = jit_buffer.address
+      return_loc = patch_source_jump jit_buffer, req
 
       with_runtime do |rt|
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
@@ -252,10 +253,12 @@ class TenderJIT
 
         temp.release!
 
-        rt.jump req.return_loc
+        rt.jump jit_buffer.memory.to_i + return_loc
       end
 
       @compile_requests.delete_if { |x| x.ref == req }
+
+      code_start
     end
 
     def handle_getinstancevariable id, ic
@@ -264,22 +267,25 @@ class TenderJIT
       req = IVarRequest.new(id, current_pc, next_pc, write_loc)
       @compile_requests << Fiddle::Pinned.new(req)
 
-      deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.rb_funcall self, :compile_ivar_read, [cfp_ptr.self, req]
+          rt.rb_funcall self, :compile_ivar_read, [cfp_ptr.self, req, ctx.fisk.rax]
 
-          rt.jump return_loc
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
         end
       end
 
       # jump back to the re-written jmp
-      deferred.call jit_buffer.address
+      deferred.call
 
+      __.lea(__.rax, __.rip)
+      flush
       req.patch_loc = jit_buffer.pos
-      jit_buffer.write_jump to: deferred.entry.to_i
-      req.return_loc = jit_buffer.address
+      __.jmp(__.absolute(deferred.entry.to_i))
     end
 
     def handle_opt_send_without_block call_data
@@ -298,28 +304,23 @@ class TenderJIT
 
       @compile_requests << Fiddle::Pinned.new(compile_request)
 
-      deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
           rt.rb_funcall self, :compile_method_call, [cfp_ptr.sp, compile_request]
 
-          rt.jump return_loc
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
         end
       end
 
-      flush
-
-      compile_request.patch_loc = jit_buffer.pos
-      deferred.call jit_buffer.address
+      deferred.call
 
       # Jump in to the deferred compiler
-      tmp = __.register
-      __.mov(tmp, __.uimm(deferred.entry))
-        .jmp(tmp)
-      __.release_register tmp
-
-      __.lazy { |pos| compile_request.return_loc = pos }
+      compile_request.patch_loc = jit_buffer.pos
+      __.jmp(__.absolute(deferred.entry))
 
       (ci.vm_ci_argc + 1).times { @temp_stack.pop }
 
@@ -405,12 +406,18 @@ class TenderJIT
                             type: req.jump_type
 
       @compile_requests.delete_if { |x| x.ref == req }
+
+      target_block.start_address
     end
 
-    def patch_source_jump jit_buffer, compile_request
+    def patch_source_jump jit_buffer, compile_request, to: jit_buffer.address
       ## Patch the source location to jump here
-      jit_buffer.patch_jump at: compile_request.patch_loc,
-                            to: jit_buffer.address
+      pos = jit_buffer.pos
+      jit_buffer.write_jump at: compile_request.patch_loc,
+                            to: to
+      return_loc = jit_buffer.pos
+      jit_buffer.seek pos, IO::SEEK_SET
+      return_loc
     end
 
     def compile_call_iseq iseq, compile_request, argc, iseq_ptr, recv, cme
@@ -427,7 +434,9 @@ class TenderJIT
       # pop locals and recv off the stack
       #(ci.vm_ci_argc + 1).times { @temp_stack.pop }
 
-      patch_source_jump jit_buffer, compile_request
+      entry_location = jit_buffer.address
+
+      return_loc = patch_source_jump jit_buffer, compile_request
 
       # Write next PC to CFP
       # Pop params and self from the stack
@@ -451,7 +460,7 @@ class TenderJIT
         # Save the base pointer
         rt.push_reg REG_BP
 
-        ret_loc = jit_buffer.memory.to_i + compile_request.return_loc
+        ret_loc = jit_buffer.memory.to_i + return_loc
         var = rt.temp_var
         var.write ret_loc
 
@@ -473,6 +482,8 @@ class TenderJIT
 
         var.release!
       end
+
+      entry_location
     end
 
     def compile_call_cfunc iseq, compile_request, argc, iseq_ptr, recv, cme
@@ -487,7 +498,9 @@ class TenderJIT
 
       frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL;
 
-      patch_source_jump jit_buffer, compile_request
+      method_entry_addr = jit_buffer.address
+
+      return_loc = patch_source_jump jit_buffer, compile_request
 
       temp_stack = compile_request.temp_stack
       idx = temp_stack.size - (argc + 1)
@@ -522,8 +535,10 @@ class TenderJIT
 
         rt.push_reg REG_BP # Caller expects to pop REG_BP
 
-        rt.jump jit_buffer.memory.to_i + compile_request.return_loc
+        rt.jump jit_buffer.memory.to_i + return_loc
       end
+
+      method_entry_addr
     end
 
     def compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme
@@ -543,7 +558,9 @@ class TenderJIT
 
       @jit.compile_iseq_t iseq.to_i
 
-      patch_source_jump jit_buffer, compile_request
+      entry_location = jit_buffer.address
+
+      return_loc = patch_source_jump jit_buffer, compile_request
 
       temp_stack = compile_request.temp_stack
 
@@ -569,7 +586,7 @@ class TenderJIT
         rt.push_reg REG_BP
 
         rt.temp_var do |var|
-          var.write jit_buffer.memory.to_i + compile_request.return_loc
+          var.write jit_buffer.memory.to_i + return_loc
           rt.push_reg var # Callee will `ret` to here
 
           # Dereference the JIT function address, skipping the REG_* assigments
@@ -582,6 +599,8 @@ class TenderJIT
           rt.jump var
         end
       end
+
+      entry_location
     end
 
     def compile_method_call stack, compile_request
@@ -597,7 +616,13 @@ class TenderJIT
       ## Compile the target method
       klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
 
-      cme = RbCallableMethodEntryT.new(rb.rb_callable_method_entry(klass, mid))
+      cme_ptr = rb.rb_callable_method_entry(klass, mid)
+      if cme_ptr.null?
+        patch_source_jump jit_buffer, compile_request, to: compile_request.overflow_exit
+        return compile_request.overflow_exit
+      end
+
+      cme = RbCallableMethodEntryT.new(cme_ptr)
       method_definition = RbMethodDefinitionStruct.new(cme.def)
 
       # If we find an iseq method, compile it, even if we don't enter.
@@ -611,11 +636,8 @@ class TenderJIT
       # kwargs, etc right now
       #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
       unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
-        patch_source_jump jit_buffer, compile_request
-
-        jit_buffer.write_jump to: compile_request.overflow_exit
-
-        return
+        patch_source_jump jit_buffer, compile_request, to: compile_request.overflow_exit
+        return compile_request.overflow_exit
       end
 
       case method_definition.type
@@ -626,9 +648,8 @@ class TenderJIT
       when VM_METHOD_TYPE_BMETHOD
         compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme
       else
-        with_runtime do |rt|
-          rt.jump compile_request.overflow_exit
-        end
+        patch_source_jump jit_buffer, compile_request, to: compile_request.overflow_exit
+        compile_request.overflow_exit
       end
     end
 
@@ -667,19 +688,21 @@ class TenderJIT
 
       patch_request = BranchUnless.new jump_pc, :jz, @temp_stack.dup
 
-      deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
           rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
 
-          rt.jump return_loc
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
         end
       end
 
       flush
 
-      deferred.call(jit_buffer.address)
+      deferred.call
 
       __.test(@temp_stack.pop, __.imm(~Qnil))
         .lea(__.rax, __.rip)
@@ -721,17 +744,19 @@ class TenderJIT
       @compile_requests << Fiddle::Pinned.new(patch_true)
 
       deferred_true, deferred_false = [patch_true, patch_false].map do |patch|
-        req = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
+        req = @jit.deferred_call(@temp_stack) do |ctx|
           ctx.with_runtime do |rt|
             cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
             rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch, ctx.fisk.rax]
 
-            rt.jump return_loc
+            rt.NUM2INT(rt.return_value)
+
+            rt.jump rt.return_value
           end
         end
 
-        req.call jit_buffer.address
+        req.call
         req
       end
 
@@ -804,17 +829,19 @@ class TenderJIT
       patch_request = HandleJump.new dst, :jmp, @temp_stack.dup
       @compile_requests << Fiddle::Pinned.new(patch_request)
 
-      deferred = @jit.deferred_call(@temp_stack) do |ctx, return_loc|
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
           rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
 
-          rt.jump return_loc
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
         end
       end
 
-      deferred.call jit_buffer.address
+      deferred.call
 
       __.lea(__.rax, __.rip)
       __.jmp(__.absolute(deferred.entry.to_i))
