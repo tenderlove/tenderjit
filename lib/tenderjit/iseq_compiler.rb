@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "tenderjit/temp_stack"
 require "tenderjit/runtime"
 require "tenderjit/jit_context"
@@ -779,42 +781,102 @@ class TenderJIT
       :stop
     end
 
+    class HandleOptGetinlinecache < Struct.new(:jump_idx, :jump_type, :temp_stack, :ic)
+    end
+
+    def compile_opt_getinlinecache stack, req, patch_loc
+      patch_loc = patch_loc - jit_buffer.memory.to_i
+
+      loc = req.temp_stack.push(:cache_get)
+
+      # Find the next block we'll jump to
+      target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
+
+      unless target_block
+        resume_compiling req.jump_idx, req.temp_stack
+        target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
+      end
+
+      jit_buffer.patch_jump at: patch_loc,
+                            to: jit_buffer.address,
+                            type: req.jump_type
+
+      jump_location = jit_buffer.address
+
+      with_runtime do |rt|
+        ## Write the constant value to the stack
+        rt.write loc, IseqInlineConstantCache.new(req.ic).entry.value
+
+        rt.jump target_block.start_address
+      end
+
+      jump_location
+    end
+
     def handle_opt_getinlinecache dst, ic
-      ic = IseqInlineConstantCache.new ic
-      if ic.entry.to_ptr.null?
-        @body.jit_func = CACHE_BUSTERS.memory.to_i
-        return :abort
+      insn = @insns[@insn_idx]
+      len    = rb.insn_len(insn)
+
+      dst = @insn_idx + dst + len
+
+      patch_request = HandleOptGetinlinecache.new dst, :jmp, @temp_stack.dup, ic
+      @compile_requests << Fiddle::Pinned.new(patch_request)
+
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
+        ctx.with_runtime do |rt|
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+          rt.rb_funcall self, :compile_opt_getinlinecache, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
+
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
+        end
       end
 
-      ice = ic.entry
-      if ice.ic_serial != RubyVM.stat(:global_constant_state)
-        @body.jit_func = CACHE_BUSTERS.memory.to_i
-        return :abort
-      end
+      deferred.call
 
-      loc = @temp_stack.push(:cache_get, type: rb.RB_BUILTIN_TYPE(ice.value))
-
-      # FIXME: This should be a weakref probably
-      @objects << Fiddle::Pinned.new(Fiddle.dlunwrap(ice.value))
+      loc = @temp_stack.push(:cache_get)
 
       ary_head = Fiddle::Pointer.new(CONST_WATCHERS)
       watcher_count = ary_head[0, Fiddle::SIZEOF_VOIDP].unpack1("l!")
       watchers = ary_head[Fiddle::SIZEOF_VOIDP, Fiddle::SIZEOF_VOIDP * watcher_count].unpack("l!#{watcher_count}")
-      unless watchers.include? @body.to_i
-        watchers << @body.to_i
-        ary_head[0, Fiddle::SIZEOF_VOIDP] = [watchers.length].pack("q")
-        buf = watchers.pack("q*")
-        ary_head[Fiddle::SIZEOF_VOIDP, Fiddle::SIZEOF_VOIDP * watchers.length] = buf
-      end
 
-      __.with_register do |tmp|
-        __.mov(tmp, __.uimm(ice.value))
-          .mov(loc, tmp)
-      end
+      __.lea(__.rax, __.rip)
 
       flush
 
-      handle_jump dst
+      watch_address = jit_buffer.address
+
+      __.jmp(__.label(:next))
+        .put_label(:next)
+        .with_register { |tmp|
+          __.mov(tmp, __.uimm(ic))
+            .mov(tmp, __.m64(tmp, IseqInlineConstantCache.offsetof("entry")))
+            .test(tmp, tmp)
+            .jz(__.label(:continue)) # no entry
+          __.with_register { |global|
+            __.mov(global, __.uimm(Fiddle::Handle::DEFAULT["ruby_vm_global_constant_state"]))
+              .mov(global, __.m64(global))
+              .cmp(global, __.m64(tmp, IseqInlineConstantCacheEntry.offsetof("ic_serial")))
+              .jne(__.label(:continue)) # doesn't match
+              .jmp(__.absolute(deferred.entry))
+          }
+        }
+
+      __.put_label(:continue)
+        .mov(loc, __.uimm(Qnil))
+
+      flush
+
+      # the global constant changed handler will patch the jump instruction
+      # at the "watch_address" and we don't need to invalidate the entire iseq
+      watchers << watch_address
+      ary_head[0, Fiddle::SIZEOF_VOIDP] = [watchers.length].pack("q")
+      buf = watchers.pack("q*")
+      ary_head[Fiddle::SIZEOF_VOIDP, Fiddle::SIZEOF_VOIDP * watchers.length] = buf
+
+      :continue
     end
 
     class HandleJump < Struct.new(:jump_idx, :jump_type, :temp_stack)

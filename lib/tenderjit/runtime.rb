@@ -3,6 +3,7 @@ class TenderJIT
     def initialize fisk, jit_buffer, temp_stack
       @fisk       = fisk
       @labels     = []
+      @label_count = 0
       @jit_buffer = jit_buffer
       @temp_stack = temp_stack
 
@@ -152,7 +153,17 @@ class TenderJIT
     end
 
     def write dst, src
-      @fisk.mov(dst, src)
+      dst = cast_to_fisk dst
+      src = cast_to_fisk src
+
+      if dst.memory? && (src.memory? || src.immediate?)
+        @fisk.with_register do |tmp|
+          @fisk.mov(tmp, src)
+          @fisk.mov(dst, tmp)
+        end
+      else
+        @fisk.mov(dst, src)
+      end
     end
 
     def break
@@ -242,7 +253,14 @@ class TenderJIT
     # Push a value on the stack
     def push val, type:
       loc = @temp_stack.push type
-      write loc, val.to_register
+
+      val = cast_to_fisk val
+
+      if val.memory? || val.immediate?
+        write loc, val
+      else
+        write loc, val.to_register
+      end
     end
 
     def call_cfunc func_loc, params
@@ -271,8 +289,9 @@ class TenderJIT
 
     private
 
-    def push_label
-      label = "label #{@labels.length}"
+    def push_label n = "label"
+      @label_count += 1
+      label = "#{n} #{@label_count}"
       @labels.push label
       @fisk.label label
     end
@@ -293,7 +312,8 @@ class TenderJIT
     end
 
     def cast_to_fisk val
-      if val.is_a?(Fisk::Operand)
+      case val
+      when Fisk::Operand, TemporaryVariable
         val
       else
         @fisk.uimm(val)
@@ -437,6 +457,9 @@ class TenderJIT
       def to_register
         reg
       end
+
+      def memory?; false; end
+      def immediate?; false; end
 
       # Release the temporary variable (say you are done using its value)
       def release!

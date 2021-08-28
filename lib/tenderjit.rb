@@ -269,42 +269,7 @@ class TenderJIT
   # any JIT code that cares about that value.  This method monkey patches
   # `rb_clear_constant_cache` because it is the only thing that mutates the
   # `ruby_vm_global_constant_state` global.
-  def self.install_const_state_change_handler interpreter_call_prelude
-    cov_offset = RbIseqConstantBody.offsetof("variable.coverage")
-
-    interpreter_call_prelude.each_byte { |byte| CACHE_BUSTERS.putc byte }
-
-    fisk = Fisk.new { |__|
-      __.with_register do |tmp1|
-        # Book keeping. Count the number of recompiles
-        __.mov(tmp1, __.uimm(STATS.to_i))
-          .inc(__.m64(tmp1, Stats.offsetof("recompiles")))
-
-        __.mov(REG_BP, __.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")))
-          .lea(tmp1, __.m(REG_BP, 0))
-          .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), tmp1)
-
-        __.mov(tmp1, __.m64(REG_CFP, RbControlFrameStruct.offsetof("iseq")))
-          .mov(__.rdi, __.m64(tmp1, RbISeqT.offsetof("body")))
-          .mov(__.rdi, __.m64(__.rdi, cov_offset))
-          .mov(__.rsi, __.uimm(2))
-          .mov(__.rax, __.uimm(Fiddle::Handle::DEFAULT["rb_ary_entry"]))
-          .call(__.rax) # After this, rax should have the iseq compiler
-          .mov(__.rdi, __.rax)
-          .mov(__.rsi, __.uimm(CFuncs.rb_intern("recompile!")))
-          .mov(__.rdx, __.uimm(0))
-          .mov(__.rax, __.uimm(Fiddle::Handle::DEFAULT["rb_funcall"]))
-          .call(__.rax)
-          .mov(__.rax, __.uimm(Qundef))
-          .ret
-      end
-    }
-    fisk.assign_registers([fisk.r9, fisk.r10], local: true)
-
-    pos = CACHE_BUSTERS.pos
-    fisk.write_to(CACHE_BUSTERS)
-    jump_loc = CACHE_BUSTERS.memory.to_i + pos
-
+  def self.install_const_state_change_handler
     # This function will invalidate JIT code on any iseq that needs to be
     # invalidated when ruby_vm_global_constant_state changes.
     fisk = Fisk.new { |__|
@@ -315,28 +280,35 @@ class TenderJIT
       __.mov(__.rax, __.uimm(Fiddle::Handle::DEFAULT["ruby_vm_global_constant_state"]))
         .inc(__.m64(__.rax))
 
+      # This patches jump instructions inside "getinlinecache" to continue
+      # which will cause it to jump back to the interpreter.  Later runs of
+      # the instruction will recompile with the updated constant information
       __.with_register("ary ptr") do |ary_ptr|
         __.with_register("int i") do |i|
           __.with_register("int x = *ptr") do |x|
             __.with_register("jump") do |jump|
-            __.mov(ary_ptr, __.uimm(CONST_WATCHERS.to_i))
-              .xor(i, i)
-              .xor(__.rax, __.rax)
-              .mov(x, __.m64(ary_ptr))
-              .put_label(:loop)
-              .add(ary_ptr, __.uimm(Fiddle::SIZEOF_VOIDP))
-              .cmp(i, x)
-              .jge(__.label(:done))
-              .mov(__.rax, __.m64(ary_ptr))
-              .mov(jump, __.uimm(jump_loc))
-              .test(__.rax, __.rax)
-              .jz(__.label(:body_is_null))
-              .mov(__.m64(__.rax, RbIseqConstantBody.offsetof("jit_func")), jump) # Clear JIT ptr here
-              .mov(__.m64(ary_ptr), __.uimm(0))
-              .put_label(:body_is_null)
-              .inc(i)
-              .jmp(__.label(:loop))
-              .put_label(:done)
+              __.mov(ary_ptr, __.uimm(CONST_WATCHERS.to_i))
+                .xor(i, i)
+                .xor(__.rax, __.rax)
+                .mov(x, __.m64(ary_ptr))
+                .put_label(:loop)
+                .add(ary_ptr, __.uimm(Fiddle::SIZEOF_VOIDP))
+                .cmp(i, x)
+                .jge(__.label(:done))
+                .mov(__.rax, __.m64(ary_ptr))
+                .test(__.rax, __.rax)
+                .jz(__.label(:body_is_null))
+
+              __.with_register("mask") do |mask|
+                __.mov(mask, __.imm64(0xFFFFFF00000000FF))
+                  .and(mask, __.m64(__.rax))
+                  .mov(__.m64(__.rax), mask)
+              end
+
+              __.put_label(:body_is_null)
+                .inc(i)
+                .jmp(__.label(:loop))
+                .put_label(:done)
             end
           end
         end
@@ -398,7 +370,7 @@ class TenderJIT
 
   INTERPRETER_CALL = interpreter_call.freeze
 
-  install_const_state_change_handler(INTERPRETER_CALL)
+  install_const_state_change_handler
 
   attr_reader :stats
   attr_reader :interpreter_call
