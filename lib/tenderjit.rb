@@ -20,9 +20,30 @@ class TenderJIT
   # Struct layouts
 
   RBasic                = Internals.struct("RBasic")
+
+  class RBasic
+    %w{ flags klass }.each do |item|
+      offset = offsetof(item)
+
+      define_singleton_method item do |address|
+        Fiddle.read_ptr address, offset
+      end
+    end
+  end
   RClass                = Internals.struct("RClass")
   RObject               = Internals.struct("RObject")
   RTypedData            = Internals.struct("RTypedData")
+
+  class RTypedData
+    %w{ data }.each do |item|
+      offset = offsetof(item)
+
+      define_singleton_method item do |address|
+        Fiddle.read_ptr address, offset
+      end
+    end
+  end
+
   RData                 = Internals.struct("RData")
   RbISeqT               = Internals.struct("rb_iseq_t")
   RbProcT               = Internals.struct("rb_proc_t")
@@ -113,8 +134,72 @@ class TenderJIT
       const_set $1, 1 << Internals.c(x)
     when /^VM_(?:FRAME|ENV|METHOD).*$/
       const_set x, Internals.c(x)
+    when /^RUBY_.*$/
+      const_set x, Internals.c(x)
     end
   end
+
+  ALL_TYPES = [
+    RUBY_T_NONE,
+    RUBY_T_OBJECT,
+    RUBY_T_CLASS,
+    RUBY_T_MODULE,
+    RUBY_T_FLOAT,
+    RUBY_T_STRING,
+    RUBY_T_REGEXP,
+    RUBY_T_ARRAY,
+    RUBY_T_HASH,
+    RUBY_T_STRUCT,
+    RUBY_T_BIGNUM,
+    RUBY_T_FILE,
+    RUBY_T_DATA,
+    RUBY_T_MATCH,
+    RUBY_T_COMPLEX,
+    RUBY_T_RATIONAL,
+    RUBY_T_NIL,
+    RUBY_T_TRUE,
+    RUBY_T_FALSE,
+    RUBY_T_SYMBOL,
+    RUBY_T_FIXNUM,
+    RUBY_T_UNDEF,
+    RUBY_T_IMEMO,
+    RUBY_T_NODE,
+    RUBY_T_ICLASS,
+    RUBY_T_ZOMBIE,
+    RUBY_T_MOVED,
+  ]
+
+  HEAP_TYPES = [
+    RUBY_T_NONE,
+    RUBY_T_OBJECT,
+    RUBY_T_CLASS,
+    RUBY_T_MODULE,
+    RUBY_T_FLOAT,
+    RUBY_T_STRING,
+    RUBY_T_REGEXP,
+    RUBY_T_ARRAY,
+    RUBY_T_HASH,
+    RUBY_T_STRUCT,
+    RUBY_T_BIGNUM,
+    RUBY_T_FILE,
+    RUBY_T_DATA,
+    RUBY_T_MATCH,
+    RUBY_T_COMPLEX,
+    RUBY_T_RATIONAL,
+    #RUBY_T_NIL,
+    #RUBY_T_TRUE,
+    #RUBY_T_FALSE,
+    #RUBY_T_SYMBOL,
+    #RUBY_T_FIXNUM,
+    #RUBY_T_UNDEF,
+    RUBY_T_IMEMO,
+    RUBY_T_NODE,
+    RUBY_T_ICLASS,
+    RUBY_T_ZOMBIE,
+    RUBY_T_MOVED,
+  ]
+
+  SPECIAL_TYPES = ALL_TYPES - HEAP_TYPES
 
   VM_ENV_DATA_INDEX_ME_CREF    = -2 # /* ep[-2] */
   VM_ENV_DATA_INDEX_SPECVAL    = -1 # /* ep[-1] */

@@ -8,4 +8,8 @@ module Fiddle
       ptr[0, bytesize].unpack("#{Fiddle::PackInfo::PACK_MAP[type]}#{len}")
     end
   end
+
+  def self.read_ptr ptr, offset
+    Fiddle::Pointer.new(ptr)[offset, Fiddle::SIZEOF_VOIDP].unpack1("l!")
+  end
 end
