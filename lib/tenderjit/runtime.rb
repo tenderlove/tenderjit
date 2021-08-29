@@ -375,6 +375,10 @@ class TenderJIT
       def [] idx
         Fisk::M64.new(@reg, @offset + (idx * size))
       end
+
+      def []= idx, val
+        @ec.write(self[idx], val)
+      end
     end
 
     class Pointer

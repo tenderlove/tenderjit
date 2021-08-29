@@ -28,6 +28,7 @@ class TenderJIT
     make_function "rb_id2sym", [TYPE_INT], TYPE_VOIDP
     make_function "memset", [TYPE_VOIDP, TYPE_INT, TYPE_SIZE_T], TYPE_VOID
     make_function "rb_st_lookup", [TYPE_VOIDP, TYPE_VOIDP, TYPE_VOIDP], TYPE_INT
+    make_function "rb_ivar_set", [TYPE_VOIDP, TYPE_INT, TYPE_VOIDP], TYPE_VOIDP
 
     def self.mprotect addr, len, prot
       vm_protect mach_task_self, addr, len, 0, prot | PROT_COPY

@@ -204,9 +204,9 @@ class TenderJIT
 
     CallCompileRequest = Struct.new(:call_info, :overflow_exit, :temp_stack, :current_pc, :next_pc)
 
-    IVarRequest = Struct.new(:id, :current_pc, :next_pc, :write_loc, :deferred_entry)
+    IVarRequest = Struct.new(:id, :current_pc, :next_pc, :stack_loc, :deferred_entry)
 
-    def compile_ivar_read recv, req, loc
+    def compile_getinstancevariable recv, req, loc
       if rb.RB_SPECIAL_CONST_P(recv)
         raise NotImplementedError, "no ivar reads on non-heap objects"
       end
@@ -237,7 +237,7 @@ class TenderJIT
         temp.write cfp_ptr.self
 
         self_ptr = rt.pointer(temp, type: RObject)
-        sp_ptr   = rt.pointer(req.write_loc.register, offset: req.write_loc.displacement)
+        sp_ptr   = rt.pointer(req.stack_loc.register, offset: req.stack_loc.displacement)
 
         # If the object class is the same, continue
         rt.if_eq(self_ptr.basic.klass, klass) {
@@ -290,6 +290,96 @@ class TenderJIT
       end
     end
 
+    def compile_setinstancevariable recv, req, loc
+      if rb.RB_SPECIAL_CONST_P(recv)
+        raise NotImplementedError, "no ivar reads on non-heap objects"
+      end
+
+      type = rb.RB_BUILTIN_TYPE(recv)
+      if type != T_OBJECT
+        raise NotImplementedError, "no ivar reads on non objects #{type}"
+      end
+
+      klass        = RBasic.klass(recv)
+      iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass))
+      value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
+
+      if iv_index_tbl == 0 || 0 == CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
+        CFuncs.rb_ivar_set(recv, req.id, Qundef)
+        iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass))
+        CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
+      end
+
+      ivar_idx = value.ptr.to_int
+
+      code_start = jit_buffer.address
+      return_loc = patch_source_jump jit_buffer, at: (loc - jit_buffer.memory.to_i),
+                                                 to: code_start
+
+      with_runtime do |rt|
+        cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+        temp = rt.temp_var
+        temp.write cfp_ptr.self
+
+        self_ptr = rt.pointer(temp, type: RObject)
+        sp_ptr   = rt.pointer(req.stack_loc.register, offset: req.stack_loc.displacement)
+
+        # If the object class is the same, continue
+        rt.if_eq(self_ptr.basic.klass, klass) {
+
+          # If it's an embedded object, read the ivar out of the object
+          rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
+            self_ptr.as.ary[ivar_idx] = sp_ptr[0]
+
+          }.else { # Otherwise, check the extended table
+            temp.write self_ptr.as.heap.ivptr
+            rt.pointer(temp)[ivar_idx] = sp_ptr[0]
+          }
+
+        }.else { # Otherwise we need to recompile
+          rt.patchable_jump req.deferred_entry
+        }
+
+        temp.release!
+
+        rt.jump jit_buffer.memory.to_i + return_loc
+      end
+
+      code_start
+    end
+
+    def handle_setinstancevariable id, ic
+      read_loc = @temp_stack.last.loc
+
+      req = IVarRequest.new(id, current_pc, next_pc, read_loc)
+      @compile_requests << Fiddle::Pinned.new(req)
+
+      # `deferred_call` preserves the stack, so we can't pop from the temp
+      # stack until after this method call
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
+        ctx.with_runtime do |rt|
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+          rt.rb_funcall self, :compile_setinstancevariable, [cfp_ptr.self, req, ctx.fisk.rax]
+
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
+        end
+      end
+
+      @temp_stack.pop
+
+      # jump back to the re-written jmp
+      deferred.call
+
+      req.deferred_entry = deferred.entry.to_i
+
+      __.lea(__.rax, __.rip)
+      __.jmp(__.absolute(deferred.entry.to_i))
+    end
+
     def handle_checktype type
       loc = @temp_stack.pop
 
@@ -324,7 +414,7 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.rb_funcall self, :compile_ivar_read, [cfp_ptr.self, req, ctx.fisk.rax]
+          rt.rb_funcall self, :compile_getinstancevariable, [cfp_ptr.self, req, ctx.fisk.rax]
 
           rt.NUM2INT(rt.return_value)
 

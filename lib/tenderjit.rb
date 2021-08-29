@@ -31,6 +31,17 @@ class TenderJIT
     end
   end
   RClass                = Internals.struct("RClass")
+
+  class RClass
+    %w{ ptr }.each do |item|
+      offset = offsetof(item)
+
+      define_singleton_method item do |address|
+        Fiddle.read_ptr address, offset
+      end
+    end
+  end
+
   RObject               = Internals.struct("RObject")
   RTypedData            = Internals.struct("RTypedData")
 
@@ -52,6 +63,18 @@ class TenderJIT
   RbCallInfo            = Internals.struct("rb_callinfo")
   RbCallData            = Internals.struct("rb_call_data")
   RbCallableMethodEntryT = Internals.struct("rb_callable_method_entry_t")
+  RbClassExt             = Internals.struct("rb_classext_struct")
+
+  class RbClassExt
+    %w{ iv_index_tbl }.each do |item|
+      offset = offsetof(item)
+
+      define_singleton_method item do |address|
+        Fiddle.read_ptr address, offset
+      end
+    end
+  end
+
   RbMethodDefinitionStruct = Internals.struct("rb_method_definition_struct")
   RbIseqConstantBody = Internals.struct("rb_iseq_constant_body")
   IseqInlineConstantCacheEntry = Internals.struct("iseq_inline_constant_cache_entry")
