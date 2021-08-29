@@ -211,11 +211,12 @@ class TenderJIT
         raise NotImplementedError, "no ivar reads on non-heap objects"
       end
 
-      if rb.RB_BUILTIN_TYPE(recv) != T_OBJECT
-        raise NotImplementedError, "no ivar reads on non objects"
+      type = rb.RB_BUILTIN_TYPE(recv)
+      if type != T_OBJECT
+        raise NotImplementedError, "no ivar reads on non objects #{type}"
       end
 
-      klass        = RBasic.new(recv).klass
+      klass        = RBasic.klass(recv)
       iv_index_tbl = RClass.new(klass).ptr.iv_index_tbl
       value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
 
@@ -260,6 +261,57 @@ class TenderJIT
       end
 
       code_start
+    end
+
+    def handle_getglobal gid
+      addr = Fiddle::Handle::DEFAULT["rb_gvar_get"]
+      with_runtime do |rt|
+        rt.call_cfunc addr, [gid]
+        rt.push rt.return_value, type: :unknown
+      end
+    end
+
+    def handle_dup
+      last = @temp_stack.last
+      with_runtime do |rt|
+        rt.push last.loc, type: last.type
+      end
+    end
+
+    def handle_concatstrings num
+      loc = @temp_stack[@temp_stack.size - num]
+      num.times { @temp_stack.pop }
+      addr = Fiddle::Handle::DEFAULT["rb_str_concat_literals"]
+      with_runtime do |rt|
+        rt.with_ref(loc) do |reg|
+          rt.call_cfunc addr, [num, reg]
+        end
+        rt.push rt.return_value, type: :string
+      end
+    end
+
+    def handle_checktype type
+      loc = @temp_stack.pop
+
+      if HEAP_TYPES.include?(type)
+        write_loc = @temp_stack.push :boolean
+
+        with_runtime do |rt|
+          # If the type is a heap allocated type, then if the stack object
+          # is a "special const", it can't be what we want
+          rt.if(rt.RB_SPECIAL_CONST_P(loc)) {
+            rt.write write_loc, Qfalse
+          }.else {
+            rt.if_eq(rt.RB_BUILTIN_TYPE(loc), type) {
+              rt.write write_loc, Qtrue
+            }.else {
+              rt.write write_loc, Qfalse
+            }
+          }
+        end
+      else
+        raise NotImplementedError
+      end
     end
 
     def handle_getinstancevariable id, ic
@@ -737,6 +789,10 @@ class TenderJIT
         end
       end
 
+      __.test(@temp_stack.pop, __.imm(~Qnil))
+
+      flush
+
       target_jump_block = @blocks.find { |b| b.entry_idx == jump_idx }
 
       patch_false = BranchIf.new next_idx, :jmp, @temp_stack.dup
@@ -761,10 +817,6 @@ class TenderJIT
         req.call
         req
       end
-
-      __.test(@temp_stack.pop, __.imm(~Qnil))
-
-      flush
 
       if target_jump_block
         jit_buffer.write_jump to: target_jump_block.start_address,

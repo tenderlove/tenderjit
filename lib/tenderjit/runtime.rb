@@ -181,17 +181,24 @@ class TenderJIT
       self
     end
 
-    def if lhs, op, rhs
-      lhs = cast_to_fisk lhs
-      rhs = cast_to_fisk rhs
-
-      maybe_reg lhs do |op1|
-        maybe_reg rhs do |op2|
-          @fisk.cmp op1, op2
-        end
-      end
-      @fisk.jg push_label # else label
+    def if lhs, op = nil, rhs = nil
+      else_label = push_label # else label
       finish_label = push_label
+
+      if op && rhs
+        lhs = cast_to_fisk lhs
+        rhs = cast_to_fisk rhs
+
+        maybe_reg lhs do |op1|
+          maybe_reg rhs do |op2|
+            @fisk.cmp op1, op2
+          end
+        end
+        @fisk.jg else_label # else label
+      else
+        @fisk.test lhs, lhs
+        @fisk.jz else_label # else label
+      end
       yield
       @fisk.jmp finish_label # finish label
       self
@@ -231,6 +238,36 @@ class TenderJIT
         @fisk.mov(tmp, operand)
         yield tmp
       end
+    end
+
+    # Checks if the object at +loc+ is a special const. RAX is 0 if this is
+    # *not* a special constant.
+    def RB_SPECIAL_CONST_P loc
+      is_immediate = push_label
+
+      __ = @fisk
+      reg = @fisk.rax
+      @fisk.mov(reg, loc)
+      @fisk.test(reg, __.uimm(RUBY_IMMEDIATE_MASK))
+      @fisk.jnz(is_immediate)
+      @fisk.test(reg, __.imm(~Qnil))
+      @fisk.jz(is_immediate)
+      @fisk.mov(reg, __.uimm(0))
+      @fisk.put_label(is_immediate.name)
+
+      pop_label
+
+      reg
+    end
+
+    # Finds the built-in type of the object stored in `loc`. The type is
+    # placed in RAX
+    def RB_BUILTIN_TYPE loc
+      reg = @fisk.rax
+      @fisk.mov(reg, loc)
+      @fisk.mov(reg, @fisk.m64(reg, RBasic.offsetof("flags")))
+      @fisk.and(reg, @fisk.uimm(RUBY_T_MASK))
+      reg
     end
 
     # Create a temporary variable
