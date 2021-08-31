@@ -26,6 +26,7 @@ class TenderJIT
     make_function "vm_protect", [TYPE_VOIDP, -TYPE_INT64_T, TYPE_SIZE_T, TYPE_CHAR, TYPE_INT], TYPE_INT
     make_function "rb_intern", [TYPE_CONST_STRING], TYPE_INT
     make_function "rb_id2sym", [TYPE_INT], TYPE_VOIDP
+    make_function "rb_id2str", [TYPE_INT], TYPE_VOIDP
     make_function "memset", [TYPE_VOIDP, TYPE_INT, TYPE_SIZE_T], TYPE_VOID
     make_function "rb_st_lookup", [TYPE_VOIDP, TYPE_VOIDP, TYPE_VOIDP], TYPE_INT
     make_function "rb_ivar_set", [TYPE_VOIDP, TYPE_INT, TYPE_VOIDP], TYPE_VOIDP

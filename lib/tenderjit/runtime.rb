@@ -288,8 +288,8 @@ class TenderJIT
     end
 
     # Push a value on the stack
-    def push val, type:
-      loc = @temp_stack.push type
+    def push val, name:, type: :unknown
+      loc = @temp_stack.push name, type: type
 
       val = cast_to_fisk val
 
@@ -304,7 +304,6 @@ class TenderJIT
       raise NotImplementedError, "too many parameters" if params.length > 6
       raise "No function location" unless func_loc > 0
 
-      @fisk.push(@fisk.rsp) # alignment
       params.each_with_index do |param, i|
         case param
         when Integer
@@ -317,7 +316,6 @@ class TenderJIT
       end
       @fisk.mov(@fisk.rax, @fisk.uimm(func_loc))
         .call(@fisk.rax)
-      @fisk.pop(@fisk.rsp) # alignment
     end
 
     def release_temp temp

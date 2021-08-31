@@ -57,6 +57,17 @@ class TenderJIT
 
   RData                 = Internals.struct("RData")
   RbISeqT               = Internals.struct("rb_iseq_t")
+
+  class RbISeqT
+    %w{ body }.each do |item|
+      offset = offsetof(item)
+
+      define_singleton_method item do |address|
+        Fiddle.read_ptr address, offset
+      end
+    end
+  end
+
   RbProcT               = Internals.struct("rb_proc_t")
   RbControlFrameStruct  = Internals.struct("rb_control_frame_struct")
   RbExecutionContextT   = Internals.struct("rb_execution_context_t")
@@ -77,6 +88,27 @@ class TenderJIT
 
   RbMethodDefinitionStruct = Internals.struct("rb_method_definition_struct")
   RbIseqConstantBody = Internals.struct("rb_iseq_constant_body")
+
+  class RbIseqConstantBody
+    %w{ iseq_encoded iseq_size jit_func }.each do |item|
+      offset = offsetof(item)
+
+      if typeof(item) == -Fiddle::TYPE_INT
+        define_singleton_method item do |address|
+          Fiddle.read_unsigned_int address, offset
+        end
+      else
+        define_singleton_method item do |address|
+          Fiddle.read_ptr address, offset
+        end
+
+        define_singleton_method "set_#{item}" do |address, val|
+          Fiddle.write_ptr address, offset, val
+        end
+      end
+    end
+  end
+
   IseqInlineConstantCacheEntry = Internals.struct("iseq_inline_constant_cache_entry")
   IseqInlineConstantCache = Internals.struct("iseq_inline_constant_cache")
 
@@ -517,7 +549,8 @@ class TenderJIT
   # Convert a method to an rb_iseq_t *address* (so, just the memory location
   # where the iseq exists)
   def method_to_iseq_t method
-    RTypedData.new(Fiddle.dlwrap(method)).data.to_i
+    addr = Fiddle.dlwrap(method)
+    RTypedData.data(addr)
   end
 
   def self.member_size struct, member

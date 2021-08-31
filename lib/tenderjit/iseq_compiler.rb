@@ -23,9 +23,10 @@ class TenderJIT
       @jit        = jit
       @temp_stack = TempStack.new
       @iseq       = addr
-      @body       = RbISeqT.new(addr).body
-      @insns      = Fiddle::CArray.unpack(@body.iseq_encoded,
-                                          @body.iseq_size,
+      @body       = RbISeqT.body(addr)
+
+      @insns      = Fiddle::CArray.unpack(Fiddle::Pointer.new(RbIseqConstantBody.iseq_encoded(@body)),
+                                          RbIseqConstantBody.iseq_size(@body),
                                           Fiddle::TYPE_VOIDP)
 
       @insn_idx   = nil
@@ -64,8 +65,8 @@ class TenderJIT
         puts "Compiling iseq addr: #{sprintf("%#x", @iseq)}"
       end
 
-      if @body.jit_func.to_i != 0
-        return @body.jit_func.to_i
+      if RbIseqConstantBody.jit_func(@body) != 0
+        return RbIseqConstantBody.jit_func(@body)
       end
 
       stats.compiled_methods += 1
@@ -89,13 +90,13 @@ class TenderJIT
 
       if resume_compiling(0, TempStack.new) == :abort
         if $DEBUG
-          $stderr.puts "ABORTED #{sprintf("%#x", @body.jit_func.to_i)}"
+          $stderr.puts "ABORTED #{sprintf("%#x", RbIseqConstantBody.jit_func(@body))}"
         end
       else
         if $DEBUG
           $stderr.puts "NEW ENTRY HEAD #{sprintf("%#x", jit_head.to_i)}"
         end
-        @body.jit_func = jit_head
+        RbIseqConstantBody.set_jit_func(@body, jit_head)
       end
 
       jit_head
@@ -117,7 +118,7 @@ class TenderJIT
       @temp_stack = temp_stack
       @insn_idx   = insn_idx
       @blocks << Block.new(@insn_idx, jit_buffer.pos, jit_buffer.address)
-      enc = @body.iseq_encoded
+      enc = RbIseqConstantBody.iseq_encoded(@body)
       @current_pc = enc.to_i + (insn_idx * Fiddle::SIZEOF_VOIDP)
 
       while(insn = @insns[@insn_idx])
@@ -217,7 +218,7 @@ class TenderJIT
       end
 
       klass        = RBasic.klass(recv)
-      iv_index_tbl = RClass.new(klass).ptr.iv_index_tbl
+      iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass))
       value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
 
       if 0 == CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
@@ -267,14 +268,29 @@ class TenderJIT
       addr = Fiddle::Handle::DEFAULT["rb_gvar_get"]
       with_runtime do |rt|
         rt.call_cfunc addr, [gid]
-        rt.push rt.return_value, type: :unknown
+        rt.push rt.return_value, name: :unknown
+      end
+    end
+
+    def handle_setglobal gid
+      global_name = Fiddle.dlunwrap(CFuncs.rb_id2str(gid))
+      stack_val   = @temp_stack.last.type
+      loc = @temp_stack.pop
+
+      addr = Fiddle::Handle::DEFAULT["rb_gvar_set"]
+      with_runtime do |rt|
+        if global_name == "$halt_at_runtime" && stack_val == true
+          rt.break
+        else
+          rt.call_cfunc addr, [gid, loc]
+        end
       end
     end
 
     def handle_dup
       last = @temp_stack.last
       with_runtime do |rt|
-        rt.push last.loc, type: last.type
+        rt.push last.loc, name: last.name, type: last.type
       end
     end
 
@@ -286,7 +302,7 @@ class TenderJIT
         rt.with_ref(loc) do |reg|
           rt.call_cfunc addr, [num, reg]
         end
-        rt.push rt.return_value, type: :string
+        rt.push rt.return_value, name: __method__, type: :string
       end
     end
 
@@ -1255,7 +1271,7 @@ class TenderJIT
           temp.write temp[0]
 
           # push it on the stack
-          rt.push temp, type: :local
+          rt.push temp, name: :local
         end
 
         rt.flush
@@ -1275,6 +1291,10 @@ class TenderJIT
     def handle_putobject literal
       loc = if rb.RB_FIXNUM_P(literal)
               @temp_stack.push(:literal, type: T_FIXNUM)
+            elsif literal == Qtrue
+              @temp_stack.push(:literal, type: true)
+            elsif literal == Qfalse
+              @temp_stack.push(:literal, type: false)
             else
               @temp_stack.push(:literal)
             end
@@ -1352,7 +1372,7 @@ class TenderJIT
       pos = nil
       fisk.lazy { |x| pos = x; string.bytes.each { |b| jit_buffer.putc b } }
       fisk.put_label(:after_bytes)
-      fisk.mov fisk.rdi, fisk.uimm(1)
+      fisk.mov fisk.rdi, fisk.uimm(2)
       fisk.lazy { |x|
         fisk.mov fisk.rsi, fisk.uimm(jit_buffer.memory + pos)
       }
