@@ -286,7 +286,7 @@ class TenderJIT
 
       page_size = Etc.sysconf(Etc::SC_PAGE_SIZE)
       page_head = addr & ~(0xFFF)
-      if Hacks.mprotect(page_head, page_size, 0x1 | 0x4 | 0x2) != 0
+      if CFuncs.mprotect(page_head, page_size, 0x1 | 0x4 | 0x2) != 0
         flunk
       end
 
