@@ -22,8 +22,16 @@ class TenderJIT
     PROT_EXEC   = 0x04
     PROT_COPY   = 0x10
 
-    make_function "mach_task_self", [], TYPE_VOIDP
-    make_function "vm_protect", [TYPE_VOIDP, -TYPE_INT64_T, TYPE_SIZE_T, TYPE_CHAR, TYPE_INT], TYPE_INT
+    if RUBY_PLATFORM =~ /darwin/
+      make_function "mach_task_self", [], TYPE_VOIDP
+      make_function "vm_protect", [TYPE_VOIDP, -TYPE_INT64_T, TYPE_SIZE_T, TYPE_CHAR, TYPE_INT], TYPE_INT
+      def self.mprotect addr, len, prot
+        vm_protect mach_task_self, addr, len, 0, prot | PROT_COPY
+      end
+    else
+      make_function "mprotect", [TYPE_VOIDP, TYPE_SIZE_T, TYPE_INT], TYPE_INT
+    end
+
     make_function "rb_intern", [TYPE_CONST_STRING], TYPE_INT
     make_function "rb_id2sym", [TYPE_INT], TYPE_VOIDP
     make_function "rb_id2str", [TYPE_INT], TYPE_VOIDP
@@ -31,8 +39,5 @@ class TenderJIT
     make_function "rb_st_lookup", [TYPE_VOIDP, TYPE_VOIDP, TYPE_VOIDP], TYPE_INT
     make_function "rb_ivar_set", [TYPE_VOIDP, TYPE_INT, TYPE_VOIDP], TYPE_VOIDP
 
-    def self.mprotect addr, len, prot
-      vm_protect mach_task_self, addr, len, 0, prot | PROT_COPY
-    end
   end
 end
