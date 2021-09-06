@@ -249,6 +249,99 @@ class TenderJIT
           end
         end
       end
+
+      class Static
+        attr_reader :symbol_file
+
+        def initialize ruby_archive
+          @symbol_file = ruby_archive
+        end
+
+        def process
+          constants = {}
+          structs = {}
+          unions = {}
+
+          each_compile_unit do |cu, strings|
+            case cu.die.name(strings)
+            when "debug.c"
+              cu.die.find_all { |x| x.tag.enumerator? }.each do |enum|
+                name = enum.name(strings).delete_prefix("RUBY_")
+                constants[name] = enum.const_value
+              end
+            else
+              builder = TypeBuilder.new(cu, strings)
+              builder.build
+              structs.merge! builder.structs
+              unions.merge! builder.unions
+              constants.merge! builder.enums
+            end
+          end
+
+          Internals.new(find_symbols, constants, structs, unions)
+        end
+
+        private
+
+        def find_symbols
+          symbol_addresses = {}
+
+          File.open RbConfig.ruby do |f|
+            my_macho = OdinFlex::MachO.new f
+
+            my_macho.each do |section|
+              if section.symtab?
+                section.nlist.each do |item|
+                  unless item.archive?
+                    name = item.name.delete_prefix(RbConfig::CONFIG["SYMBOL_PREFIX"])
+                    symbol_addresses[name] = item.value if item.value > 0
+                  end
+                end
+              end
+            end
+          end
+
+          # Fix up addresses due to ASLR
+          slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - symbol_addresses.fetch("rb_st_insert")
+          symbol_addresses.transform_values! { |v| v + slide }
+
+          symbol_addresses
+        end
+
+        def each_compile_unit
+          File.open symbol_file do |archive|
+            ar = OdinFlex::AR.new archive
+            ar.each do |object_file|
+              next unless object_file.identifier.end_with?(".o")
+              next unless object_file.identifier =~ /(?:debug|iseq|gc|st|vm|mjit)\.[oc]$/
+
+              info = strs = abbr = nil
+              macho = OdinFlex::MachO.new archive
+              macho.each do |thing|
+                if thing.section?
+                  case thing.sectname
+                  when "__debug_info"
+                    info = thing.as_dwarf
+                  when "__debug_str"
+                    strs = thing.as_dwarf
+                  when "__debug_abbrev"
+                    abbr = thing.as_dwarf
+                  else
+                  end
+                end
+
+                break if info && strs && abbr
+              end
+
+              if info && strs && abbr
+                info.compile_units(abbr.tags).each do |unit|
+                  yield unit, strs
+                end
+              end
+            end
+          end
+        end
+      end
     end
 
     def self.get_internals
