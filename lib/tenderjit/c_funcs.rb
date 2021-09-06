@@ -1,3 +1,5 @@
+require "fiddle"
+
 class TenderJIT
   class CFuncs
     include Fiddle

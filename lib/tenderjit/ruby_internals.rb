@@ -30,14 +30,64 @@ class TenderJIT
       make_function "rb_id2sym", [TYPE_INT], TYPE_VOIDP
       make_function "rb_callable_method_entry", [TYPE_VOIDP, TYPE_INT], TYPE_VOIDP
 
+      module GCC
+        def self.read_instruction_lengths symbol_addresses
+          # Instruction length tables seem to be compiled with numbers, and
+          # embedded multiple times. Try to find the first one that has
+          # the data we need
+          symbol_addresses.keys.grep(/^t\.\d+/).each do |key|
+            addr = symbol_addresses.fetch(key)
+            len  = RubyVM::INSTRUCTION_NAMES.length
+            list = Fiddle::Pointer.new(addr)[0, len * Fiddle::SIZEOF_CHAR].unpack("C#{len}")
+
+            # This is probably it
+            if list.first(4) == [1, 3, 3, 3]
+              return list
+            end
+          end
+        end
+
+        def self.read_instruction_op_types symbol_addresses
+          len  = RubyVM::INSTRUCTION_NAMES.length
+
+          map = symbol_addresses.keys.grep(/^y\.\d+/).each do |key|
+            insn_map = symbol_addresses.fetch(key)
+            l = Fiddle::Pointer.new(insn_map)[0, len * Fiddle::SIZEOF_SHORT].unpack("S#{len}")
+            break l if l.first(4) == [0, 1, 4, 7] # probably the right one
+          end
+
+          key = symbol_addresses.keys.grep(/^x\.\d+/).first
+          op_types = symbol_addresses.fetch(key)
+
+          str_buffer_end = map.last
+
+          while Fiddle::Pointer.new(op_types + str_buffer_end)[0] != 0
+            str_buffer_end += 1
+          end
+          Fiddle::Pointer.new(op_types)[0, str_buffer_end].unpack("Z*" * len)
+        end
+      end
+
+      module Clang
+      end
+
       def initialize symbol_addresses, constants, structs, unions
         @symbol_addresses     = symbol_addresses
         @constants            = constants
         @structs              = structs
         @unions               = unions
+
+        decoder = case RbConfig::CONFIG["CC"]
+                  when "clang" then Clang
+                  when "gcc" then  GCC
+                  else
+                    raise NotImplementedError, "Unknown compiler #{RbConfig::CONFIG["CC"]}"
+                  end
+
         @encoded_instructions = read_encoded_instructions(symbol_addresses)
-        @instruction_lengths  = read_instruction_lengths(symbol_addresses)
-        @instruction_ops      = read_instruction_op_types(symbol_addresses)
+        @instruction_lengths  = decoder.read_instruction_lengths(symbol_addresses)
+        @instruction_ops      = decoder.read_instruction_op_types(symbol_addresses)
+
         @insn_to_name         = Hash[@encoded_instructions.zip(RubyVM::INSTRUCTION_NAMES)]
         @insn_len             = Hash[@encoded_instructions.zip(@instruction_lengths)]
         @insn_to_ops          = Hash[@encoded_instructions.zip(@instruction_ops)]
@@ -128,7 +178,7 @@ class TenderJIT
       end
 
       def struct name
-        @structs[name]
+        @structs.fetch name
       end
     end
 
@@ -272,10 +322,124 @@ class TenderJIT
       end
     end
 
+    module ELFSystem
+      ELFAdapter = Struct.new(:offset, :size)
+
+      # ELFTools doesn't seem to deal with ELF files that are in the middle
+      # of a stream, for example a `.a` file.  This adapter class just tricks
+      # ELFTools in to thinking each file in the `.a` is at position 0
+      class IOAdapter
+        def initialize io
+          @pos = io.pos
+          @io  = io
+        end
+
+        def pos= v
+          @io.pos = @pos + v
+        end
+
+        def pos
+          @io.pos - @pos
+        end
+
+        def read bytes
+          @io.read bytes
+        end
+      end
+
+      class Archive
+        def initialize ruby_archive
+          @ruby_archive = ruby_archive
+        end
+
+        def process
+          constants = {}
+          structs = {}
+          unions = {}
+
+          each_compile_unit do |cu, strings|
+            case cu.die.name(strings)
+            when "debug.c"
+              cu.die.find_all { |x| x.tag.enumerator? }.each do |enum|
+                name = enum.name(strings).delete_prefix("RUBY_")
+                constants[name] = enum.const_value
+              end
+            else
+              builder = TypeBuilder.new(cu, strings)
+              builder.build
+              structs.merge! builder.structs
+              unions.merge! builder.unions
+              constants.merge! builder.enums
+            end
+          end
+
+          Internals.new(find_symbols, constants, structs, unions)
+        end
+
+        private
+
+        def each_compile_unit
+          File.open(RbConfig.ruby) do |f|
+            elf = ELFTools::ELFFile.new f
+            debug_info   = elf.section_by_name(".debug_info")
+            debug_abbrev = elf.section_by_name(".debug_abbrev")
+            debug_str    = elf.section_by_name(".debug_str")
+
+            info = WORF::DebugInfo.new(f, ELFAdapter.new(debug_info.header.sh_offset,
+                                                         debug_info.header.sh_size), 0)
+
+            abbr = WORF::DebugAbbrev.new(f, ELFAdapter.new(debug_abbrev.header.sh_offset,
+                                                           debug_abbrev.header.sh_size), 0)
+
+            strs = WORF::DebugStrings.new(f, ELFAdapter.new(debug_str.header.sh_offset,
+                                                            debug_str.header.sh_size), 0)
+
+            info.compile_units(abbr.tags).each do |unit|
+              name = unit.die.name(strs)
+              next unless name =~ /(?:debug|iseq|gc|st|vm|mjit)\.[oc]$/
+              yield unit, strs
+            end
+          end
+        end
+
+        def each_object_file
+          File.open @ruby_archive do |archive|
+            ar = OdinFlex::AR.new archive
+            ar.each do |object_file|
+              next unless object_file.identifier =~ /(?:debug|iseq|gc|st|vm|mjit)\.[oc]$/
+
+              yield archive
+            end
+          end
+        end
+
+        def find_symbols
+          symbol_addresses = {}
+
+          File.open(RbConfig.ruby) do |f|
+            elf = ELFTools::ELFFile.new f
+            symtab_section = elf.section_by_name '.symtab'
+            symtab_section.symbols.each do |item|
+              name = item.name.delete_prefix(RbConfig::CONFIG["SYMBOL_PREFIX"])
+              val = item.header.st_value
+              symbol_addresses[name] = val
+            end
+          end
+
+          # Fix up addresses due to ASLR
+          slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - symbol_addresses.fetch("rb_st_insert")
+          symbol_addresses.transform_values! { |v| v + slide }
+
+          symbol_addresses
+        end
+      end
+    end
+
     def self.get_internals
       base_system = if RUBY_PLATFORM =~ /darwin/
                       MachOSystem
                     else
+                      require "elftools"
                       ELFSystem
                     end
 
@@ -341,7 +505,7 @@ class TenderJIT
       def handle_typedef die, all_dies
         name = die.name(@strs)
         type = find_type_die(die, all_dies)
-        if type.tag.identifier == :DW_TAG_structure_type
+        if type && type.tag.identifier == :DW_TAG_structure_type
           @structs[name] = find_or_build type, all_dies
         end
       end
@@ -352,17 +516,22 @@ class TenderJIT
 
         case die.tag.identifier
         when :DW_TAG_structure_type
-          fiddle = build_fiddle(die, all_dies, Fiddle::CStruct)
-          name = die.name(@strs)
-          @known_types[die.offset] = Type.new(die, fiddle)
-          @structs[name] = fiddle if name
-          fiddle
+          if die.tag.has_children?
+            name = die.name(@strs)
+
+            fiddle = build_fiddle(die, all_dies, Fiddle::CStruct)
+            @known_types[die.offset] = Type.new(die, fiddle)
+            @structs[name] = fiddle if name
+            fiddle
+          end
         when :DW_TAG_union_type
-          fiddle = build_fiddle(die, all_dies, Fiddle::CUnion)
-          name = die.name(@strs)
-          @known_types[die.offset] = Type.new(die, fiddle)
-          @unions[name] = fiddle if name
-          fiddle
+          if die.tag.has_children?
+            fiddle = build_fiddle(die, all_dies, Fiddle::CUnion)
+            name = die.name(@strs)
+            @known_types[die.offset] = Type.new(die, fiddle)
+            @unions[name] = fiddle if name
+            fiddle
+          end
         when :DW_TAG_array_type
           fiddle = build_array die, all_dies
           @known_types[die.offset] = Type.new(die, fiddle)
@@ -394,7 +563,9 @@ class TenderJIT
         "char"                   => Fiddle::TYPE_CHAR,
         "signed char"            => Fiddle::TYPE_CHAR,
         "short"                  => Fiddle::TYPE_SHORT,
+        "short int"              => Fiddle::TYPE_SHORT,
         "unsigned short"         => -Fiddle::TYPE_SHORT,
+        "short unsigned int"     => -Fiddle::TYPE_SHORT,
         "unsigned char"          => -Fiddle::TYPE_CHAR,
         "long long int"          => Fiddle::TYPE_LONG_LONG,
         "long long unsigned int" => -Fiddle::TYPE_LONG_LONG,
@@ -462,8 +633,6 @@ class TenderJIT
       end
 
       def build_fiddle die, all_dies, fiddle_type
-        return unless die.tag.has_children?
-
         types = []
         names = []
         reference_structs = {}
@@ -474,8 +643,7 @@ class TenderJIT
         die.children.each do |child|
           case child.tag.identifier
           when :DW_TAG_member
-            name = child.name(strs)
-            raise unless name
+            name = child.name(strs) || "__anonymous"
 
             type = find_type_die(child, all_dies)
 
