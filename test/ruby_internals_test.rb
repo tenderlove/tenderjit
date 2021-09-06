@@ -216,17 +216,17 @@ class TenderJIT
         mov rbp, rsp
 
         # Set up the registers like vm_exec wants:
-        # PC is in r14 and CFP is in r15
-        mov r15, rsi
-        mov r14, m64(rsi, rb_control_frame_struct.offsetof("pc"))
+        # PC is in r9 and CFP is in r8
+        mov r8, rsi
+        mov r9, m64(rsi, rb_control_frame_struct.offsetof("pc"))
 
         sizeof_sp = tc.member_size(rb_control_frame_struct, "sp")
 
         ### `putobject 1`
         # Increment the SP
-        mov r10, m64(r15, rb_control_frame_struct.offsetof("sp"))
+        mov r10, m64(r8, rb_control_frame_struct.offsetof("sp"))
         add r10, imm32(sizeof_sp)
-        mov m64(r15, sizeof_sp), r10
+        mov m64(r8, sizeof_sp), r10
 
         # Write 1 to TOPN(0) of the stack
         mov m64(r10, -sizeof_sp), imm32(0x3)
@@ -234,20 +234,20 @@ class TenderJIT
         ### `leave` instruction
         # Copy top value from the stack in to rax
         #   `VALUE val = TOP(0);`
-        mov r10, m64(r15, rb_control_frame_struct.offsetof("sp"))
+        mov r10, m64(r8, rb_control_frame_struct.offsetof("sp"))
         mov rax, m64(r10, -sizeof_sp)
 
         # Decrement SP
         #   `POPN(1)`
         sub r10, imm32(sizeof_sp)
-        mov m64(r15, sizeof_sp), r10
+        mov m64(r8, sizeof_sp), r10
 
         # Put EP in r11
-        mov r11, m64(r15, rb_control_frame_struct.offsetof("ep"))
+        mov r11, m64(r8, rb_control_frame_struct.offsetof("ep"))
         mov r11, m64(r11) # EP flags
 
         # Previous CFP is in r10
-        mov r10, r15
+        mov r10, r8
         add r10, imm32(rb_control_frame_struct.size)
         mov m64(rdi, rb_execution_context_t.offsetof("cfp")), r10
 
