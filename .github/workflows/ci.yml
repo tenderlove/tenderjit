@@ -1,0 +1,35 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu, macos]
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install libcapstone Linux
+        if: matrix.os == 'ubuntu'
+        run: |
+            sudo apt-get update -y
+            sudo apt-get install -y libcapstone-dev
+
+      - name: Install libcapstone macOS
+        if: matrix.os == 'macos'
+        run: |
+            brew update
+            brew install capstone
+
+      - name: Set up Ruby
+        uses: tenderlove/setup-ruby@958450b9580ab6dae181237d74f1ecbb1d3b9a4b
+        with:
+          ruby-version: "3.0.2"
+      - name: Install dependencies
+        run: bundle install
+      - name: Run tests
+        run: bundle exec rake test
