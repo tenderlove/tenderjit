@@ -177,7 +177,7 @@ class TenderJIT
       File.join RbConfig::CONFIG["prefix"], "lib", RbConfig::CONFIG["LIBRUBY"]
     end
 
-    module MachOSystem
+    module System
       class Base
         def process
           constants = {}
@@ -202,245 +202,225 @@ class TenderJIT
 
           Internals.new(find_symbols, constants, structs, unions)
         end
+      end
 
-        private
+      module MachO
+        class Base < System::Base
+          private
 
-        def each_compile_unit
-          each_object_file do |f|
-            # Get the DWARF info from each object file
-            macho = OdinFlex::MachO.new f
+          def each_compile_unit
+            each_object_file do |f|
+              # Get the DWARF info from each object file
+              macho = OdinFlex::MachO.new f
 
-            info = strs = abbr = nil
+              info = strs = abbr = nil
 
-            macho.each do |thing|
-              if thing.section?
-                case thing.sectname
-                when "__debug_info"
-                  info = thing.as_dwarf
-                when "__debug_str"
-                  strs = thing.as_dwarf
-                when "__debug_abbrev"
-                  abbr = thing.as_dwarf
-                else
+              macho.each do |thing|
+                if thing.section?
+                  case thing.sectname
+                  when "__debug_info"
+                    info = thing.as_dwarf
+                  when "__debug_str"
+                    strs = thing.as_dwarf
+                  when "__debug_abbrev"
+                    abbr = thing.as_dwarf
+                  else
+                  end
                 end
+
+                break if info && strs && abbr
               end
 
-              break if info && strs && abbr
-            end
-
-            if info && strs && abbr
-              info.compile_units(abbr.tags).each do |unit|
-                yield unit, strs
+              if info && strs && abbr
+                info.compile_units(abbr.tags).each do |unit|
+                  yield unit, strs
+                end
               end
             end
           end
-        end
 
-        def find_symbols
-          symbol_addresses = {}
+          def find_symbols
+            symbol_addresses = {}
 
-          File.open symbol_file do |f|
-            my_macho = OdinFlex::MachO.new f
+            File.open symbol_file do |f|
+              my_macho = OdinFlex::MachO.new f
 
-            my_macho.each do |section|
-              if section.symtab?
-                section.nlist.each do |item|
-                  unless item.archive?
-                    name = item.name.delete_prefix(RbConfig::CONFIG["SYMBOL_PREFIX"])
-                    symbol_addresses[name] = item.value if item.value > 0
+              my_macho.each do |section|
+                if section.symtab?
+                  section.nlist.each do |item|
+                    unless item.archive?
+                      name = item.name.delete_prefix(RbConfig::CONFIG["SYMBOL_PREFIX"])
+                      symbol_addresses[name] = item.value if item.value > 0
+                    end
                   end
                 end
               end
             end
-          end
 
-          # Fix up addresses due to ASLR
-          slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - symbol_addresses.fetch("rb_st_insert")
-          symbol_addresses.transform_values! { |v| v + slide }
+            # Fix up addresses due to ASLR
+            slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - symbol_addresses.fetch("rb_st_insert")
+            symbol_addresses.transform_values! { |v| v + slide }
 
-          symbol_addresses
-        end
-      end
-
-      class SharedObject < Base
-        attr_reader :symbol_file
-
-        def initialize libruby
-          @symbol_file = libruby
-        end
-
-        private
-
-        def each_object_file
-          # Find all object files from the shared object
-          object_files = File.open(symbol_file) do |f|
-            my_macho = OdinFlex::MachO.new f
-            my_macho.find_all(&:symtab?).flat_map do |section|
-              section.nlist.find_all(&:oso?).map(&:name)
-            end
-          end
-
-          object_files.grep(/(?:debug|iseq|gc|st|vm|mjit)\.[oc]$/).each do |f|
-            File.open(f) { |fd| yield fd }
+            symbol_addresses
           end
         end
-      end
 
-      class Archive < Base
-        attr_reader :symbol_file
+        class SharedObject < Base
+          attr_reader :symbol_file
 
-        def initialize ruby_archive
-          @ruby_archive = ruby_archive
-          @symbol_file = RbConfig.ruby
-        end
-
-        private
-
-        def each_object_file
-          File.open @ruby_archive do |archive|
-            ar = OdinFlex::AR.new archive
-            ar.each do |object_file|
-              next unless object_file.identifier =~ /(?:debug|iseq|gc|st|vm|mjit)\.[oc]$/
-
-              yield archive
-            end
+          def initialize libruby
+            @symbol_file = libruby
           end
-        end
-      end
-    end
 
-    module ELFSystem
-      ELFAdapter = Struct.new(:offset, :size)
+          private
 
-      class Base
-        def process
-          constants = {}
-          structs = {}
-          unions = {}
-
-          each_compile_unit do |cu, strings|
-            case cu.die.name(strings)
-            when "debug.c"
-              cu.die.find_all { |x| x.tag.enumerator? }.each do |enum|
-                name = enum.name(strings).delete_prefix("RUBY_")
-                constants[name] = enum.const_value
+          def each_object_file
+            # Find all object files from the shared object
+            object_files = File.open(symbol_file) do |f|
+              my_macho = OdinFlex::MachO.new f
+              my_macho.find_all(&:symtab?).flat_map do |section|
+                section.nlist.find_all(&:oso?).map(&:name)
               end
+            end
+
+            object_files.grep(/(?:debug|iseq|gc|st|vm|mjit)\.[oc]$/).each do |f|
+              File.open(f) { |fd| yield fd }
+            end
+          end
+        end
+
+        class Archive < Base
+          attr_reader :symbol_file
+
+          def initialize ruby_archive
+            @ruby_archive = ruby_archive
+            @symbol_file = RbConfig.ruby
+          end
+
+          private
+
+          def each_object_file
+            File.open @ruby_archive do |archive|
+              ar = OdinFlex::AR.new archive
+              ar.each do |object_file|
+                next unless object_file.identifier =~ /(?:debug|iseq|gc|st|vm|mjit)\.[oc]$/
+
+                yield archive
+              end
+            end
+          end
+        end
+      end
+
+      module ELF
+        ELFAdapter = Struct.new(:offset, :size)
+
+        class Base < System::Base
+          private
+
+          SHF_COMPRESSED = 1 << 11
+
+          def read_section klass, file, section
+            klass.new(file, ELFAdapter.new(section.header.sh_offset,
+                                           section.header.sh_size), 0)
+          end
+
+          def read_compressed klass, file, section
+            require "zlib"
+            require "stringio"
+
+            elf64_Chdr = [
+              Fiddle::SIZEOF_INT, # Elf64_Word   ch_type;        /* Compression format.  */
+              Fiddle::SIZEOF_INT, # Elf64_Word   ch_reserved;
+              Fiddle::SIZEOF_LONG, # Elf64_Xword  ch_size;        /* Uncompressed data size.  */
+              Fiddle::SIZEOF_LONG, # Elf64_Xword  ch_addralign;   /* Uncompressed data alignment.  */
+            ]
+
+            file.seek section.header.sh_offset, IO::SEEK_SET
+
+            # Zlib info is _after_ the chdr header
+            #type, _, size, align = file.read(elf64_Chdr.inject(:+)).unpack("IILL")
+            _, _, size, _ = file.read(elf64_Chdr.inject(:+)).unpack("IILL")
+
+            data = file.read section.header.sh_size
+
+            data = Zlib.inflate(data)
+
+            raise "Wrong data size" unless data.bytesize == size
+
+            file = StringIO.new data
+
+            klass.new(file, ELFAdapter.new(0, size), 0)
+          end
+
+          def read_dwarf section_name, klass, elf, file
+            section  = elf.section_by_name(section_name)
+            if section.header.sh_flags & SHF_COMPRESSED == SHF_COMPRESSED
+              read_compressed klass, file, section
             else
-              builder = TypeBuilder.new(cu, strings)
-              builder.build
-              structs.merge! builder.structs
-              unions.merge! builder.unions
-              constants.merge! builder.enums
+              read_section klass, file, section
             end
           end
 
-          Internals.new(find_symbols, constants, structs, unions)
-        end
+          def each_compile_unit
+            File.open(@dwarf_file) do |f|
+              elf = ELFTools::ELFFile.new f
 
-        private
+              info = read_dwarf ".debug_info", WORF::DebugInfo, elf, f
+              abbr = read_dwarf ".debug_abbrev", WORF::DebugAbbrev, elf, f
+              strs = read_dwarf ".debug_str", WORF::DebugStrings, elf, f
 
-        SHF_COMPRESSED = 1 << 11
-
-        def read_section klass, file, section
-          klass.new(file, ELFAdapter.new(section.header.sh_offset,
-                                         section.header.sh_size), 0)
-        end
-
-        def read_compressed klass, file, section
-          require "zlib"
-          require "stringio"
-
-          elf64_Chdr = [
-            Fiddle::SIZEOF_INT, # Elf64_Word   ch_type;        /* Compression format.  */
-            Fiddle::SIZEOF_INT, # Elf64_Word   ch_reserved;
-            Fiddle::SIZEOF_LONG, # Elf64_Xword  ch_size;        /* Uncompressed data size.  */
-            Fiddle::SIZEOF_LONG, # Elf64_Xword  ch_addralign;   /* Uncompressed data alignment.  */
-          ]
-
-          file.seek section.header.sh_offset, IO::SEEK_SET
-
-          # Zlib info is _after_ the chdr header
-          #type, _, size, align = file.read(elf64_Chdr.inject(:+)).unpack("IILL")
-          _, _, size, _ = file.read(elf64_Chdr.inject(:+)).unpack("IILL")
-
-          data = file.read section.header.sh_size
-
-          data = Zlib.inflate(data)
-
-          raise "Wrong data size" unless data.bytesize == size
-
-          file = StringIO.new data
-
-          klass.new(file, ELFAdapter.new(0, size), 0)
-        end
-
-        def read_dwarf section_name, klass, elf, file
-          section  = elf.section_by_name(section_name)
-          if section.header.sh_flags & SHF_COMPRESSED == SHF_COMPRESSED
-            read_compressed klass, file, section
-          else
-            read_section klass, file, section
-          end
-        end
-
-        def each_compile_unit
-          File.open(@dwarf_file) do |f|
-            elf = ELFTools::ELFFile.new f
-
-            info = read_dwarf ".debug_info", WORF::DebugInfo, elf, f
-            abbr = read_dwarf ".debug_abbrev", WORF::DebugAbbrev, elf, f
-            strs = read_dwarf ".debug_str", WORF::DebugStrings, elf, f
-
-            info.compile_units(abbr.tags).each do |unit|
-              name = unit.die.name(strs)
-              next unless name =~ /(?:debug|iseq|gc|st|vm|mjit)\.[oc]$/
-              yield unit, strs
-            end
-          end
-        end
-
-        def find_symbols
-          symbol_addresses = {}
-
-          File.open(@symbol_file) do |f|
-            elf = ELFTools::ELFFile.new f
-            symtab_section = elf.section_by_name '.symtab'
-            symtab_section.symbols.each do |item|
-              name = item.name.delete_prefix(RbConfig::CONFIG["SYMBOL_PREFIX"])
-              val = item.header.st_value
-              symbol_addresses[name] = val
+              info.compile_units(abbr.tags).each do |unit|
+                name = unit.die.name(strs)
+                next unless name =~ /(?:debug|iseq|gc|st|vm|mjit)\.[oc]$/
+                yield unit, strs
+              end
             end
           end
 
-          # Fix up addresses due to ASLR
-          slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - symbol_addresses.fetch("rb_st_insert")
-          symbol_addresses.transform_values! { |v| v + slide }
+          def find_symbols
+            symbol_addresses = {}
 
-          symbol_addresses
+            File.open(@symbol_file) do |f|
+              elf = ELFTools::ELFFile.new f
+              symtab_section = elf.section_by_name '.symtab'
+              symtab_section.symbols.each do |item|
+                name = item.name.delete_prefix(RbConfig::CONFIG["SYMBOL_PREFIX"])
+                val = item.header.st_value
+                symbol_addresses[name] = val
+              end
+            end
+
+            # Fix up addresses due to ASLR
+            slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - symbol_addresses.fetch("rb_st_insert")
+            symbol_addresses.transform_values! { |v| v + slide }
+
+            symbol_addresses
+          end
         end
-      end
 
-      class SharedObject < Base
-        def initialize ruby_so
-          @symbol_file = ruby_so
-          @dwarf_file = ruby_so
+        class SharedObject < Base
+          def initialize ruby_so
+            @symbol_file = ruby_so
+            @dwarf_file = ruby_so
+          end
         end
-      end
 
-      class Archive < Base
-        def initialize ruby_archive
-          @symbol_file = RbConfig.ruby
-          @dwarf_file = RbConfig.ruby
+        class Archive < Base
+          def initialize ruby_archive
+            @symbol_file = RbConfig.ruby
+            @dwarf_file = RbConfig.ruby
+          end
         end
       end
     end
 
     def self.get_internals
       base_system = if RUBY_PLATFORM =~ /darwin/
-                      MachOSystem
+                      System::MachO
                     else
                       require "elftools"
-                      ELFSystem
+                      System::ELF
                     end
 
       # Ruby was built as a shared object.  We'll ask it for symbols
