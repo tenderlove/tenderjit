@@ -69,6 +69,35 @@ class TenderJIT
       end
 
       module Clang
+        def self.read_instruction_op_types symbol_addresses
+          # FIXME: this needs to be tested on Linux, certainly the name will be
+          # different.
+          op_types = symbol_addresses.fetch("insn_op_types.x")
+
+          insn_map = symbol_addresses.fetch("insn_op_types.y")
+
+          # FIXME: we should use DWARF data to figure out the array type rather
+          # than hardcoding "sizeof short" below
+          len  = RubyVM::INSTRUCTION_NAMES.length
+          l = Fiddle::Pointer.new(insn_map)[0, len * Fiddle::SIZEOF_SHORT].unpack("S#{len}")
+          str_buffer_end = l.last
+
+          while Fiddle::Pointer.new(op_types + str_buffer_end)[0] != 0
+            str_buffer_end += 1
+          end
+          Fiddle::Pointer.new(op_types)[0, str_buffer_end].unpack("Z*" * len)
+        end
+
+        def self.read_instruction_lengths symbol_addresses
+          # FIXME: this needs to be tested on Linux, certainly the name will be
+          # different.
+          addr = symbol_addresses.fetch("insn_len.t")
+
+          # FIXME: we should use DWARF data to figure out the array type rather
+          # than hardcoding "sizeof char" below
+          len  = RubyVM::INSTRUCTION_NAMES.length
+          Fiddle::Pointer.new(addr)[0, len * Fiddle::SIZEOF_CHAR].unpack("C#{len}")
+        end
       end
 
       def initialize symbol_addresses, constants, structs, unions
@@ -78,8 +107,8 @@ class TenderJIT
         @unions               = unions
 
         decoder = case RbConfig::CONFIG["CC"]
-                  when "clang" then Clang
-                  when "gcc" then  GCC
+                  when /^clang/ then Clang
+                  when /^gcc/ then GCC
                   else
                     raise NotImplementedError, "Unknown compiler #{RbConfig::CONFIG["CC"]}"
                   end
@@ -125,36 +154,6 @@ class TenderJIT
 
       def insn_op_types encoded_name
         @insn_to_ops.fetch encoded_name
-      end
-
-      def read_instruction_op_types symbol_addresses
-        # FIXME: this needs to be tested on Linux, certainly the name will be
-        # different.
-        op_types = symbol_addresses.fetch("insn_op_types.x")
-
-        insn_map = symbol_addresses.fetch("insn_op_types.y")
-
-        # FIXME: we should use DWARF data to figure out the array type rather
-        # than hardcoding "sizeof short" below
-        len  = RubyVM::INSTRUCTION_NAMES.length
-        l = Fiddle::Pointer.new(insn_map)[0, len * SIZEOF_SHORT].unpack("S#{len}")
-        str_buffer_end = l.last
-
-        while Fiddle::Pointer.new(op_types + str_buffer_end)[0] != 0
-          str_buffer_end += 1
-        end
-        Fiddle::Pointer.new(op_types)[0, str_buffer_end].unpack("Z*" * len)
-      end
-
-      def read_instruction_lengths symbol_addresses
-        # FIXME: this needs to be tested on Linux, certainly the name will be
-        # different.
-        addr = symbol_addresses.fetch("insn_len.t")
-
-        # FIXME: we should use DWARF data to figure out the array type rather
-        # than hardcoding "sizeof char" below
-        len  = RubyVM::INSTRUCTION_NAMES.length
-        Fiddle::Pointer.new(addr)[0, len * SIZEOF_CHAR].unpack("C#{len}")
       end
 
       def read_encoded_instructions symbol_addresses
