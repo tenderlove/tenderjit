@@ -14,22 +14,6 @@ class TenderJIT
 
       attr_reader :encoded_instructions, :instruction_lengths
 
-      class Fiddle::Function
-        def to_proc
-          this = self
-          lambda { |*args| this.call(*args) }
-        end
-      end unless Function.method_defined?(:to_proc)
-
-      def self.make_function name, args, ret
-        ptr = Handle::DEFAULT[name]
-        func = Function.new ptr, args, ret, name: name
-        define_method name, &func.to_proc
-      end
-
-      make_function "rb_id2sym", [TYPE_INT], TYPE_VOIDP
-      make_function "rb_callable_method_entry", [TYPE_VOIDP, TYPE_INT], TYPE_VOIDP
-
       module GCC
         def self.read_instruction_lengths symbol_addresses
           # Instruction length tables seem to be compiled with numbers, and

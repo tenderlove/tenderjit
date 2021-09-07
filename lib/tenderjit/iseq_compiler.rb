@@ -776,7 +776,7 @@ class TenderJIT
       ## Compile the target method
       klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
 
-      cme_ptr = rb.rb_callable_method_entry(klass, mid)
+      cme_ptr = CFuncs.rb_callable_method_entry(klass, mid)
       if cme_ptr.null?
         patch_source_jump jit_buffer, at: patch_loc, to: compile_request.overflow_exit
         return compile_request.overflow_exit
