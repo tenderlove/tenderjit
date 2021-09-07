@@ -329,33 +329,7 @@ class TenderJIT
     module ELFSystem
       ELFAdapter = Struct.new(:offset, :size)
 
-      # ELFTools doesn't seem to deal with ELF files that are in the middle
-      # of a stream, for example a `.a` file.  This adapter class just tricks
-      # ELFTools in to thinking each file in the `.a` is at position 0
-      class IOAdapter
-        def initialize io
-          @pos = io.pos
-          @io  = io
-        end
-
-        def pos= v
-          @io.pos = @pos + v
-        end
-
-        def pos
-          @io.pos - @pos
-        end
-
-        def read bytes
-          @io.read bytes
-        end
-      end
-
-      class Archive
-        def initialize ruby_archive
-          @ruby_archive = ruby_archive
-        end
-
+      class Base
         def process
           constants = {}
           structs = {}
@@ -382,21 +356,57 @@ class TenderJIT
 
         private
 
+        SHF_COMPRESSED = 1 << 11
+
+        def read_section klass, file, section
+          klass.new(file, ELFAdapter.new(section.header.sh_offset,
+                                         section.header.sh_size), 0)
+        end
+
+        def read_compressed klass, file, section
+          require "zlib"
+          require "stringio"
+
+          elf64_Chdr = [
+            Fiddle::SIZEOF_INT, # Elf64_Word   ch_type;        /* Compression format.  */
+            Fiddle::SIZEOF_INT, # Elf64_Word   ch_reserved;
+            Fiddle::SIZEOF_LONG, # Elf64_Xword  ch_size;        /* Uncompressed data size.  */
+            Fiddle::SIZEOF_LONG, # Elf64_Xword  ch_addralign;   /* Uncompressed data alignment.  */
+          ]
+
+          file.seek section.header.sh_offset, IO::SEEK_SET
+
+          # Zlib info is _after_ the chdr header
+          #type, _, size, align = file.read(elf64_Chdr.inject(:+)).unpack("IILL")
+          _, _, size, _ = file.read(elf64_Chdr.inject(:+)).unpack("IILL")
+
+          data = file.read section.header.sh_size
+
+          data = Zlib.inflate(data)
+
+          raise "Wrong data size" unless data.bytesize == size
+
+          file = StringIO.new data
+
+          klass.new(file, ELFAdapter.new(0, size), 0)
+        end
+
+        def read_dwarf section_name, klass, elf, file
+          section  = elf.section_by_name(section_name)
+          if section.header.sh_flags & SHF_COMPRESSED == SHF_COMPRESSED
+            read_compressed klass, file, section
+          else
+            read_section klass, file, section
+          end
+        end
+
         def each_compile_unit
-          File.open(RbConfig.ruby) do |f|
+          File.open(@dwarf_file) do |f|
             elf = ELFTools::ELFFile.new f
-            debug_info   = elf.section_by_name(".debug_info")
-            debug_abbrev = elf.section_by_name(".debug_abbrev")
-            debug_str    = elf.section_by_name(".debug_str")
 
-            info = WORF::DebugInfo.new(f, ELFAdapter.new(debug_info.header.sh_offset,
-                                                         debug_info.header.sh_size), 0)
-
-            abbr = WORF::DebugAbbrev.new(f, ELFAdapter.new(debug_abbrev.header.sh_offset,
-                                                           debug_abbrev.header.sh_size), 0)
-
-            strs = WORF::DebugStrings.new(f, ELFAdapter.new(debug_str.header.sh_offset,
-                                                            debug_str.header.sh_size), 0)
+            info = read_dwarf ".debug_info", WORF::DebugInfo, elf, f
+            abbr = read_dwarf ".debug_abbrev", WORF::DebugAbbrev, elf, f
+            strs = read_dwarf ".debug_str", WORF::DebugStrings, elf, f
 
             info.compile_units(abbr.tags).each do |unit|
               name = unit.die.name(strs)
@@ -406,21 +416,10 @@ class TenderJIT
           end
         end
 
-        def each_object_file
-          File.open @ruby_archive do |archive|
-            ar = OdinFlex::AR.new archive
-            ar.each do |object_file|
-              next unless object_file.identifier =~ /(?:debug|iseq|gc|st|vm|mjit)\.[oc]$/
-
-              yield archive
-            end
-          end
-        end
-
         def find_symbols
           symbol_addresses = {}
 
-          File.open(RbConfig.ruby) do |f|
+          File.open(@symbol_file) do |f|
             elf = ELFTools::ELFFile.new f
             symtab_section = elf.section_by_name '.symtab'
             symtab_section.symbols.each do |item|
@@ -435,6 +434,20 @@ class TenderJIT
           symbol_addresses.transform_values! { |v| v + slide }
 
           symbol_addresses
+        end
+      end
+
+      class SharedObject < Base
+        def initialize ruby_so
+          @symbol_file = ruby_so
+          @dwarf_file = ruby_so
+        end
+      end
+
+      class Archive < Base
+        def initialize ruby_archive
+          @symbol_file = RbConfig.ruby
+          @dwarf_file = RbConfig.ruby
         end
       end
     end
