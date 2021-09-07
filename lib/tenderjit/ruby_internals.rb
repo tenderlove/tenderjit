@@ -186,6 +186,10 @@ class TenderJIT
       File.join RbConfig::CONFIG["prefix"], "lib", RbConfig::CONFIG["LIBRUBY_A"]
     end
 
+    def self.ruby_so
+      File.join RbConfig::CONFIG["prefix"], "lib", RbConfig::CONFIG["LIBRUBY_SO"]
+    end
+
     def self.libruby
       File.join RbConfig::CONFIG["prefix"], "lib", RbConfig::CONFIG["LIBRUBY"]
     end
@@ -444,7 +448,7 @@ class TenderJIT
                     end
 
       # Ruby was built as a shared object.  We'll ask it for symbols
-      info_strat = if libruby.end_with?(RbConfig::CONFIG["SOEXT"])
+      info_strat = if libruby == ruby_so
                      base_system.const_get(:SharedObject).new(libruby)
                    else
                      base_system.const_get(:Archive).new(ruby_archive)
