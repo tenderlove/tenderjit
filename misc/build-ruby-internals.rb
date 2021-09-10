@@ -7,6 +7,10 @@ module Layout
     def has_autorefs?; children.any?(&:autoref?); end
     def bitfields; children.select(&:bitfield?); end
     def autorefs; children.select(&:autoref?); end
+
+    def anonymous?
+      name == "__anonymous"
+    end
   end
 
   class CStruct < CObject; end
@@ -184,7 +188,8 @@ module Layout
       structs.each do |layout|
         layout.structs.each do |struct|
           next if struct.children.empty?
-          name = struct.name
+          name = struct.anonymous? ? struct.aliases.first : struct.name
+          raise unless name
           next if seen.key? name
           seen[name] = true
           io.puts "    STRUCTS[#{name.dump}] ="
@@ -339,7 +344,7 @@ module Layout
         }.map { |x| x.name(strs) }
 
         children = die.children.find_all { |child| child.tag.member? }.map do |child|
-          member_name = child.name(strs) || raise
+          member_name = child.name(strs) || "__unknown_member"
 
           type_die = find_type_die(child, all_dies)
 
