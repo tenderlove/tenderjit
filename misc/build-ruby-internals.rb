@@ -189,7 +189,7 @@ module Layout
         layout.structs.each do |struct|
           next if struct.children.empty?
           name = struct.anonymous? ? struct.aliases.first : struct.name
-          raise unless name
+          next unless name
           next if seen.key? name
           seen[name] = true
           io.puts "    STRUCTS[#{name.dump}] ="
