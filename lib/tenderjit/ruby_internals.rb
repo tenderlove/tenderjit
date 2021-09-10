@@ -179,19 +179,27 @@ class TenderJIT
 
     module System
       class Base
-        def process
+        def process folder
           constants = {}
           structs = {}
           unions = {}
 
+          layouts = []
+          enums = []
+
           each_compile_unit do |cu, strings|
             case cu.die.name(strings)
             when "debug.c"
+              enums << Layout::Enums.add(cu, strings)
+
               cu.die.find_all { |x| x.tag.enumerator? }.each do |enum|
                 name = enum.name(strings).delete_prefix("RUBY_")
                 constants[name] = enum.const_value
               end
             else
+              layouts << Layout::Structs.add(cu, strings)
+              enums << Layout::Enums.add(cu, strings)
+
               builder = TypeBuilder.new(cu, strings)
               builder.build
               structs.merge! builder.structs
@@ -200,7 +208,26 @@ class TenderJIT
             end
           end
 
-          Internals.new(find_symbols, constants, structs, unions)
+          symbols = find_symbols
+          emitter = Layout::Emitter.new
+
+          File.open("lib/tenderjit/ruby/#{folder}/symbols.rb", "w") { |f|
+            f.puts "# frozen_string_literal: true"
+            f.puts
+            emitter.emit_symbols symbols, io: f
+          }
+
+          File.open("lib/tenderjit/ruby/#{folder}/constants.rb", "w") { |f|
+            f.puts "# frozen_string_literal: true"
+            f.puts
+            emitter.emit_constants enums, io: f
+          }
+
+          File.open("lib/tenderjit/ruby/#{folder}/structs.rb", "w") { |f|
+            f.puts "# frozen_string_literal: true"
+            f.puts
+            emitter.emit_structs layouts, io: f
+          }
         end
       end
 
@@ -415,7 +442,7 @@ class TenderJIT
       end
     end
 
-    def self.get_internals
+    def self.get_internals folder
       base_system = if RUBY_PLATFORM =~ /darwin/
                       System::MachO
                     else
@@ -430,7 +457,7 @@ class TenderJIT
                      base_system.const_get(:Archive).new(ruby_archive)
                    end
 
-      info_strat.process
+      info_strat.process folder
     end
 
     class TypeBuilder

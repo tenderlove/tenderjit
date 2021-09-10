@@ -1,3 +1,7 @@
+require "digest/md5"
+require "rake/testtask"
+require "rake/clean"
+
 file 'lib/tendertools/dwarf/constants.rb' => ['lib/tendertools/dwarf/constants.yml', 'lib/tendertools/dwarf/constants.erb'] do |t|
   require 'psych'
   require 'erb'
@@ -28,7 +32,18 @@ end
   test_file
 end
 
-require "rake/testtask"
+folder = Digest::MD5.hexdigest(RUBY_DESCRIPTION)[0, 5]
+
+gen_files = %w{ constants structs symbols }.map { |name|
+  "lib/tenderjit/ruby/#{folder}/#{name}.rb"
+}
+
+file gen_files.first do |t|
+  FileUtils.mkdir_p("lib/tenderjit/ruby/#{folder}")
+  ruby %{-I lib misc/build-ruby-internals.rb #{folder}}
+end
+
+task :compile => gen_files.first
 
 Rake::TestTask.new do |t|
   t.libs << "test"
@@ -38,4 +53,6 @@ Rake::TestTask.new do |t|
 end
 
 task :default => 'lib/tendertools/dwarf/constants.rb'
-task :test => test_files
+task :test => test_files + [:compile]
+
+CLEAN.include "lib/tenderjit/ruby"

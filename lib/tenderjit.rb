@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "tenderjit/ruby_internals"
+require "tenderjit/ruby"
 require "tenderjit/fiddle_hacks"
 require "tenderjit/exit_code"
 require "tenderjit/deferred_compilations"
@@ -15,7 +15,7 @@ class TenderJIT
   REG_CFP = Fisk::Registers::R14
   REG_BP  = Fisk::Registers::R15
 
-  Internals = RubyInternals.get_internals
+  Internals = Ruby::INSTANCE
 
   # Struct layouts
 

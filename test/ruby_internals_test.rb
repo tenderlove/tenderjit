@@ -7,7 +7,7 @@ class TenderJIT
     attr_reader :rb
     def setup
       super
-      @rb = RubyInternals.get_internals
+      @rb = Ruby::INSTANCE
     end
 
     def test_RUBY_T_
