@@ -12,8 +12,20 @@ require "tenderjit/ruby/#{folder}/insn_info"
 
 class TenderJIT
   class Ruby
-    def initialize insn_info
-      @insn_info = insn_info
+    def self.read_encoded_instructions
+      addr = Ruby::SYMBOLS["rb_vm_get_insns_address_table"]
+      func = Fiddle::Function.new(addr, [], Fiddle::TYPE_VOIDP)
+      buf  = func.call
+      len  = RubyVM::INSTRUCTION_NAMES.length
+      buf[0, len * Fiddle::SIZEOF_VOIDP].unpack("Q#{len}")
+    end
+
+    def initialize
+      encoded_instructions = self.class.read_encoded_instructions
+
+      @insn_to_name         = Hash[encoded_instructions.zip(RubyVM::INSTRUCTION_NAMES)]
+      @insn_len             = Hash[encoded_instructions.zip(Ruby::INSN_LENGTHS)]
+      @insn_to_ops          = Hash[encoded_instructions.zip(Ruby::INSN_OP_TYPES)]
     end
 
     def struct name
@@ -32,16 +44,16 @@ class TenderJIT
       Ruby.constants
     end
 
-    def insn_name insn
-      @insn_info.insn_name insn
+    def insn_name encoded_name
+      @insn_to_name.fetch encoded_name
     end
 
-    def insn_len x
-      @insn_info.insn_len x
+    def insn_len encoded_name
+      @insn_len.fetch encoded_name
     end
 
-    def insn_op_types x
-      @insn_info.insn_op_types x
+    def insn_op_types encoded_name
+      @insn_to_ops.fetch encoded_name
     end
 
     def RB_IMMEDIATE_P obj_addr
@@ -66,40 +78,6 @@ class TenderJIT
       RBasic.flags(obj_addr) & RUBY_T_MASK
     end
 
-    class InsnInfo
-      def self.read_encoded_instructions symbol_addresses
-        addr = symbol_addresses["rb_vm_get_insns_address_table"]
-        func = Fiddle::Function.new(addr, [], Fiddle::TYPE_VOIDP)
-        buf  = func.call
-        len  = RubyVM::INSTRUCTION_NAMES.length
-        buf[0, len * Fiddle::SIZEOF_VOIDP].unpack("Q#{len}")
-      end
-
-      def initialize
-        symbol_addresses = Ruby::SYMBOLS
-
-        @encoded_instructions = self.class.read_encoded_instructions(symbol_addresses)
-        @instruction_lengths  = Ruby::INSN_LENGTHS
-        @instruction_ops      = Ruby::INSN_OP_TYPES
-
-        @insn_to_name         = Hash[@encoded_instructions.zip(RubyVM::INSTRUCTION_NAMES)]
-        @insn_len             = Hash[@encoded_instructions.zip(@instruction_lengths)]
-        @insn_to_ops          = Hash[@encoded_instructions.zip(@instruction_ops)]
-      end
-
-      def insn_name encoded_name
-        @insn_to_name.fetch encoded_name
-      end
-
-      def insn_len encoded_name
-        @insn_len.fetch encoded_name
-      end
-
-      def insn_op_types encoded_name
-        @insn_to_ops.fetch encoded_name
-      end
-    end
-
-    INSTANCE = Ruby.new InsnInfo.new
+    INSTANCE = Ruby.new
   end
 end
