@@ -133,20 +133,26 @@ module Layout
       <%= "  " * indent %>})
     eoerb
 
+    def emit_insn_info insn_lengths, insn_op_types, io: $stdout
+      io.puts "class TenderJIT"
+      io.puts "  class Ruby"
+      io.print "    INSN_LENGTHS = "
+      io.puts PP.pp(insn_lengths, '').chomp
+      io.print "    INSN_OP_TYPES = "
+      io.puts PP.pp(insn_op_types, '').chomp
+      io.puts "  end"
+      io.puts "end"
+    end
+
     def emit_symbols symbols, io: $stdout
       require "pp"
       io.puts "require \"fiddle\""
       io.puts "class TenderJIT"
       io.puts "  class Ruby"
       str = <<~eorb
-      def self.adjust_addresses syms
-        slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - syms.fetch("rb_st_insert")
-        syms.transform_values! { |v| v + slide }
-        syms
-      end
       eorb
       io.puts(indent(str, 4))
-      io.print "    SYMBOLS = adjust_addresses("
+      io.print "    SYMBOLS = Fiddle.adjust_addresses("
       io.print PP.pp(symbols, '').chomp
       io.puts ")"
       io.puts "  end"

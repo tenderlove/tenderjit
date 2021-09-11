@@ -4,9 +4,11 @@ require "digest/md5"
 
 folder = Digest::MD5.hexdigest(RUBY_DESCRIPTION)[0, 5]
 
+require "tenderjit/fiddle_hacks"
 require "tenderjit/ruby/#{folder}/structs"
 require "tenderjit/ruby/#{folder}/symbols"
 require "tenderjit/ruby/#{folder}/constants"
+require "tenderjit/ruby/#{folder}/insn_info"
 
 class TenderJIT
   class Ruby
@@ -64,88 +66,7 @@ class TenderJIT
       RBasic.flags(obj_addr) & RUBY_T_MASK
     end
 
-    module GCC
-      def self.read_instruction_lengths symbol_addresses
-        # Instruction length tables seem to be compiled with numbers, and
-        # embedded multiple times. Try to find the first one that has
-        # the data we need
-        symbol_addresses.keys.grep(/^t\.\d+/).each do |key|
-          addr = symbol_addresses.fetch(key)
-          len  = RubyVM::INSTRUCTION_NAMES.length
-          list = Fiddle::Pointer.new(addr)[0, len * Fiddle::SIZEOF_CHAR].unpack("C#{len}")
-
-          # This is probably it
-          if list.first(4) == [1, 3, 3, 3]
-            return list
-          end
-        end
-      end
-
-      def self.read_instruction_op_types symbol_addresses
-        len  = RubyVM::INSTRUCTION_NAMES.length
-
-        map = symbol_addresses.keys.grep(/^y\.\d+/).each do |key|
-          insn_map = symbol_addresses.fetch(key)
-          l = Fiddle::Pointer.new(insn_map)[0, len * Fiddle::SIZEOF_SHORT].unpack("S#{len}")
-          break l if l.first(4) == [0, 1, 4, 7] # probably the right one
-        end
-
-        key = symbol_addresses.keys.grep(/^x\.\d+/).first
-        op_types = symbol_addresses.fetch(key)
-
-        str_buffer_end = map.last
-
-        while Fiddle::Pointer.new(op_types + str_buffer_end)[0] != 0
-          str_buffer_end += 1
-        end
-        Fiddle::Pointer.new(op_types)[0, str_buffer_end].unpack("Z*" * len)
-      end
-    end
-
-    module Clang
-      def self.read_instruction_op_types symbol_addresses
-        # FIXME: this needs to be tested on Linux, certainly the name will be
-        # different.
-        op_types = symbol_addresses.fetch("insn_op_types.x")
-
-        insn_map = symbol_addresses.fetch("insn_op_types.y")
-
-        # FIXME: we should use DWARF data to figure out the array type rather
-        # than hardcoding "sizeof short" below
-        len  = RubyVM::INSTRUCTION_NAMES.length
-        l = Fiddle::Pointer.new(insn_map)[0, len * Fiddle::SIZEOF_SHORT].unpack("S#{len}")
-        str_buffer_end = l.last
-
-        while Fiddle::Pointer.new(op_types + str_buffer_end)[0] != 0
-          str_buffer_end += 1
-        end
-        Fiddle::Pointer.new(op_types)[0, str_buffer_end].unpack("Z*" * len)
-      end
-
-      def self.read_instruction_lengths symbol_addresses
-        # FIXME: this needs to be tested on Linux, certainly the name will be
-        # different.
-        addr = symbol_addresses.fetch("insn_len.t")
-
-        # FIXME: we should use DWARF data to figure out the array type rather
-        # than hardcoding "sizeof char" below
-        len  = RubyVM::INSTRUCTION_NAMES.length
-        Fiddle::Pointer.new(addr)[0, len * Fiddle::SIZEOF_CHAR].unpack("C#{len}")
-      end
-    end
-
     class InsnInfo
-      def self.boot
-        decoder = case RbConfig::CONFIG["CC"]
-                  when /^clang/ then Clang
-                  when /^gcc/ then GCC
-                  else
-                    raise NotImplementedError, "Unknown compiler #{RbConfig::CONFIG["CC"]}"
-                  end
-
-        new decoder
-      end
-
       def self.read_encoded_instructions symbol_addresses
         addr = symbol_addresses["rb_vm_get_insns_address_table"]
         func = Fiddle::Function.new(addr, [], Fiddle::TYPE_VOIDP)
@@ -154,12 +75,12 @@ class TenderJIT
         buf[0, len * Fiddle::SIZEOF_VOIDP].unpack("Q#{len}")
       end
 
-      def initialize decoder
+      def initialize
         symbol_addresses = Ruby::SYMBOLS
 
         @encoded_instructions = self.class.read_encoded_instructions(symbol_addresses)
-        @instruction_lengths  = decoder.read_instruction_lengths(symbol_addresses)
-        @instruction_ops      = decoder.read_instruction_op_types(symbol_addresses)
+        @instruction_lengths  = Ruby::INSN_LENGTHS
+        @instruction_ops      = Ruby::INSN_OP_TYPES
 
         @insn_to_name         = Hash[@encoded_instructions.zip(RubyVM::INSTRUCTION_NAMES)]
         @insn_len             = Hash[@encoded_instructions.zip(@instruction_lengths)]
@@ -179,6 +100,6 @@ class TenderJIT
       end
     end
 
-    INSTANCE = Ruby.new InsnInfo.boot
+    INSTANCE = Ruby.new InsnInfo.new
   end
 end

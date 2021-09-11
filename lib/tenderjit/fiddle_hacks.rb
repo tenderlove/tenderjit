@@ -1,6 +1,14 @@
 # Just some additions to fiddle that maybe we should upstream?
 
+require "fiddle"
+
 module Fiddle
+  def self.adjust_addresses syms
+    slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - syms.fetch("rb_st_insert")
+    syms.transform_values! { |v| v + slide }
+    syms
+  end
+
   class CStruct
     INT_BITS = Fiddle::SIZEOF_INT * 8
 
