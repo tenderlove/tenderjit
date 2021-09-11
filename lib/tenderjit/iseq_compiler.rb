@@ -16,8 +16,11 @@ class TenderJIT
     attr_reader :blocks
 
     def initialize jit, addr
+      @iseq_path = Fiddle.dlunwrap CFuncs.rb_iseq_path(addr)
+      @iseq_label = Fiddle.dlunwrap CFuncs.rb_iseq_label(addr)
+
       if $DEBUG
-        puts "New ISEQ Compiler iseq addr: #{sprintf("%#x", addr)}"
+        puts "New ISEQ Compiler: <#{sprintf("%#x", addr)} #{@iseq_path}:#{@iseq_label}>"
       end
 
       @jit        = jit
@@ -221,8 +224,10 @@ class TenderJIT
       iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass))
       value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
 
-      if 0 == CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
-        raise NotImplementedError, "no support for unknown ivar reads"
+      if iv_index_tbl == 0 || 0 == CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
+        CFuncs.rb_ivar_set(recv, req.id, Qundef)
+        iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass))
+        CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
       end
 
       ivar_idx = value.ptr.to_int
@@ -1265,6 +1270,31 @@ class TenderJIT
 
           # Get the local value from the EP
           temp.write cfp_ptr.ep
+          temp.sub idx
+
+          # dereference the temp var
+          temp.write temp[0]
+
+          # push it on the stack
+          rt.push temp, name: :local
+        end
+
+        rt.flush
+      end
+    end
+
+    def handle_getlocal_WC_1 idx
+      with_runtime do |rt|
+        cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+        rt.temp_var do |temp|
+
+          # Get the local value from the EP
+          temp.write cfp_ptr.ep
+
+          temp.write temp[VM_ENV_DATA_INDEX_SPECVAL]
+
+          temp.and(~0x3)
+
           temp.sub idx
 
           # dereference the temp var

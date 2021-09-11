@@ -34,6 +34,11 @@ class TenderJIT
       assert_equal initial + by, thing.call
     end
 
+    def assert_has_insn method, insn:
+      iseq = RubyVM::InstructionSequence.of(method(:ok))
+      assert_includes iseq.to_a.flatten, insn
+    end
+
     def assert_jit method, compiled:, executed:, exits:
       jit = TenderJIT.new
       jit.compile method

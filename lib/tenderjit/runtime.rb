@@ -85,6 +85,10 @@ class TenderJIT
       end
     end
 
+    def and reg, num
+      @fisk.and(reg, @fisk.imm(num))
+    end
+
     def flush
       write!
       @fisk = Fisk.new
@@ -491,6 +495,10 @@ class TenderJIT
         else
           @ec.write_immediate_to_reg reg, operand
         end
+      end
+
+      def and num
+        @ec.and(reg, num)
       end
 
       def to_register

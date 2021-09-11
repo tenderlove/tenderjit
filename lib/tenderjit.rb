@@ -479,6 +479,8 @@ class TenderJIT
 
   def compile method
     rb_iseq = RubyVM::InstructionSequence.of(method)
+    return unless rb_iseq # it's a C func
+
     addr = method_to_iseq_t(rb_iseq)
     compile_iseq_t addr
   end
