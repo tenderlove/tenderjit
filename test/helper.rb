@@ -2,7 +2,6 @@ ENV["MT_NO_PLUGINS"] = "1"
 
 require "minitest/autorun"
 require "tenderjit"
-require "tenderjit/ruby_internals"
 require "rbconfig"
 require "fisk"
 require "fisk/helpers"

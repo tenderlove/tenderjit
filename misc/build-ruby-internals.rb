@@ -1,4 +1,4 @@
-require "tenderjit/ruby_internals"
+require_relative "ruby_internals"
 require "erb"
 
 module Layout
