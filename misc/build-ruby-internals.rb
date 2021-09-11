@@ -415,4 +415,4 @@ module Layout
   end
 end
 
-TenderJIT::RubyInternals.get_internals ARGV[0]
+RubyInternals.get_internals ARGV[0]
