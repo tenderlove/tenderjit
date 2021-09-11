@@ -206,7 +206,11 @@ class TenderJIT
       }
     end
 
-    CallCompileRequest = Struct.new(:call_info, :overflow_exit, :temp_stack, :current_pc, :next_pc)
+    class CallCompileRequest < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc)
+      def make_exit exits
+        exits.make_exit("opt_send_without_block", current_pc, temp_stack)
+      end
+    end
 
     IVarRequest = Struct.new(:id, :current_pc, :next_pc, :stack_loc, :deferred_entry)
 
@@ -461,7 +465,6 @@ class TenderJIT
 
       compile_request = CallCompileRequest.new
       compile_request.call_info = ci
-      compile_request.overflow_exit = exits.make_exit("opt_send_without_block", current_pc, @temp_stack.dup)
       compile_request.temp_stack = @temp_stack.dup
       compile_request.current_pc = current_pc
       compile_request.next_pc = next_pc
@@ -601,12 +604,14 @@ class TenderJIT
 
       return_loc = patch_source_jump jit_buffer, at: patch_loc
 
+      overflow_exit = compile_request.make_exit(exits)
+
       # Write next PC to CFP
       # Pop params and self from the stack
       idx = temp_stack.size - (argc + 1)
       with_runtime do |rt|
         rt.flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
-        rt.check_vm_stack_overflow compile_request.temp_stack, compile_request.overflow_exit, local_size - param_size, iseq.body.stack_max
+        rt.check_vm_stack_overflow compile_request.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
       end
 
       # `vm_push_frame`
@@ -668,11 +673,13 @@ class TenderJIT
       temp_stack = compile_request.temp_stack
       idx = temp_stack.size - (argc + 1)
 
+      overflow_exit = compile_request.make_exit(exits)
+
       ## Pop params and self from the stack
       with_runtime do |rt|
         rt.flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
 
-        rt.check_vm_stack_overflow compile_request.temp_stack, compile_request.overflow_exit, 0, 0
+        rt.check_vm_stack_overflow compile_request.temp_stack, overflow_exit, 0, 0
       end
 
       vm_push_frame(0,
@@ -730,10 +737,12 @@ class TenderJIT
       idx = temp_stack.size - (argc + 1)
       local_size = iseq.body.local_table_size - param_size
 
+      overflow_exit = compile_request.make_exit(exits)
+
       with_runtime do |rt|
         ## Pop params and self from the stack
         rt.flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
-        rt.check_vm_stack_overflow compile_request.temp_stack, compile_request.overflow_exit, local_size, iseq.body.stack_max
+        rt.check_vm_stack_overflow compile_request.temp_stack, overflow_exit, local_size, iseq.body.stack_max
       end
 
       vm_push_frame iseq.to_i,
@@ -772,6 +781,8 @@ class TenderJIT
       argc = ci.vm_ci_argc
       recv = topn(stack, ci.vm_ci_argc).to_i
 
+      overflow_exit = compile_request.make_exit(exits)
+
       if rb.RB_SPECIAL_CONST_P(recv)
         raise NotImplementedError, "no ivar reads on non-heap objects"
       end
@@ -783,8 +794,8 @@ class TenderJIT
 
       cme_ptr = CFuncs.rb_callable_method_entry(klass, mid)
       if cme_ptr.null?
-        patch_source_jump jit_buffer, at: patch_loc, to: compile_request.overflow_exit
-        return compile_request.overflow_exit
+        patch_source_jump jit_buffer, at: patch_loc, to: overflow_exit
+        return overflow_exit
       end
 
       cme = RbCallableMethodEntryT.new(cme_ptr)
@@ -801,8 +812,8 @@ class TenderJIT
       # kwargs, etc right now
       #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
       unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
-        patch_source_jump jit_buffer, at: patch_loc, to: compile_request.overflow_exit
-        return compile_request.overflow_exit
+        patch_source_jump jit_buffer, at: patch_loc, to: overflow_exit
+        return overflow_exit
       end
 
       case method_definition.type
@@ -813,8 +824,8 @@ class TenderJIT
       when VM_METHOD_TYPE_BMETHOD
         compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
       else
-        patch_source_jump jit_buffer, at: patch_loc, to: compile_request.overflow_exit
-        compile_request.overflow_exit
+        patch_source_jump jit_buffer, at: patch_loc, to: overflow_exit
+        overflow_exit
       end
     end
 
