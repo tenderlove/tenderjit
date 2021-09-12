@@ -383,8 +383,16 @@ module Layout
       end
 
       def build_array die, all_dies, strs
-        type = resolve_type find_type_die(die, all_dies), all_dies, strs
-        ArrayType.new(type, die.count + 1)
+        type_die = find_type_die(die, all_dies)
+        type = resolve_type type_die, all_dies, strs
+
+        count = die.children.first.at_count
+
+        if count
+          ArrayType.new(type, count)
+        else
+          DWARF_TO_FIDDLE.fetch "void *"
+        end
       end
 
       def resolve_type type, all_dies, strs

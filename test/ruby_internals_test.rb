@@ -134,6 +134,12 @@ class TenderJIT
       assert_equal [-Fiddle::TYPE_LONG, 3], rObject_as.types.last
     end
 
+    def test_redefined_flag_len
+      vm = rb.struct("rb_vm_t")
+      len = rb.c("BOP_LAST_")
+      assert_equal [Fiddle::TYPE_SHORT, len], vm.types.last
+    end
+
     def CheckType(ptr, type)
       (ptr.flags | TYPE_MASK) == type
     end

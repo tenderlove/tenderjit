@@ -35,7 +35,7 @@ class TenderJIT
     end
 
     def assert_has_insn method, insn:
-      iseq = RubyVM::InstructionSequence.of(method(:ok))
+      iseq = RubyVM::InstructionSequence.of(method)
       assert_includes iseq.to_a.flatten, insn
     end
 
