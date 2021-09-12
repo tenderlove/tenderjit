@@ -149,12 +149,17 @@ class TenderJIT
           @fisk.release_all_registers
           @fisk.assign_registers(SCRATCH_REGISTERS, local: true)
           @fisk.write_to(jit_buffer)
-          break if v == :stop
+          if v == :stop
+            break
+          end
 
           if v == :continue
             @blocks << Block.new(@insn_idx + len, jit_buffer.pos, jit_buffer.address)
           end
         else
+          if $DEBUG
+            puts "#{@insn_idx} COULDN'T COMPILE #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)}"
+          end
           make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
           break
         end
@@ -456,6 +461,83 @@ class TenderJIT
 
       __.lea(__.rax, __.rip)
       __.jmp(__.absolute(deferred.entry.to_i))
+    end
+
+    class ::Array
+      alias :ok :[]
+      def [] *args
+        ok(*args)
+      end
+    end
+
+    def compile_opt_aref stack, req, patch_loc
+      ci = req.call_info
+      mid = ci.vm_ci_mid
+      argc = ci.vm_ci_argc
+      recv = topn(stack, ci.vm_ci_argc).to_i
+
+      p rb.BASIC_OP_UNREDEFINED_P(rb.class::BOP_AREF, rb.class::ARRAY_REDEFINED_OP_FLAG)
+      p VM: Ruby::INSTANCE.ruby_vm_redefined_flag
+      Test::Hacks.halt!
+      p Fiddle.dlunwrap(recv)
+      p mid
+      p argc
+      puts "HI!"
+
+      if rb.RB_SPECIAL_CONST_P(recv)
+        raise NotImplementedError, "no ivar reads on non-heap objects"
+      end
+
+      ## Compile the target method
+      klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
+      #if klass == Fiddle.dlwrap(::Array)
+      exit!
+      compile_method_call stack, req, patch_loc
+    end
+
+    def handle_opt_aref call_data
+      cd = RbCallData.new call_data
+      ci = RbCallInfo.new cd.ci
+
+      # only handle simple methods
+      #return unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+
+      compile_request = CallCompileRequest.new
+      compile_request.call_info = ci
+      compile_request.temp_stack = @temp_stack.dup
+      compile_request.current_pc = current_pc
+      compile_request.next_pc = next_pc
+
+      @compile_requests << Fiddle::Pinned.new(compile_request)
+
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
+        ctx.with_runtime do |rt|
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+          rt.rb_funcall self, :compile_opt_aref, [cfp_ptr.sp, compile_request, ctx.fisk.rax]
+
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
+        end
+      end
+
+      deferred.call
+
+      # Jump in to the deferred compiler
+      __.lea(__.rax, __.rip)
+      __.jmp(__.absolute(deferred.entry))
+
+      (ci.vm_ci_argc + 1).times { @temp_stack.pop }
+
+      # The method call will return here, and its return value will be in RAX
+      loc = @temp_stack.push(:unknown)
+      __.pop(REG_BP)
+      __.cmp(__.rax, __.uimm(Qundef))
+      __.jne(__.label(:continue))
+      __.ret
+      __.put_label(:continue)
+      __.mov(loc, __.rax)
     end
 
     def handle_opt_send_without_block call_data

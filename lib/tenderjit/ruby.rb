@@ -20,6 +20,23 @@ class TenderJIT
       buf[0, len * Fiddle::SIZEOF_VOIDP].unpack("Q#{len}")
     end
 
+    # From vm_core.h
+
+
+    INTEGER_REDEFINED_OP_FLAG = (1 << 0)
+    FLOAT_REDEFINED_OP_FLAG   = (1 << 1)
+    STRING_REDEFINED_OP_FLAG  = (1 << 2)
+    ARRAY_REDEFINED_OP_FLAG   = (1 << 3)
+    HASH_REDEFINED_OP_FLAG    = (1 << 4)
+    # /* #define BIGNUM_REDEFINED_OP_FLAG (1 << 5) */
+    SYMBOL_REDEFINED_OP_FLAG  = (1 << 6)
+    TIME_REDEFINED_OP_FLAG    = (1 << 7)
+    REGEXP_REDEFINED_OP_FLAG  = (1 << 8)
+    NIL_REDEFINED_OP_FLAG     = (1 << 9)
+    TRUE_REDEFINED_OP_FLAG    = (1 << 10)
+    FALSE_REDEFINED_OP_FLAG   = (1 << 11)
+    PROC_REDEFINED_OP_FLAG    = (1 << 12)
+
     def initialize
       encoded_instructions = self.class.read_encoded_instructions
 
@@ -56,6 +73,11 @@ class TenderJIT
       @insn_to_ops.fetch encoded_name
     end
 
+    def BASIC_OP_UNREDEFINED_P op, klass
+      # (LIKELY((GET_VM()->redefined_flag[(op)]&(klass)) == 0))
+      ruby_vm_redefined_flag[op] & klass == 0
+    end
+
     def RB_IMMEDIATE_P obj_addr
       (obj_addr & RUBY_IMMEDIATE_MASK) != 0
     end
@@ -78,6 +100,20 @@ class TenderJIT
       RBasic.flags(obj_addr) & RUBY_T_MASK
     end
 
+    def rb_current_vm
+      Ruby::SYMBOLS["ruby_current_vm_ptr"]
+    end
+
+    def ruby_vm_redefined_flag
+      p RbVmT.offsetof("redefined_flag")
+      p RbVmT.instance_method("redefined_flag")
+      RbVmT.new(self.GET_VM).redefined_flag
+    end
+
+    alias :GET_VM :rb_current_vm
+
     INSTANCE = Ruby.new
+
+    RbVmT = INSTANCE.struct "rb_vm_t"
   end
 end
