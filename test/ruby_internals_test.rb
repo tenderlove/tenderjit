@@ -62,7 +62,7 @@ class TenderJIT
       iseq    = rb_iseq_t.new rTypedData.new(Fiddle.dlwrap(rb_iseq)).data
       body    = rb_iseq_constant_body.new iseq.body
 
-      ary = Fiddle::CArray.unpack(body.iseq_encoded, body.iseq_size, Fiddle::TYPE_VOIDP)
+      ary = Fiddle::CArray.unpack(Fiddle::Pointer.new(body.iseq_encoded), body.iseq_size, Fiddle::TYPE_VOIDP)
 
       assert_equal "putself", rb.insn_name(ary[0])
 
@@ -110,20 +110,13 @@ class TenderJIT
     def test_RObject
       rObject = rb.struct("RObject")
 
-      assert_equal ["basic", "as"], rObject.members.map(&:first)
+      assert_equal ["basic", "as"], rObject.members
 
       assert_rBasic rObject.types.first
 
       # RObject union
       rObject_as = rObject.types.last
-
-      case rObject_as.members
-      in [[heap, _], ary]
-        assert_equal "heap", heap
-        assert_equal "ary", ary
-      else
-        flunk
-      end
+      assert_equal ["heap", "ary"], rObject_as.members
 
       # Check the "heap" member. It's a struct
       rObject_as_heap = rObject_as.types.first
@@ -131,13 +124,15 @@ class TenderJIT
       assert_equal [-Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP], rObject_as_heap.types
 
       # Check the "ary" member. It's an array of unsigned long
-      assert_equal [-Fiddle::TYPE_LONG, 3], rObject_as.types.last
+      assert_equal -Fiddle::TYPE_LONG, rObject_as.types.last.type
+      assert_equal 3, rObject_as.types.last.len
     end
 
     def test_redefined_flag_len
       vm = rb.struct("rb_vm_t")
       len = rb.c("BOP_LAST_")
-      assert_equal [Fiddle::TYPE_SHORT, len], vm.types.last
+      assert_equal len, vm.types.last.len
+      assert_equal Fiddle::TYPE_SHORT, vm.types.last.type
     end
 
     def CheckType(ptr, type)
@@ -167,7 +162,7 @@ class TenderJIT
 
     def test_constant_body_size
       rb_iseq_constant_body = rb.struct("rb_iseq_constant_body")
-      assert_equal 288, rb_iseq_constant_body.size
+      assert_equal 288, rb_iseq_constant_body.byte_size
     end
 
     def omg2; end
@@ -201,7 +196,7 @@ class TenderJIT
       rb_iseq_constant_body = rb.struct("rb_iseq_constant_body")
       rb_execution_context_t = rb.struct("rb_execution_context_struct")
       rb_control_frame_struct = rb.struct("rb_control_frame_struct")
-      assert_equal 56, rb_control_frame_struct.size
+      assert_equal 56, rb_control_frame_struct.byte_size
 
       # Get the iseq pointer by extracting it from the Ruby object
       rb_iseq = RubyVM::InstructionSequence.of(method(:omg2))
@@ -254,7 +249,7 @@ class TenderJIT
 
         # Previous CFP is in r10
         mov r10, r8
-        add r10, imm32(rb_control_frame_struct.size)
+        add r10, imm32(rb_control_frame_struct.byte_size)
         mov m64(rdi, rb_execution_context_t.offsetof("cfp")), r10
 
         pop rbp

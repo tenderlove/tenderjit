@@ -26,7 +26,7 @@ class TenderJIT
       @jit        = jit
       @temp_stack = TempStack.new
       @iseq       = addr
-      @body       = RbISeqT.body(addr)
+      @body       = RbISeqT.body(addr).to_i
 
       @insns      = Fiddle::CArray.unpack(Fiddle::Pointer.new(RbIseqConstantBody.iseq_encoded(@body)),
                                           RbIseqConstantBody.iseq_size(@body),
@@ -326,13 +326,15 @@ class TenderJIT
       end
 
       klass        = RBasic.klass(recv)
-      iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass))
+      iv_index_tbl = RClass.new(klass).ptr.iv_index_tbl.to_i
+
       value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
 
       if iv_index_tbl == 0 || 0 == CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
         CFuncs.rb_ivar_set(recv, req.id, Qundef)
         iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass))
-        CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
+        value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
+        CFuncs.rb_st_lookup(Fiddle::Pointer.new(iv_index_tbl.to_i), req.id, value.ref)
       end
 
       ivar_idx = value.ptr.to_int
@@ -353,11 +355,11 @@ class TenderJIT
         # If the object class is the same, continue
         rt.if_eq(self_ptr.basic.klass, klass) {
 
-          # If it's an embedded object, read the ivar out of the object
+          # If it's an embedded object, write to the embedded array
           rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
             self_ptr.as.ary[ivar_idx] = sp_ptr[0]
 
-          }.else { # Otherwise, check the extended table
+          }.else { # Otherwise, the extended table
             temp.write self_ptr.as.heap.ivptr
             rt.pointer(temp)[ivar_idx] = sp_ptr[0]
           }
@@ -1354,7 +1356,7 @@ class TenderJIT
       __.mov __.rax, loc
 
       # Pop the frame from the stack
-      __.add(REG_CFP, __.uimm(RbControlFrameStruct.size))
+      __.add(REG_CFP, __.uimm(RbControlFrameStruct.byte_size))
 
       # Write the frame pointer back to the ec
       __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP

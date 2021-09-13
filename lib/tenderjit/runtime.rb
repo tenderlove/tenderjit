@@ -20,7 +20,7 @@ class TenderJIT
     end
 
     def check_vm_stack_overflow temp_stack, exit_location, local_size, stack_max
-      margin = ((local_size + stack_max) * Fiddle::SIZEOF_VOIDP) + RbControlFrameStruct.size
+      margin = ((local_size + stack_max) * Fiddle::SIZEOF_VOIDP) + RbControlFrameStruct.byte_size
 
       loc = temp_stack.last.loc + (margin / Fiddle::SIZEOF_VOIDP)
       with_ref(loc) do |reg|
@@ -360,7 +360,7 @@ class TenderJIT
     end
 
     def find_size type
-      type == Fiddle::TYPE_VOIDP ? Fiddle::SIZEOF_VOIDP : type.size
+      type == Fiddle::TYPE_VOIDP ? Fiddle::SIZEOF_VOIDP : type.byte_size
     end
 
     class Array
@@ -408,12 +408,12 @@ class TenderJIT
       def []= idx, val
         if val.is_a?(Fisk::Operand)
           if val.memory?
-            @ec.write_memory @reg, idx * size, val
+            @ec.write_memory @reg, @base + (idx * size), val
           else
             raise NotImplementedError
           end
         else
-          @ec.write_immediate @reg, idx * size, val
+          @ec.write_immediate @reg, @base + (idx * size), val
         end
       end
 
@@ -449,11 +449,10 @@ class TenderJIT
         end
 
         if read
-          if idx = type.members.index { |n, _| n == member }
-            sub_type = type.types[idx]
-            if sub_type.respond_to?(:entity_class)
-              return Pointer.new(@reg, sub_type, sub_type.size, @base + type.offsetof(member), @ec)
-            end
+          if type.member(member).substruct?
+            sub_type = type.member(member).type
+
+            return Pointer.new(@reg, sub_type, sub_type.byte_size, @base + type.offsetof(member), @ec)
           end
         end
 
@@ -465,11 +464,11 @@ class TenderJIT
               yield reg
             end
           else
-            subtype = type.types[type.members.index(member)]
-            if subtype.is_a?(::Array)
-              Array.new(reg, subtype.first, Fiddle::PackInfo::SIZE_MAP[subtype.first], @base + type.offsetof(member), @ec)
-            else
+            if type.member(member).immediate?
               return Fisk::M64.new(@reg, @base + type.offsetof(member))
+            else
+              raise
+              Array.new(reg, subtype.first, Fiddle::PackInfo::SIZE_MAP[subtype.first], @base + type.offsetof(member), @ec)
             end
           end
 

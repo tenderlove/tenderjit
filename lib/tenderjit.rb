@@ -20,53 +20,13 @@ class TenderJIT
   # Struct layouts
 
   RBasic                = Internals.struct("RBasic")
-
-  class RBasic
-    %w{ flags klass }.each do |item|
-      offset = offsetof(item)
-
-      define_singleton_method item do |address|
-        Fiddle.read_ptr address, offset
-      end
-    end
-  end
   RClass                = Internals.struct("RClass")
-
-  class RClass
-    %w{ ptr }.each do |item|
-      offset = offsetof(item)
-
-      define_singleton_method item do |address|
-        Fiddle.read_ptr address, offset
-      end
-    end
-  end
 
   RObject               = Internals.struct("RObject")
   RTypedData            = Internals.struct("RTypedData")
 
-  class RTypedData
-    %w{ data }.each do |item|
-      offset = offsetof(item)
-
-      define_singleton_method item do |address|
-        Fiddle.read_ptr address, offset
-      end
-    end
-  end
-
   RData                 = Internals.struct("RData")
   RbISeqT               = Internals.struct("rb_iseq_t")
-
-  class RbISeqT
-    %w{ body }.each do |item|
-      offset = offsetof(item)
-
-      define_singleton_method item do |address|
-        Fiddle.read_ptr address, offset
-      end
-    end
-  end
 
   RbProcT               = Internals.struct("rb_proc_t")
   RbControlFrameStruct  = Internals.struct("rb_control_frame_struct")
@@ -76,43 +36,13 @@ class TenderJIT
   RbCallableMethodEntryT = Internals.struct("rb_callable_method_entry_t")
   RbClassExt             = Internals.struct("rb_classext_struct")
 
-  class RbClassExt
-    %w{ iv_index_tbl }.each do |item|
-      offset = offsetof(item)
-
-      define_singleton_method item do |address|
-        Fiddle.read_ptr address, offset
-      end
-    end
-  end
-
   RbMethodDefinitionStruct = Internals.struct("rb_method_definition_struct")
   RbIseqConstantBody = Internals.struct("rb_iseq_constant_body")
-
-  class RbIseqConstantBody
-    %w{ iseq_encoded iseq_size jit_func }.each do |item|
-      offset = offsetof(item)
-
-      if typeof(item) == -Fiddle::TYPE_INT
-        define_singleton_method item do |address|
-          Fiddle.read_unsigned_int address, offset
-        end
-      else
-        define_singleton_method item do |address|
-          Fiddle.read_ptr address, offset
-        end
-
-        define_singleton_method "set_#{item}" do |address, val|
-          Fiddle.write_ptr address, offset, val
-        end
-      end
-    end
-  end
 
   IseqInlineConstantCacheEntry = Internals.struct("iseq_inline_constant_cache_entry")
   IseqInlineConstantCache = Internals.struct("iseq_inline_constant_cache")
 
-  class RbCallInfo
+  RbCallInfo.instance_class.class_eval do
     CI_EMBED_TAG_bits  = 1
     CI_EMBED_ARGC_bits = 15
     CI_EMBED_FLAG_bits = 16
@@ -556,8 +486,7 @@ class TenderJIT
   end
 
   def self.member_size struct, member
-    fiddle_type = struct.types[struct.members.index(member)]
-    Fiddle::PackInfo::SIZE_MAP[fiddle_type]
+    struct.member_size member
   end
 end
 

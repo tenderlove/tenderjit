@@ -3,32 +3,14 @@
 require "fiddle"
 
 module Fiddle
+  TYPE_TO_NAME = Fiddle.constants.grep(/^TYPE_/).each_with_object({}) { |n, h|
+    h[Fiddle.const_get(n)] = n.to_s
+  }
+
   def self.adjust_addresses syms
     slide = Fiddle::Handle::DEFAULT["rb_st_insert"] - syms.fetch("rb_st_insert")
     syms.transform_values! { |v| v + slide }
     syms
-  end
-
-  class CStruct
-    INT_BITS = Fiddle::SIZEOF_INT * 8
-
-    def read_d5_bit bit_offset, bit_size
-      aligned_offset = ((bit_offset >> 5) << 5)
-      buffer_loc = (aligned_offset / INT_BITS) * Fiddle::SIZEOF_INT
-
-      bitfield = to_ptr[buffer_loc, Fiddle::SIZEOF_INT].unpack1("i!")
-      bitfield >>= (bit_offset - aligned_offset)
-      bitfield & ((1 << bit_size) - 1)
-    end
-
-    def read_d4_bit loc, byte_size, bit_offset, bit_size
-      bits = byte_size * 8
-
-      mask = 0xFFFFFFFF
-      bitfield = to_ptr[loc, Fiddle::SIZEOF_INT].unpack1("i!")
-      bitfield = mask & (bitfield << bit_offset)
-      bitfield >> (bit_offset + (bits - (bit_size + bit_offset)))
-    end
   end
 
   class CArray # :nodoc:
@@ -53,9 +35,261 @@ module Fiddle
     Fiddle::Pointer.new(ptr)[offset, Fiddle::SIZEOF_INT].unpack1(PackInfo::PACK_MAP[-TYPE_INT])
   end
 
-  class CStruct
-    def self.typeof item
-      types[members.index(item)]
+  module Layout
+    class Struct
+      class Instance
+        attr_reader :layout, :base
+
+        def initialize layout, ptr
+          @layout = layout
+          @base   = ptr.to_i
+        end
+
+        def to_i
+          base
+        end
+        alias :to_int :to_i
+
+        def to_ptr
+          Fiddle::Pointer.new to_i
+        end
+      end
+
+      class Member
+        attr_reader :name, :type, :offset
+
+        def initialize name, type, offset
+          @name = name
+          @type = type
+          @offset = offset
+        end
+
+        def substruct?; false; end
+        def immediate?; false; end
+
+        def byte_size
+          Fiddle::PackInfo::SIZE_MAP[type]
+        end
+
+        def unpack
+          Fiddle::PackInfo::PACK_MAP[type]
+        end
+
+        def real_type
+          type
+        end
+      end
+
+      class Immediate < Member
+        def immediate?; true; end
+
+        def read base
+          Fiddle::Pointer.new(base)[offset, byte_size].unpack1(unpack)
+        end
+
+        def write base, val
+          data = [val].pack("l!")
+          Fiddle::Pointer.new(base)[offset, byte_size] = data
+          nil
+        end
+      end
+
+      class SubStruct < Member
+        def substruct?; true; end
+
+        def read base
+          raise ArgumentError unless base
+
+          type.new(base + offset)
+        end
+
+        def byte_size
+          type.byte_size
+        end
+      end
+
+      class RefCast < Member
+        def initialize name, type, offset, block
+          super(name, type, offset)
+          @block = block
+        end
+
+        def read base
+          @block.call.new(type.read(base))
+        end
+
+        def size
+          type.size
+        end
+
+        def real_type
+          type.type
+        end
+      end
+
+      class D4Reader < ::Struct.new(:loc, :byte_size, :bit_offset, :bit_size)
+        def real_type
+          -Fiddle::TYPE_INT32_T
+        end
+
+        def read base
+          bits = byte_size * 8
+
+          mask = 0xFFFFFFFF
+          bitfield = Fiddle::Pointer.new(base)[loc, Fiddle::SIZEOF_INT].unpack1("i!")
+          bitfield = mask & (bitfield << bit_offset)
+          bitfield >> (bit_offset + (bits - (bit_size + bit_offset)))
+        end
+      end
+
+      class D5Reader < ::Struct.new(:name, :bit_offset, :bit_size)
+        INT_BITS = Fiddle::SIZEOF_INT * 8
+
+        def real_type
+          -Fiddle::TYPE_INT32_T
+        end
+
+        def read base
+          aligned_offset = ((bit_offset >> 5) << 5)
+          buffer_loc = (aligned_offset / INT_BITS) * Fiddle::SIZEOF_INT
+
+          bitfield = Fiddle::Pointer.new(base)[buffer_loc, Fiddle::SIZEOF_INT].unpack1("i!")
+          bitfield >>= (bit_offset - aligned_offset)
+          bitfield & ((1 << bit_size) - 1)
+        end
+      end
+
+      attr_reader :byte_size, :instance_class
+
+      def initialize byte_size, names, types, offsets = nil
+        @members_by_name = {}
+
+        members = names.map.with_index do |name, i|
+          case types[i]
+          when Struct, Union, Array
+            member = SubStruct.new(name, types[i], offsets[i])
+            @members_by_name[name] = member
+          when Layout::AutoRef
+            reader = Immediate.new(name, types[i].type, offsets[i])
+            member = RefCast.new(name, reader, offsets[i], types[i].block)
+            @members_by_name[name] = member
+          when Layout::D5BitField
+            type = types[i]
+            name.zip(type.bitfields).each do |bname, (bit_offset, bit_size)|
+              @members_by_name[bname] = D5Reader.new(bname, bit_offset, bit_size)
+            end
+          when Layout::D4BitField
+            type = types[i]
+            name.zip(types[i].bitfields).each do |bname, (loc, byte_size, bit_offset, bit_size)|
+              @members_by_name[bname] = D4Reader.new(loc, byte_size, bit_offset, bit_size)
+            end
+            member = Immediate.new(name, -Fiddle::TYPE_INT32_T, offsets[i])
+          else
+            member = Immediate.new(name, types[i], offsets[i])
+            @members_by_name[name] = member
+          end
+        end
+
+        @byte_size = byte_size
+        @instance_class = make_class(@members_by_name.keys)
+        extend make_module(@members_by_name.keys)
+      end
+
+      def members; @members_by_name.keys; end
+
+      private def make_class members
+        Class.new(Instance) {
+          members.each do |name|
+            define_method(name) { @layout.read(base, name) }
+            define_method("#{name}=") { |v| @layout.write(base, name, v) }
+          end
+        }
+      end
+
+      private def make_module members
+        Module.new {
+          members.each do |name|
+            define_method(name) { |base| read(base, name) }
+            define_method("set_#{name}") { |base, v| write(base, name, v) }
+          end
+        }
+      end
+
+      def types; @members_by_name.values.map(&:real_type); end
+
+      def member? name
+        @members_by_name.key? name
+      end
+
+      def member name
+        @members_by_name[name]
+      end
+
+      def offsetof name
+        @members_by_name[name].offset
+      end
+
+      def new ptr
+        @instance_class.new self, ptr
+      end
+
+      def read ptr, name
+        raise ArgumentError unless ptr
+
+        @members_by_name.fetch(name).read ptr
+      end
+
+      def write ptr, name, val
+        raise ArgumentError unless ptr && val
+
+        @members_by_name.fetch(name).write ptr, val
+      end
+
+      def member_size name
+        @members_by_name[name].byte_size
+      end
+    end
+
+    AutoRef = ::Struct.new(:type, :block)
+    D5BitField = ::Struct.new(:bitfields)
+    D4BitField = ::Struct.new(:bitfields)
+
+    class Union < Struct; end
+
+    class Array
+      class Instance
+        def initialize layout, base
+          @layout = layout
+          @base = base
+        end
+
+        def [] idx
+          @layout.read @base, idx
+        end
+      end
+
+      attr_reader :type, :len
+
+      def initialize type, len
+        @type = type
+        @len = len
+      end
+
+      def read base, idx
+        Fiddle::Pointer.new(base)[idx * byte_size, byte_size].unpack1(unpack)
+      end
+
+      def new base
+        Instance.new self, base
+      end
+
+      def byte_size
+        Fiddle::PackInfo::SIZE_MAP.fetch(type)
+      end
+
+      def unpack
+        Fiddle::PackInfo::PACK_MAP.fetch(type)
+      end
     end
   end
 end

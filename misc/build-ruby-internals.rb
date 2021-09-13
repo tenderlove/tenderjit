@@ -2,7 +2,7 @@ require_relative "ruby_internals"
 require "erb"
 
 module Layout
-  class CObject < Struct.new(:name, :aliases, :children)
+  class CObject < Struct.new(:name, :byte_size, :aliases, :children)
     def has_bitfields?; children.any?(&:bitfield?); end
     def has_autorefs?; children.any?(&:autoref?); end
     def bitfields; children.select(&:bitfield?); end
@@ -32,26 +32,19 @@ module Layout
   class SubStruct < Struct.new(:name, :offset, :type)
     def bitfield?; false; end
     def autoref?; false; end
-
-    def name
-      [super, type.children.map(&:name)]
-    end
   end
 
   class SubUnion < Struct.new(:name, :offset, :type)
     def bitfield?; false; end
     def autoref?; false; end
-
-    def name
-      [super, type.children.map(&:name)]
-    end
   end
 
   class BitMember < Struct.new(:offset, :type, :children)
     def bitfield?; true; end
     def autoref?; false; end
 
-    def name; children.map(&:name).join("|"); end
+    def offset; children.first.offset; end
+    def name; children.map(&:name); end
     def d4?; children.all?(&:d4?); end
   end
 
@@ -94,43 +87,45 @@ module Layout
       <%- if struct.aliases.any? -%>
       # <%= struct.aliases.join(", ") %>
       <%- end -%>
-      <%= "  " * indent %>Fiddle::CStructBuilder.create(Fiddle::<%= type_name %>,
-      <%= "  " * indent %>[
+      <%= "  " * indent %>Fiddle::Layout::Struct.new(<%= struct.byte_size %>,
+      <%= "  " * indent %>  <%= PP.pp(struct.children.map(&:name), '').chomp %>,
+      <%= "  " * indent %>  [
       <%- struct.children.each do |child| -%>
-      <%= "  " * indent %>  <%= emit_type(child.type, indent).chomp %>,
+      <%= "  " * indent %>    <%= emit_node(child, indent).chomp %>, # <%= child.offset %>
       <%- end -%>
-      <%= "  " * indent %>],
-      <%= "  " * indent %><%= PP.pp(struct.children.map(&:name), '') %>)<%= render_bitfields(struct, indent) %><%= render_autorefs(struct, indent) %>
+      <%= "  " * indent %>  ],
+      <%= "  " * indent %>  <%= PP.pp(struct.children.map(&:offset), '').chomp %>)
     eoerb
 
-    D4_BITFIELD_TEMPLATE = ERB.new(<<~eoerb, trim_mode: "-")
-      .include(Module.new {
-      <%- struct.bitfields.each do |bitfield| -%>
-        <%- bitfield.children.each do |child| -%>
-      <%= "  " * indent %>  def <%= child.name %>
-      <%= "  " * indent %>    read_d4_bit(<%= child.die.data_member_location %>, <%= child.die.byte_size %>, <%= child.die.bit_offset %>, <%= child.die.bit_size %>)
-      <%= "  " * indent %>  end
-        <%- end -%>
+    UNION_TEMPLATE = ERB.new(<<~eoerb, trim_mode: "-")
+      # <%= struct.name %>
+      <%- if struct.aliases.any? -%>
+      # <%= struct.aliases.join(", ") %>
       <%- end -%>
-      <%= "  " * indent %>})
+      <%= "  " * indent %>Fiddle::Layout::Union.new(<%= struct.byte_size %>,
+      <%= "  " * indent %>  <%= PP.pp(struct.children.map(&:name), '').chomp %>,
+      <%= "  " * indent %>  [
+      <%- struct.children.each do |child| -%>
+      <%= "  " * indent %>    <%= emit_node(child, indent).chomp %>, # <%= child.offset %>
+      <%- end -%>
+      <%= "  " * indent %>  ],
+      <%= "  " * indent %>  <%= PP.pp(struct.children.map(&:offset), '').chomp %>)
     eoerb
 
-    D5_BITFIELD_TEMPLATE = ERB.new(<<~eoerb, trim_mode: "-")
-      .include(Module.new {
-      <%- struct.bitfields.each do |bitfield| -%>
-        <%- bitfield.children.each do |child| -%>
-      <%= "  " * indent %>  def <%= child.name %>; read_d5_bit(<%= child.die.data_bit_offset %>, <%= child.die.bit_size %>); end
-        <%- end -%>
+    D5_BITFIELD_TEMPLATE2 = ERB.new(<<~eoerb, trim_mode: "-")
+      Fiddle::Layout::D5BitField.new([
+      <%- bitfield.children.each do |child| -%>
+        [ <%= child.die.data_bit_offset %>, <%= child.die.bit_size %> ],
       <%- end -%>
-      <%= "  " * indent %>})
+      ])
     eoerb
 
-    AUTOREF_TEMPLATE = ERB.new(<<~eoerb, trim_mode: "-")
-      .prepend(Module.new {
-      <%- struct.autorefs.each do |autoref| -%>
-      <%= "  " * indent %>  def <%= autoref.name %>; STRUCTS[<%= autoref.ref_name.dump %>].new(super); end
+    D4_BITFIELD_TEMPLATE2 = ERB.new(<<~eoerb, trim_mode: "-")
+      Fiddle::Layout::D4BitField.new([
+      <%- bitfield.children.each do |child| -%>
+        [ <%= child.die.data_member_location %>, <%= child.die.byte_size %>, <%= child.die.bit_offset %>, <%= child.die.bit_size %> ],
       <%- end -%>
-      <%= "  " * indent %>})
+      ])
     eoerb
 
     def emit_insn_info insn_lengths, insn_op_types, io: $stdout
@@ -214,18 +209,24 @@ module Layout
       str.gsub(/^(?!$)/, " " * w)
     end
 
-    def render_bitfields struct, indent
-      return "" unless struct.has_bitfields?
-      if struct.bitfields.map(&:d4?).any?
-        D4_BITFIELD_TEMPLATE.result(binding)
+    def emit_node node, indent
+      if node.autoref?
+        "Fiddle::Layout::AutoRef.new(#{emit_type node.type, indent}, -> { STRUCTS[#{node.ref_name.dump}] })"
       else
-        D5_BITFIELD_TEMPLATE.result(binding)
+        if node.bitfield?
+          emit_bitfield node, indent
+        else
+          emit_type node.type, indent
+        end
       end
     end
 
-    def render_autorefs struct, indent
-      return "" unless struct.has_autorefs?
-      AUTOREF_TEMPLATE.result(binding)
+    def emit_bitfield bitfield, indent
+      if bitfield.d4?
+        D4_BITFIELD_TEMPLATE2.result(binding)
+      else
+        D5_BITFIELD_TEMPLATE2.result(binding)
+      end
     end
 
     def emit_type type, indent
@@ -242,7 +243,7 @@ module Layout
           name
         end
       when ArrayType
-        "[ #{emit_type(type.type, indent)}, #{type.len} ]"
+        "Fiddle::Layout::Array.new(#{emit_type(type.type, indent)}, #{type.len})"
       else
         p type
         raise
@@ -250,15 +251,11 @@ module Layout
     end
 
     def emit_struct struct, indent
-      emit_object struct, indent, "CStruct"
+      STRUCT_TEMPLATE.result(binding).chomp
     end
 
     def emit_union struct, indent
-      emit_object struct, indent, "CUnion"
-    end
-
-    def emit_object struct, indent, type_name
-      STRUCT_TEMPLATE.result(binding).chomp
+      UNION_TEMPLATE.result(binding).chomp
     end
   end
 
@@ -302,6 +299,8 @@ module Layout
           next if child.tag.user?
 
           if child.tag.identifier == :DW_TAG_structure_type
+            next unless child.children.length > 0
+
             struct = build_struct(child, all_dies, strs)
             structs << struct
           end
@@ -334,7 +333,7 @@ module Layout
         when :DW_TAG_const_type, :DW_TAG_typedef, :DW_TAG_volatile_type
           build_member member_name, member_type, find_type_die(type_die, all_dies), child, strs, all_dies
         when :DW_TAG_base_type, :DW_TAG_array_type, :DW_TAG_enumeration_type
-          Member.new(member_name, child.data_member_location, member_type)
+          Member.new(member_name, child.data_member_location || 0, member_type)
         else
           raise type_die.tag.identifier.to_s
           exit!
@@ -359,7 +358,7 @@ module Layout
           if child.bit_offset # bitfields for DWARF 4
             D4BitMember.new(member_name, child.data_member_location, member_type, child)
           elsif child.data_bit_offset
-            D5BitMember.new(member_name, child.data_member_location, member_type, child)
+            D5BitMember.new(member_name, :unknown, member_type, child)
           else
             build_member member_name, member_type, type_die, child, strs, all_dies
           end
@@ -379,7 +378,7 @@ module Layout
           end
         end
 
-        type.new(name, aliases, list)
+        type.new(name, die.byte_size, aliases, list)
       end
 
       def build_array die, all_dies, strs
