@@ -190,6 +190,11 @@ class TenderJIT
       assert_equal 2, iseq.body.local_table_size
     end
 
+    def test_array_length
+      r_object = rb.struct("RObject")
+      assert_equal 3, r_object.member("as").type.member("ary").type.len
+    end
+
     def test_write_jit_body
       rTypedData            = rb.struct("RTypedData")
       rb_iseq_t             = rb.struct("rb_iseq_struct")

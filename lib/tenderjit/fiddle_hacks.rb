@@ -36,6 +36,7 @@ module Fiddle
   end
 
   module Layout
+    # Describes the layout of a struct object from C
     class Struct
       class Instance
         attr_reader :layout, :base
@@ -258,7 +259,10 @@ module Fiddle
 
     class Union < Struct; end
 
+    # Describes the layout of an array
     class Array
+
+      # An instance of the described layout
       class Instance
         def initialize layout, base
           @layout = layout
@@ -277,10 +281,12 @@ module Fiddle
         @len = len
       end
 
+      # Read from an array with the +base+ pointer at the index +idx+
       def read base, idx
         Fiddle::Pointer.new(base)[idx * byte_size, byte_size].unpack1(unpack)
       end
 
+      # Create an instance of an array at the base pointer +base+
       def new base
         Instance.new self, base
       end

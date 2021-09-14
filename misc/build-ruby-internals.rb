@@ -385,7 +385,13 @@ module Layout
         type_die = find_type_die(die, all_dies)
         type = resolve_type type_die, all_dies, strs
 
-        count = die.children.first.at_count
+        child = die.children.first
+        count = child.at_count
+
+        unless count
+          count = child.DW_AT_upper_bound
+          count += 1 if count
+        end
 
         if count
           ArrayType.new(type, count)
