@@ -59,6 +59,8 @@ module Fiddle
         attr_reader :name, :type, :offset
 
         def initialize name, type, offset
+          raise ArgumentError unless offset
+
           @name = name
           @type = type
           @offset = offset
