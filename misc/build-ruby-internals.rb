@@ -319,16 +319,16 @@ module Layout
       def build_member member_name, member_type, type_die, child, strs, all_dies
         case type_die.tag.identifier
         when :DW_TAG_structure_type
-          SubStruct.new(member_name, child.data_member_location, member_type)
+          SubStruct.new(member_name, child.data_member_location || 0, member_type)
         when :DW_TAG_union_type
-          SubUnion.new(member_name, child.data_member_location, member_type)
+          SubUnion.new(member_name, child.data_member_location || 0, member_type)
         when :DW_TAG_pointer_type
           pointer_type = find_type_die(type_die, all_dies)
           if pointer_type && (pointer_type.tag.structure_type? || pointer_type.tag.union_type?)
             ref_name = pointer_type.name(strs)
-            AutoRefMember.new(member_name, ref_name, child.data_member_location, member_type)
+            AutoRefMember.new(member_name, ref_name, child.data_member_location || 0, member_type)
           else
-            Member.new(member_name, child.data_member_location, member_type)
+            Member.new(member_name, child.data_member_location || 0, member_type)
           end
         when :DW_TAG_const_type, :DW_TAG_typedef, :DW_TAG_volatile_type
           build_member member_name, member_type, find_type_die(type_die, all_dies), child, strs, all_dies
