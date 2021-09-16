@@ -2,7 +2,7 @@ require "fisk"
 
 class TenderJIT
   class ExitCode
-    attr_reader :stats_addr, :exit_stats_addr
+    attr_reader :stats_addr, :exit_stats_addr, :jit_buffer
 
     def initialize jit_buffer, stats_addr, exit_stats_addr
       @jit_buffer      = jit_buffer
@@ -33,6 +33,10 @@ class TenderJIT
         __.mov(tmp, __.uimm(exit_pc))
           .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("pc")), tmp)
 
+        if $DEBUG
+          print_str __, "EXITING! #{exit_insn_name}\n"
+        end
+
         __.mov(__.rax, __.uimm(Qundef))
           .ret
       end
@@ -41,6 +45,20 @@ class TenderJIT
       jump_location = @jit_buffer.memory.to_i + @jit_buffer.pos
       fisk.write_to(@jit_buffer)
       jump_location
+    end
+
+    def print_str fisk, string
+      fisk.jmp(fisk.label(:after_bytes))
+      pos = nil
+      fisk.lazy { |x| pos = x; string.bytes.each { |b| jit_buffer.putc b } }
+      fisk.put_label(:after_bytes)
+      fisk.mov fisk.rdi, fisk.uimm(2)
+      fisk.lazy { |x|
+        fisk.mov fisk.rsi, fisk.uimm(jit_buffer.memory + pos)
+      }
+      fisk.mov fisk.rdx, fisk.uimm(string.bytesize)
+      fisk.mov fisk.rax, fisk.uimm(0x02000004)
+      fisk.syscall
     end
   end
 end
