@@ -463,76 +463,112 @@ class TenderJIT
       __.jmp(__.absolute(deferred.entry.to_i))
     end
 
-    class ::Array
-      alias :ok :[]
-      def [] *args
-        ok(*args)
-      end
-    end
-
     def compile_opt_aref stack, req, patch_loc
       ci = req.call_info
-      mid = ci.vm_ci_mid
-      argc = ci.vm_ci_argc
-      recv = topn(stack, ci.vm_ci_argc).to_i
+      peek_recv = topn(stack, ci.vm_ci_argc).to_i
 
-      p rb.BASIC_OP_UNREDEFINED_P(rb.class::BOP_AREF, rb.class::ARRAY_REDEFINED_OP_FLAG)
-      p VM: Ruby::INSTANCE.ruby_vm_redefined_flag
-      Test::Hacks.halt!
-      p Fiddle.dlunwrap(recv)
-      p mid
-      p argc
-      puts "HI!"
-
-      if rb.RB_SPECIAL_CONST_P(recv)
-        raise NotImplementedError, "no ivar reads on non-heap objects"
+      if rb.RB_SPECIAL_CONST_P(peek_recv)
+        raise NotImplementedError, "no aref reads on non-heap objects"
       end
 
       ## Compile the target method
-      klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
-      #if klass == Fiddle.dlwrap(::Array)
-      exit!
-      compile_method_call stack, req, patch_loc
+      klass = RBasic.new(peek_recv).klass # FIXME: this only works on heap allocated objects
+
+      entry_location = jit_buffer.address
+
+      patch_call at_pos: ((patch_loc - 5) - jit_buffer.memory.to_i), # 5 bytes for "call" instruction
+                 to: entry_location
+
+      with_runtime do |rt|
+        _self = rt.pointer(rt.c_param(0), type: RObject)
+
+        rt.if_eq(_self.basic.klass, klass) {
+          klass = Fiddle.dlunwrap(klass)
+
+          # We know it's an array at compile time
+          if klass == ::Array
+            rt.push_reg Fisk::Registers::RSI # alignment
+            rt.call_cfunc(rb.symbol_address("rb_ary_aref1"), [])
+            rt.pop_reg Fisk::Registers::RSI  # alignment
+
+          # We know it's a hash at compile time
+          elsif klass == ::Hash
+            rt.push_reg Fisk::Registers::RSI # alignment
+            rt.call_cfunc(rb.symbol_address("rb_hash_aref"), [])
+            rt.pop_reg Fisk::Registers::RSI  # alignment
+
+          else
+            raise NotImplementedError
+          end
+        }.else {
+          rt.push_reg Fisk::Registers::RSI # alignment
+          rt.patchable_call req.deferred_entry
+          rt.pop_reg Fisk::Registers::RSI  # alignment
+        }
+
+        rt.return
+      end
+
+      entry_location
     end
+
+    CompileOptAref = Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
 
     def handle_opt_aref call_data
       cd = RbCallData.new call_data
       ci = RbCallInfo.new cd.ci
 
+      argc = ci.vm_ci_argc
+      return :quit unless argc == 1
+
       # only handle simple methods
       #return unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
 
-      compile_request = CallCompileRequest.new
-      compile_request.call_info = ci
-      compile_request.temp_stack = @temp_stack.dup
-      compile_request.current_pc = current_pc
-      compile_request.next_pc = next_pc
+      req = CompileOptAref.new
+      req.call_info = ci
+      req.temp_stack = @temp_stack.dup
+      req.current_pc = current_pc
+      req.next_pc = next_pc
 
-      @compile_requests << Fiddle::Pinned.new(compile_request)
+      @compile_requests << Fiddle::Pinned.new(req)
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.rb_funcall self, :compile_opt_aref, [cfp_ptr.sp, compile_request, ctx.fisk.rax]
+          rt.temp_var do |tv|
+            tv.write ctx.fisk.rsp
+            rt.push_reg ctx.fisk.rsi # preserve rsi and rdi
+            rt.push_reg ctx.fisk.rdi # so that we can call the generated function
+            rt.push_reg ctx.fisk.rsp
+            rt.rb_funcall self, :compile_opt_aref, [cfp_ptr.sp, req, tv[0]]
+          end
+          rt.pop_reg ctx.fisk.rsp
+          rt.pop_reg ctx.fisk.rdi
+          rt.pop_reg ctx.fisk.rsi
 
           rt.NUM2INT(rt.return_value)
 
-          rt.jump rt.return_value
+          rt.push_reg ctx.fisk.rsi
+          rt.call rt.return_value
+          rt.pop_reg ctx.fisk.rsi
+
+          rt.return
         end
       end
 
       deferred.call
 
-      # Jump in to the deferred compiler
-      __.lea(__.rax, __.rip)
-      __.jmp(__.absolute(deferred.entry))
+      req.deferred_entry = deferred.entry.to_i
 
-      (ci.vm_ci_argc + 1).times { @temp_stack.pop }
+      __.mov(__.rsi, @temp_stack.pop) # param
+      __.mov(__.rdi, @temp_stack.pop) # recv
+
+      #Jump in to the deferred compiler
+      __.call(__.absolute(deferred.entry))
 
       # The method call will return here, and its return value will be in RAX
       loc = @temp_stack.push(:unknown)
-      __.pop(REG_BP)
       __.cmp(__.rax, __.uimm(Qundef))
       __.jne(__.label(:continue))
       __.ret
@@ -1514,6 +1550,17 @@ class TenderJIT
       rt = Runtime.new(Fisk.new, jit_buffer, @temp_stack)
       yield rt
       rt.write!
+    end
+
+    def patch_call at_pos:, to:
+      pos = jit_buffer.pos
+      rel_jump = 0xCAFE
+      2.times do
+        jit_buffer.seek at_pos, IO::SEEK_SET
+        Fisk.new { |__| __.call(__.rel32(rel_jump)) }.write_to(jit_buffer)
+        rel_jump = to - jit_buffer.address
+      end
+      jit_buffer.seek pos, IO::SEEK_SET
     end
   end
 end

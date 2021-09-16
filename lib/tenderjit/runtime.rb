@@ -46,6 +46,19 @@ class TenderJIT
       jump dest
     end
 
+    def patchable_call dest
+      @fisk.call(@fisk.absolute(dest))
+    end
+
+    def call dest
+      @fisk.call(dest)
+    end
+
+    # Get the register for the i'th parameter in the C calling convention
+    def c_param i
+      Fisk::Registers::CALLER_SAVED.fetch i
+    end
+
     def rb_funcall recv, method_name, params
       raise "Too many parameters!" if params.length > 3
 
@@ -58,7 +71,9 @@ class TenderJIT
       params.each_with_index do |param, i|
         i += 3
 
-        if param.is_a?(Fisk::Operand)
+        if param.is_a?(Fisk::Operand) || param.is_a?(TemporaryVariable)
+          param = param.to_register if param.is_a?(TemporaryVariable)
+
           @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
 
           #if param.memory?
@@ -185,6 +200,11 @@ class TenderJIT
       self
     end
 
+    def RB_FIXNUM_P obj
+      ->(fisk) { fisk.test(obj, fisk.uimm(RUBY_FIXNUM_FLAG)) }
+    end
+    alias :fixnum? :RB_FIXNUM_P
+
     def if lhs, op = nil, rhs = nil
       else_label = push_label # else label
       finish_label = push_label
@@ -200,7 +220,11 @@ class TenderJIT
         end
         @fisk.jg else_label # else label
       else
-        @fisk.test lhs, lhs
+        if lhs.respond_to?(:call)
+          lhs.call(@fisk)
+        else
+          @fisk.test lhs, lhs
+        end
         @fisk.jz else_label # else label
       end
       yield
@@ -291,6 +315,15 @@ class TenderJIT
       @fisk.push reg.to_register
     end
 
+    # Pop a register on the machine stack
+    def pop_reg reg
+      @fisk.pop reg.to_register
+    end
+
+    def return
+      @fisk.ret
+    end
+
     # Push a value on the stack
     def push val, name:, type: :unknown
       loc = @temp_stack.push name, type: type
@@ -314,6 +347,8 @@ class TenderJIT
           @fisk.mov(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(param))
         when Fisk::Operand
           @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
+        when TemporaryVariable
+          @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param.to_register)
         else
           raise NotImplementedError
         end

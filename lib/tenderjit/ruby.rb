@@ -93,6 +93,7 @@ class TenderJIT
     def RB_FIXNUM_P obj_addr
       0 != obj_addr & RUBY_FIXNUM_FLAG
     end
+    alias :fixnum? :RB_FIXNUM_P
 
     def RB_BUILTIN_TYPE obj_addr
       raise if RB_SPECIAL_CONST_P(obj_addr)
@@ -101,16 +102,13 @@ class TenderJIT
     end
 
     def rb_current_vm
-      Ruby::SYMBOLS["ruby_current_vm_ptr"]
+      Fiddle.read_ptr Ruby::SYMBOLS["ruby_current_vm_ptr"], 0
     end
+    alias :GET_VM :rb_current_vm
 
     def ruby_vm_redefined_flag
-      p RbVmT.offsetof("redefined_flag")
-      p RbVmT.instance_method("redefined_flag")
       RbVmT.new(self.GET_VM).redefined_flag
     end
-
-    alias :GET_VM :rb_current_vm
 
     INSTANCE = Ruby.new
 

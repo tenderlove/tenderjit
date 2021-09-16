@@ -128,6 +128,11 @@ class TenderJIT
       assert_equal 3, rObject_as.types.last.len
     end
 
+    def test_offset
+      assert_equal Fiddle::Handle::DEFAULT["ruby_current_vm_ptr"], Ruby::SYMBOLS["ruby_current_vm_ptr"]
+      assert_equal Fiddle::Handle::DEFAULT["rb_iseq_eval_main"], Ruby::SYMBOLS["rb_iseq_eval_main"]
+    end
+
     def test_redefined_flag_len
       vm = rb.struct("rb_vm_t")
       len = rb.c("BOP_LAST_")

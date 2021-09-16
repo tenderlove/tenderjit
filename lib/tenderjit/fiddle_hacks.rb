@@ -167,7 +167,7 @@ module Fiddle
       def initialize byte_size, names, types, offsets = nil
         @members_by_name = {}
 
-        members = names.map.with_index do |name, i|
+        names.map.with_index do |name, i|
           case types[i]
           when Struct, Union, Array
             member = SubStruct.new(name, types[i], offsets[i])
@@ -264,13 +264,29 @@ module Fiddle
 
       # An instance of the described layout
       class Instance
+        include Enumerable
+
         def initialize layout, base
           @layout = layout
           @base = base
         end
 
+        def to_i
+          @base
+        end
+
         def [] idx
           @layout.read @base, idx
+        end
+
+        def each
+          length.times do |i|
+            yield self[i]
+          end
+        end
+
+        def length
+          @layout.len
         end
       end
 
