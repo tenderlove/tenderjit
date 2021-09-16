@@ -595,7 +595,7 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.rb_funcall self, :compile_method_call, [cfp_ptr.sp, compile_request, ctx.fisk.rax]
+          rt.rb_funcall self, :compile_opt_send_without_block, [cfp_ptr.sp, compile_request, ctx.fisk.rax]
 
           rt.NUM2INT(rt.return_value)
 
@@ -895,7 +895,7 @@ class TenderJIT
       entry_location
     end
 
-    def compile_method_call stack, compile_request, loc
+    def compile_opt_send_without_block stack, compile_request, loc
       ci = compile_request.call_info
       mid = ci.vm_ci_mid
       argc = ci.vm_ci_argc
