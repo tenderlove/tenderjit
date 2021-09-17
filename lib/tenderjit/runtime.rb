@@ -59,6 +59,11 @@ class TenderJIT
       Fisk::Registers::CALLER_SAVED.fetch i
     end
 
+    # Set the register for the i'th parameter in the C calling convention
+    def set_c_param i, v
+      @fisk.mov Fisk::Registers::CALLER_SAVED.fetch(i), v
+    end
+
     def rb_funcall recv, method_name, params
       raise "Too many parameters!" if params.length > 3
 

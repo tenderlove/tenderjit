@@ -486,10 +486,16 @@ class TenderJIT
 
       entry_location = jit_buffer.address
 
-      patch_call at_pos: ((patch_loc - 5) - jit_buffer.memory.to_i), # 5 bytes for "call" instruction
-                 to: entry_location
+      patch_loc = patch_loc - jit_buffer.memory.to_i
+
+      jit_buffer.patch_jump at: patch_loc, to: entry_location
+
+      param = req.temp_stack.peek(-1).loc # param
+      recv  = req.temp_stack.peek(-2).loc # recv
 
       with_runtime do |rt|
+        rt.set_c_param(0, recv)
+        rt.set_c_param(1, param)
         _self = rt.pointer(rt.c_param(0), type: RObject)
 
         rt.if_eq(_self.basic.klass, klass) {
@@ -498,25 +504,24 @@ class TenderJIT
           # We know it's an array at compile time
           if klass == ::Array
             rt.push_reg REG_BP # alignment
-            rt.call_cfunc(rb.symbol_address("rb_ary_aref1"), [])
+            rt.call_cfunc(rb.symbol_address("rb_ary_aref1"), [recv, param])
             rt.pop_reg REG_BP  # alignment
 
-          # We know it's a hash at compile time
+            # We know it's a hash at compile time
           elsif klass == ::Hash
             rt.push_reg REG_BP # alignment
-            rt.call_cfunc(rb.symbol_address("rb_hash_aref"), [])
+            rt.call_cfunc(rb.symbol_address("rb_hash_aref"), [recv, param])
             rt.pop_reg REG_BP  # alignment
 
           else
             raise NotImplementedError
           end
         }.else {
-          rt.push_reg REG_BP # alignment
-          rt.patchable_call req.deferred_entry
-          rt.pop_reg REG_BP  # alignment
+          rt.patchable_jump req.deferred_entry
         }
 
-        rt.return
+        # patched a jmp and it is 5 bytes
+        rt.jump jit_buffer.memory.to_i + patch_loc + 5
       end
 
       entry_location
@@ -546,24 +551,13 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.temp_var do |tv|
-            tv.write ctx.fisk.rsp
-            rt.push_reg ctx.fisk.rsi # preserve rsi and rdi
-            rt.push_reg ctx.fisk.rdi # so that we can call the generated function
-            rt.push_reg ctx.fisk.rsp
-            rt.rb_funcall self, :compile_opt_aref, [cfp_ptr.sp, req, tv[0]]
-          end
-          rt.pop_reg ctx.fisk.rsp
-          rt.pop_reg ctx.fisk.rdi
-          rt.pop_reg ctx.fisk.rsi
+          rt.push_reg REG_BP # alignment
+          rt.rb_funcall self, :compile_opt_aref, [cfp_ptr.sp, req, ctx.fisk.rax]
+          rt.pop_reg REG_BP # alignment
 
           rt.NUM2INT(rt.return_value)
 
-          rt.push_reg ctx.fisk.rsi
-          rt.call rt.return_value
-          rt.pop_reg ctx.fisk.rsi
-
-          rt.return
+          rt.jump rt.return_value
         end
       end
 
@@ -571,20 +565,14 @@ class TenderJIT
 
       req.deferred_entry = deferred.entry.to_i
 
-      __.mov(__.rsi, @temp_stack.pop) # param
-      __.mov(__.rdi, @temp_stack.pop) # recv
+      (argc + 1).times { @temp_stack.pop }
 
       #Jump in to the deferred compiler
-      __.push REG_BP
-      __.call(__.absolute(deferred.entry))
-      __.pop REG_BP
+      __.lea(__.rax, __.rip)
+      __.jmp(__.absolute(deferred.entry))
 
-      # The method call will return here, and its return value will be in RAX
+      # The call will return here, and its return value will be in RAX
       loc = @temp_stack.push(:unknown)
-      __.cmp(__.rax, __.uimm(Qundef))
-      __.jne(__.label(:continue))
-      __.ret
-      __.put_label(:continue)
       __.mov(loc, __.rax)
     end
 
@@ -607,33 +595,27 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.temp_var do |tv|
-            tv.write ctx.fisk.rsp
-            rt.push_reg REG_BP
-            rt.rb_funcall self, :compile_opt_send_without_block, [cfp_ptr.sp, compile_request, tv[0]]
-          end
+          rt.push_reg REG_BP
+          rt.rb_funcall self, :compile_opt_send_without_block, [cfp_ptr.sp, compile_request, ctx.fisk.rax]
+          rt.pop_reg REG_BP
 
           rt.NUM2INT(rt.return_value)
 
-          rt.call rt.return_value
-
-          rt.pop_reg REG_BP
-
-          rt.return
+          rt.jump rt.return_value
         end
       end
 
       deferred.call
 
       # Jump in to the deferred compiler
-      __.push REG_BP
-      __.call(__.absolute(deferred.entry))
-      __.pop REG_BP
+      __.lea(__.rax, __.rip)
+      __.jmp(__.absolute(deferred.entry))
 
       (ci.vm_ci_argc + 1).times { @temp_stack.pop }
 
       # The method call will return here, and its return value will be in RAX
       loc = @temp_stack.push(:unknown)
+      __.pop(REG_BP)
       __.cmp(__.rax, __.uimm(Qundef))
       __.jne(__.label(:continue))
       __.ret
@@ -742,8 +724,7 @@ class TenderJIT
 
       entry_location = jit_buffer.address
 
-      patch_call at_pos: patch_loc,
-                 to: entry_location
+      return_loc = patch_source_jump jit_buffer, at: patch_loc
 
       overflow_exit = compile_request.make_exit(exits)
 
@@ -766,19 +747,30 @@ class TenderJIT
         local_size - param_size
 
       with_runtime do |rt|
+        # Save the base pointer
+        rt.push_reg REG_BP
+
+        ret_loc = jit_buffer.memory.to_i + return_loc
         var = rt.temp_var
+        var.write ret_loc
+
+        # Callee will `ret` to return which will pop this address from the
+        # stack and jump to it
+        rt.push_reg var
+
+        # Dereference the JIT function address, skipping the REG_* assigments
+        # and jump to it
+        if $DEBUG
+          $stderr.puts "Should return to #{sprintf("%#x", ret_loc)}"
+        end
         var.write iseq.body.to_i
         iseq_body = rt.pointer(var, type: RbIseqConstantBody)
         var.write iseq_body.jit_func
         rt.add var, @skip_bytes
 
-        rt.push_reg REG_BP
-        rt.call var.to_register
-        rt.pop_reg REG_BP
+        rt.jump var
 
         var.release!
-
-        rt.return
       end
 
       entry_location
@@ -796,9 +788,9 @@ class TenderJIT
 
       frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL;
 
-      entry_location = jit_buffer.address
-      patch_call at_pos: patch_loc,
-                 to: entry_location
+      method_entry_addr = jit_buffer.address
+
+      return_loc = patch_source_jump jit_buffer, at: patch_loc
 
       temp_stack = compile_request.temp_stack
       idx = temp_stack.size - (argc + 1)
@@ -835,10 +827,12 @@ class TenderJIT
         cfp_ptr.add
         ec_ptr.cfp = cfp_ptr
 
-        rt.return
+        rt.push_reg REG_BP # Caller expects to pop REG_BP
+
+        rt.jump jit_buffer.memory.to_i + return_loc
       end
 
-      entry_location
+      method_entry_addr
     end
 
     def compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
@@ -860,8 +854,7 @@ class TenderJIT
 
       entry_location = jit_buffer.address
 
-      patch_call at_pos: patch_loc,
-                 to: entry_location
+      return_loc = patch_source_jump jit_buffer, at: patch_loc
 
       temp_stack = compile_request.temp_stack
 
@@ -886,7 +879,12 @@ class TenderJIT
         iseq.body.local_table_size - param_size
 
       with_runtime do |rt|
+        rt.push_reg REG_BP
+
         rt.temp_var do |var|
+          var.write jit_buffer.memory.to_i + return_loc
+          rt.push_reg var # Callee will `ret` to here
+
           # Dereference the JIT function address, skipping the REG_* assigments
           # and jump to it
           var.write iseq.body.to_i
@@ -894,11 +892,7 @@ class TenderJIT
           var.write iseq_body.jit_func
           rt.add var, @skip_bytes
 
-          rt.push_reg REG_BP
-          rt.call var.to_register
-          rt.pop_reg REG_BP
-
-          rt.return
+          rt.jump var
         end
       end
 
@@ -917,7 +911,7 @@ class TenderJIT
         raise NotImplementedError, "no ivar reads on non-heap objects"
       end
 
-      patch_loc = (loc - 5) - jit_buffer.memory.to_i
+      patch_loc = loc - jit_buffer.memory.to_i
 
       ## Compile the target method
       klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
