@@ -332,7 +332,6 @@ class TenderJIT
 
     Fisk.new { |__|
       __.push(REG_EC) # Push "don't care" reg for alignment
-        .push(REG_EC)
         .push(REG_CFP)
         .push(REG_BP)
         .lea(__.rax, __.rip(__.label(:return)))
@@ -341,7 +340,6 @@ class TenderJIT
         .put_label(:return)
         .pop(REG_BP)
         .pop(REG_CFP)
-        .pop(REG_EC)
         .pop(REG_EC)
         .ret
 
