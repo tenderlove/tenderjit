@@ -148,5 +148,23 @@ class TenderJIT
       v = assert_jit method(:call_bmethod), compiled: 2, executed: 2, exits: 0
       assert_equal 3, v
     end
+
+    def test_call_bmethod_twice
+      jit = TenderJIT.new
+      jit.compile method(:call_bmethod)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+      assert_equal 0, jit.exits
+
+      jit.enable!
+      call_bmethod
+      v = call_bmethod
+      jit.disable!
+      assert_equal 3, v
+
+      assert_equal 2, jit.compiled_methods
+      assert_equal 4, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
   end
 end

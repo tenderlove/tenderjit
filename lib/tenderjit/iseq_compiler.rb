@@ -574,8 +574,8 @@ class TenderJIT
       __.mov(__.rsi, @temp_stack.pop) # param
       __.mov(__.rdi, @temp_stack.pop) # recv
 
-      __.push REG_BP
       #Jump in to the deferred compiler
+      __.push REG_BP
       __.call(__.absolute(deferred.entry))
       __.pop REG_BP
 
@@ -607,27 +607,33 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.push_reg REG_BP
-          rt.rb_funcall self, :compile_opt_send_without_block, [cfp_ptr.sp, compile_request, ctx.fisk.rax]
-          rt.pop_reg REG_BP
+          rt.temp_var do |tv|
+            tv.write ctx.fisk.rsp
+            rt.push_reg REG_BP
+            rt.rb_funcall self, :compile_opt_send_without_block, [cfp_ptr.sp, compile_request, tv[0]]
+          end
 
           rt.NUM2INT(rt.return_value)
 
-          rt.jump rt.return_value
+          rt.call rt.return_value
+
+          rt.pop_reg REG_BP
+
+          rt.return
         end
       end
 
       deferred.call
 
       # Jump in to the deferred compiler
-      __.lea(__.rax, __.rip)
-      __.jmp(__.absolute(deferred.entry))
+      __.push REG_BP
+      __.call(__.absolute(deferred.entry))
+      __.pop REG_BP
 
       (ci.vm_ci_argc + 1).times { @temp_stack.pop }
 
       # The method call will return here, and its return value will be in RAX
       loc = @temp_stack.push(:unknown)
-      __.pop(REG_BP)
       __.cmp(__.rax, __.uimm(Qundef))
       __.jne(__.label(:continue))
       __.ret
@@ -736,7 +742,8 @@ class TenderJIT
 
       entry_location = jit_buffer.address
 
-      return_loc = patch_source_jump jit_buffer, at: patch_loc
+      patch_call at_pos: patch_loc,
+                 to: entry_location
 
       overflow_exit = compile_request.make_exit(exits)
 
@@ -759,30 +766,19 @@ class TenderJIT
         local_size - param_size
 
       with_runtime do |rt|
-        # Save the base pointer
-        rt.push_reg REG_BP
-
-        ret_loc = jit_buffer.memory.to_i + return_loc
         var = rt.temp_var
-        var.write ret_loc
-
-        # Callee will `ret` to return which will pop this address from the
-        # stack and jump to it
-        rt.push_reg var
-
-        # Dereference the JIT function address, skipping the REG_* assigments
-        # and jump to it
-        if $DEBUG
-          $stderr.puts "Should return to #{sprintf("%#x", ret_loc)}"
-        end
         var.write iseq.body.to_i
         iseq_body = rt.pointer(var, type: RbIseqConstantBody)
         var.write iseq_body.jit_func
         rt.add var, @skip_bytes
 
-        rt.jump var
+        rt.push_reg REG_BP
+        rt.call var.to_register
+        rt.pop_reg REG_BP
 
         var.release!
+
+        rt.return
       end
 
       entry_location
@@ -800,9 +796,9 @@ class TenderJIT
 
       frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL;
 
-      method_entry_addr = jit_buffer.address
-
-      return_loc = patch_source_jump jit_buffer, at: patch_loc
+      entry_location = jit_buffer.address
+      patch_call at_pos: patch_loc,
+                 to: entry_location
 
       temp_stack = compile_request.temp_stack
       idx = temp_stack.size - (argc + 1)
@@ -839,12 +835,10 @@ class TenderJIT
         cfp_ptr.add
         ec_ptr.cfp = cfp_ptr
 
-        rt.push_reg REG_BP # Caller expects to pop REG_BP
-
-        rt.jump jit_buffer.memory.to_i + return_loc
+        rt.return
       end
 
-      method_entry_addr
+      entry_location
     end
 
     def compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
@@ -866,7 +860,8 @@ class TenderJIT
 
       entry_location = jit_buffer.address
 
-      return_loc = patch_source_jump jit_buffer, at: patch_loc
+      patch_call at_pos: patch_loc,
+                 to: entry_location
 
       temp_stack = compile_request.temp_stack
 
@@ -891,12 +886,7 @@ class TenderJIT
         iseq.body.local_table_size - param_size
 
       with_runtime do |rt|
-        rt.push_reg REG_BP
-
         rt.temp_var do |var|
-          var.write jit_buffer.memory.to_i + return_loc
-          rt.push_reg var # Callee will `ret` to here
-
           # Dereference the JIT function address, skipping the REG_* assigments
           # and jump to it
           var.write iseq.body.to_i
@@ -904,7 +894,11 @@ class TenderJIT
           var.write iseq_body.jit_func
           rt.add var, @skip_bytes
 
-          rt.jump var
+          rt.push_reg REG_BP
+          rt.call var.to_register
+          rt.pop_reg REG_BP
+
+          rt.return
         end
       end
 
@@ -923,7 +917,7 @@ class TenderJIT
         raise NotImplementedError, "no ivar reads on non-heap objects"
       end
 
-      patch_loc = loc - jit_buffer.memory.to_i
+      patch_loc = (loc - 5) - jit_buffer.memory.to_i
 
       ## Compile the target method
       klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
