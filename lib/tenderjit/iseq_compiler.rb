@@ -616,10 +616,6 @@ class TenderJIT
       # The method call will return here, and its return value will be in RAX
       loc = @temp_stack.push(:unknown)
       __.pop(REG_BP)
-      __.cmp(__.rax, __.uimm(Qundef))
-      __.jne(__.label(:continue))
-      __.ret
-      __.put_label(:continue)
       __.mov(loc, __.rax)
     end
 

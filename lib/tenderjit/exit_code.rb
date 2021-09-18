@@ -37,6 +37,7 @@ class TenderJIT
           print_str __, "EXITING! #{exit_insn_name}\n"
         end
 
+        __.mov(__.rsp, REG_TOP)
         __.mov(__.rax, __.uimm(Qundef))
           .ret
       end

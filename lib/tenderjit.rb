@@ -11,9 +11,10 @@ require "fisk/helpers"
 require "etc"
 
 class TenderJIT
-  REG_EC  = Fisk::Registers::R13
-  REG_CFP = Fisk::Registers::R14
-  REG_BP  = Fisk::Registers::R15
+  REG_EC  = Fisk::Registers::R13 # Execution context
+  REG_CFP = Fisk::Registers::R14 # Current control frame
+  REG_BP  = Fisk::Registers::R15 # Base pointer for Stack
+  REG_TOP = Fisk::Registers::R12 # Entry stack location
 
   Internals = Ruby::INSTANCE
 
@@ -331,15 +332,28 @@ class TenderJIT
     buf = StringIO.new(''.b)
 
     Fisk.new { |__|
-      __.push(REG_EC) # Push "don't care" reg for alignment
+      # We're using caller-saved registers for REG_*, so we need to push
+      # them to save a copy before returning.
+      __.push(REG_EC) # Pushing twice for alignment
+        .push(REG_EC)
         .push(REG_CFP)
+        .push(REG_TOP)
         .push(REG_BP)
-        .lea(__.rax, __.rip(__.label(:return)))
+
+      # This pushes the address of the label "return" on the stack.  The idea
+      # is that a call to `ret` will jump to the "return" label and pop the
+      # caller saved registers.
+      __.lea(__.rax, __.rip(__.label(:return)))
         .push(__.rax)
+        .mov(REG_TOP, __.rsp)
         .jmp(__.label(:skip_return))
-        .put_label(:return)
+
+      # We want to jump here on `ret`
+      __.put_label(:return)
         .pop(REG_BP)
+        .pop(REG_TOP)
         .pop(REG_CFP)
+        .pop(REG_EC)
         .pop(REG_EC)
         .ret
 
