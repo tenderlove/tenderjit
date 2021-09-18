@@ -91,16 +91,12 @@ class TenderJIT
           #.int(_.lit(3))
       }.write_to(jit_buffer)
 
-      if resume_compiling(0, TempStack.new) == :abort
-        if $DEBUG
-          $stderr.puts "ABORTED #{sprintf("%#x", RbIseqConstantBody.jit_func(@body))}"
-        end
-      else
-        if $DEBUG
-          $stderr.puts "NEW ENTRY HEAD #{sprintf("%#x", jit_head.to_i)}"
-        end
-        RbIseqConstantBody.set_jit_func(@body, jit_head)
+      resume_compiling(0, TempStack.new)
+
+      if $DEBUG
+        $stderr.puts "NEW ENTRY HEAD #{sprintf("%#x", jit_head.to_i)}"
       end
+      RbIseqConstantBody.set_jit_func(@body, jit_head)
 
       jit_head
     end
@@ -108,12 +104,13 @@ class TenderJIT
     private
 
     class Block
-      attr_reader :entry_idx, :jit_position, :start_address
+      attr_reader :entry_idx, :jit_position, :start_address, :end_address
 
       def initialize entry_idx, jit_position, start_address
         @entry_idx     = entry_idx
         @jit_position  = jit_position
         @start_address = start_address
+        @end_address   = end_address
       end
     end
 
@@ -141,10 +138,6 @@ class TenderJIT
           if v == :quit
             make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
             break
-          end
-          if v == :abort
-            make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
-            return v
           end
           @fisk.release_all_registers
           @fisk.assign_registers(SCRATCH_REGISTERS, local: true)
