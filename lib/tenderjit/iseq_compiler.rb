@@ -139,7 +139,7 @@ class TenderJIT
           @fisk = Fisk.new
           v = send("handle_#{name}", *params)
           if v == :quit
-            make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
+            make_exit(name, @current_pc, @temp_stack).write_to jit_buffer
             break
           end
           @fisk.release_all_registers
@@ -157,7 +157,7 @@ class TenderJIT
           if $DEBUG
             puts "#{@insn_idx} COULDN'T COMPILE #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)}"
           end
-          make_exit(name, @current_pc, @temp_stack.dup).write_to jit_buffer
+          make_exit(name, @current_pc, @temp_stack).write_to jit_buffer
           break
         end
 
