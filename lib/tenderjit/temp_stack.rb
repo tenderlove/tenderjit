@@ -36,7 +36,7 @@ class TenderJIT
     # Push a value on the temp stack. Returns the memory location where
     # to write the actual value in machine code.
     def push name, type: nil
-      m = Fisk::M64.new(REG_BP, @stack.length * @sizeof_sp)
+      m = Fisk::M64.new(REG_BP, size * @sizeof_sp)
       @stack.push Item.new(name, type, m)
       m
     end
