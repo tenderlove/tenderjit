@@ -104,7 +104,8 @@ class TenderJIT
     private
 
     class Block
-      attr_reader :entry_idx, :jit_position, :start_address, :end_address
+      attr_reader :entry_idx, :jit_position, :start_address
+      attr_accessor :end_address
 
       def initialize entry_idx, jit_position, start_address
         @entry_idx     = entry_idx
@@ -112,6 +113,8 @@ class TenderJIT
         @start_address = start_address
         @end_address   = end_address
       end
+
+      def done?; @end_address; end
     end
 
     def resume_compiling insn_idx, temp_stack
@@ -147,6 +150,7 @@ class TenderJIT
           end
 
           if v == :continue
+            @blocks.last.end_address = jit_buffer.address
             @blocks << Block.new(@insn_idx + len, jit_buffer.pos, jit_buffer.address)
           end
         else
@@ -160,6 +164,8 @@ class TenderJIT
         @insn_idx += len
         @current_pc += len * Fiddle::SIZEOF_VOIDP
       end
+
+      @blocks.last.end_address = jit_buffer.address
     end
 
     def flush
@@ -896,11 +902,14 @@ class TenderJIT
 
       overflow_exit = compile_request.make_exit(exits)
 
-      if rb.RB_SPECIAL_CONST_P(recv)
-        raise NotImplementedError, "no ivar reads on non-heap objects"
-      end
-
       patch_loc = loc - jit_buffer.memory.to_i
+
+      jit_buffer.patch_jump at: patch_loc,
+                            to: overflow_exit
+
+      if rb.RB_SPECIAL_CONST_P(recv)
+        raise NotImplementedError, "non-heap objects not implemented"
+      end
 
       ## Compile the target method
       klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
@@ -1074,11 +1083,13 @@ class TenderJIT
       :stop
     end
 
-    class HandleOptGetinlinecache < Struct.new(:jump_idx, :jump_type, :temp_stack, :ic)
+    class HandleOptGetinlinecache < Struct.new(:jump_idx, :jump_type, :temp_stack, :ic, :current_pc)
     end
 
     def compile_opt_getinlinecache stack, req, patch_loc
       patch_loc = patch_loc - jit_buffer.memory.to_i
+
+      dup_stack = req.temp_stack.dup
 
       loc = req.temp_stack.push(:cache_get)
 
@@ -1086,9 +1097,17 @@ class TenderJIT
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
       unless target_block
+        exit_addr = exits.make_exit("opt_getinlinecache", req.current_pc, dup_stack)
+
+        jit_buffer.patch_jump at: patch_loc,
+                              to: exit_addr,
+                              type: req.jump_type
+
         resume_compiling req.jump_idx, req.temp_stack
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
       end
+
+      raise unless target_block.done?
 
       jit_buffer.patch_jump at: patch_loc,
                             to: jit_buffer.address,
@@ -1112,7 +1131,7 @@ class TenderJIT
 
       dst = @insn_idx + dst + len
 
-      patch_request = HandleOptGetinlinecache.new dst, :jmp, @temp_stack.dup, ic
+      patch_request = HandleOptGetinlinecache.new dst, :jmp, @temp_stack.dup, ic, current_pc
       @compile_requests << Fiddle::Pinned.new(patch_request)
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
