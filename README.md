@@ -32,6 +32,8 @@ jit.disable!
 
 Eventually TenderJIT will compile code automatically, but today it doesn't.
 
+TenderJIT only supports Ruby 3.0.2 and up!
+
 ## How does TenderJIT work?
 
 TenderJIT reads each YARV instruction in the target method, then converts that
@@ -93,6 +95,9 @@ at run-time, then YARV will call the machine code version rather than the
 YARV byte code version.
 
 ## Hacking on TenderJIT
+
+You should only need Ruby 3.0.0 or up to get started hacking on TenderJIT.
+However, I highly recommend installing a debugger like lldb or gdb as well.
 
 The main compiler object is the `TenderJIT::ISEQCompiler` class which can be
 found in [`lib/tenderjit/iseq_compiler.rb`](lib/tenderjit/iseq_compiler.rb).
