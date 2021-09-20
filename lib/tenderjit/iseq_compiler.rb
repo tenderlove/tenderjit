@@ -203,7 +203,7 @@ class TenderJIT
     def exits; @jit.exit_code; end
 
     def make_exit exit_insn_name, exit_pc, temp_stack
-      jump_addr = exits.make_exit(exit_insn_name, exit_pc, temp_stack)
+      jump_addr = exits.make_exit(exit_insn_name, exit_pc, temp_stack.size)
       Fisk.new { |_|
         _.mov(_.r10, _.uimm(jump_addr))
           .jmp(_.r10)
@@ -212,7 +212,7 @@ class TenderJIT
 
     class CallCompileRequest < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc)
       def make_exit exits
-        exits.make_exit("opt_send_without_block", current_pc, temp_stack)
+        exits.make_exit("opt_send_without_block", current_pc, temp_stack.size)
       end
     end
 
@@ -1024,7 +1024,7 @@ class TenderJIT
 
       # if this is a backwards jump, check interrupts
       if jump_idx < @insn_idx
-        exit_addr = exits.make_exit(insn_name, current_pc, @temp_stack.dup)
+        exit_addr = exits.make_exit(insn_name, current_pc, @temp_stack.size)
 
         __.with_register do |tmp|
           __.mov(tmp, __.m64(REG_EC, RbExecutionContextT.offsetof("interrupt_mask")))
@@ -1097,7 +1097,7 @@ class TenderJIT
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
       unless target_block
-        exit_addr = exits.make_exit("opt_getinlinecache", req.current_pc, dup_stack)
+        exit_addr = exits.make_exit("opt_getinlinecache", req.current_pc, dup_stack.size)
 
         jit_buffer.patch_jump at: patch_loc,
                               to: exit_addr,
@@ -1239,7 +1239,7 @@ class TenderJIT
     def handle_opt_minus call_data
       ts = @temp_stack
 
-      exit_addr = exits.make_exit("opt_minus", current_pc, @temp_stack.dup)
+      exit_addr = exits.make_exit("opt_minus", current_pc, @temp_stack.size)
 
       # Generate runtime checks if we need them
       2.times do |i|
@@ -1277,7 +1277,7 @@ class TenderJIT
     def handle_opt_plus call_data
       ts = @temp_stack
 
-      exit_addr = exits.make_exit("opt_plus", current_pc, @temp_stack.dup)
+      exit_addr = exits.make_exit("opt_plus", current_pc, @temp_stack.size)
 
       # Generate runtime checks if we need them
       2.times do |i|
@@ -1322,7 +1322,7 @@ class TenderJIT
       2.times do |i|
         idx = ts.size - i - 1
         if ts.peek(idx).type != T_FIXNUM
-          exit_addr ||= exits.make_exit(insn_name, current_pc, @temp_stack.dup)
+          exit_addr ||= exits.make_exit(insn_name, current_pc, @temp_stack.size)
 
           # Is the argument a fixnum?
           __.test(ts.peek(idx).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
@@ -1399,7 +1399,7 @@ class TenderJIT
     def handle_setlocal_WC_0 idx
       loc = @temp_stack.pop
 
-      addr = exits.make_exit("setlocal_WC_0", current_pc, @temp_stack.dup)
+      addr = exits.make_exit("setlocal_WC_0", current_pc, @temp_stack.size)
 
       reg_ep = __.register "ep"
       reg_local = __.register "local"

@@ -10,7 +10,7 @@ class TenderJIT
       @exit_stats_addr = exit_stats_addr
     end
 
-    def make_exit exit_insn_name, exit_pc, temp_stack
+    def make_exit exit_insn_name, exit_pc, stack_depth
       fisk = Fisk.new
 
       stats_addr = fisk.imm64(self.stats_addr)
@@ -26,8 +26,9 @@ class TenderJIT
         __.mov(tmp, exit_stats_addr)
           .inc(__.m64(tmp, ExitStats.offsetof(exit_insn_name)))
 
-        # increment the SP
-        temp_stack.flush(__)
+        # Flush the SP
+        __.lea(tmp, __.m(REG_BP, stack_depth * Fiddle::SIZEOF_VOIDP))
+          .mov(__.m64(REG_CFP, RbControlFrameStruct.offsetof("sp")), tmp)
 
         # Set the PC on the CFP
         __.mov(tmp, __.uimm(exit_pc))
