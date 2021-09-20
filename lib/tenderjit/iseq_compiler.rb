@@ -47,22 +47,6 @@ class TenderJIT
       @fisk
     end
 
-    def recompile!
-      if $DEBUG
-        $stderr.puts "RECOMPILE"
-      end
-      @temp_stack = nil
-      @body.jit_func = 0
-      @insn_idx   = nil
-      @current_pc = nil
-      @fisk       = nil
-
-      @blocks     = []
-      @compile_requests = []
-      @objects = []
-      compile
-    end
-
     def compile
       if $DEBUG
         puts "Compiling iseq addr: #{sprintf("%#x", @iseq)}"
