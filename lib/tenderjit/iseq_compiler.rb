@@ -251,18 +251,17 @@ class TenderJIT
         temp.write cfp_ptr.self
 
         self_ptr = rt.pointer(temp, type: RObject)
-        sp_ptr   = rt.pointer(req.stack_loc.register, offset: req.stack_loc.displacement)
 
         # If the object class is the same, continue
         rt.if_eq(self_ptr.basic.klass, klass) {
 
           # If it's an embedded object, read the ivar out of the object
           rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
-            sp_ptr[0] = self_ptr.as.ary[ivar_idx]
+            rt.return_value = self_ptr.as.ary[ivar_idx]
 
           }.else { # Otherwise, check the extended table
             temp.write self_ptr.as.heap.ivptr
-            sp_ptr[0] = rt.pointer(temp)[ivar_idx]
+            rt.return_value = rt.pointer(temp)[ivar_idx]
           }
 
         }.else { # Otherwise we need to recompile
@@ -360,18 +359,17 @@ class TenderJIT
         temp.write cfp_ptr.self
 
         self_ptr = rt.pointer(temp, type: RObject)
-        sp_ptr   = rt.pointer(req.stack_loc.register, offset: req.stack_loc.displacement)
 
         # If the object class is the same, continue
         rt.if_eq(self_ptr.basic.klass, klass) {
 
           # If it's an embedded object, write to the embedded array
           rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
-            self_ptr.as.ary[ivar_idx] = sp_ptr[0]
+            self_ptr.as.ary[ivar_idx] = rt.c_param(0)
 
           }.else { # Otherwise, the extended table
             temp.write self_ptr.as.heap.ivptr
-            rt.pointer(temp)[ivar_idx] = sp_ptr[0]
+            rt.pointer(temp)[ivar_idx] = rt.c_param(0)
           }
 
         }.else { # Otherwise we need to recompile
@@ -387,9 +385,8 @@ class TenderJIT
     end
 
     def handle_setinstancevariable id, ic
-      read_loc = @temp_stack.last.loc
+      req = IVarRequest.new(id, current_pc, next_pc, @temp_stack.size)
 
-      req = IVarRequest.new(id, current_pc, next_pc, read_loc)
       @compile_requests << Fiddle::Pinned.new(req)
 
       # `deferred_call` preserves the stack, so we can't pop from the temp
@@ -399,7 +396,11 @@ class TenderJIT
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
           rt.push_reg REG_BP
-          rt.rb_funcall self, :compile_setinstancevariable, [cfp_ptr.self, req, ctx.fisk.rax]
+          rt.push_reg REG_BP
+          rt.push_reg rt.c_param(0)
+          rt.rb_funcall self, :compile_setinstancevariable, [cfp_ptr.self, req, rt.return_value]
+          rt.pop_reg rt.c_param(0)
+          rt.pop_reg REG_BP
           rt.pop_reg REG_BP
 
           rt.NUM2INT(rt.return_value)
@@ -408,13 +409,14 @@ class TenderJIT
         end
       end
 
-      @temp_stack.pop
+      read_loc = @temp_stack.pop
 
       # jump back to the re-written jmp
       deferred.call
 
       req.deferred_entry = deferred.entry.to_i
 
+      __.mov(__.rdi, read_loc)
       __.lea(__.rax, __.rip)
       __.jmp(__.absolute(deferred.entry.to_i))
     end
@@ -444,9 +446,10 @@ class TenderJIT
     end
 
     def handle_getinstancevariable id, ic
+      req = IVarRequest.new(id, current_pc, next_pc, @temp_stack.size)
+
       write_loc = @temp_stack.push(:unknown)
 
-      req = IVarRequest.new(id, current_pc, next_pc, write_loc)
       @compile_requests << Fiddle::Pinned.new(req)
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
@@ -454,7 +457,7 @@ class TenderJIT
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
           rt.push_reg REG_BP
-          rt.rb_funcall self, :compile_getinstancevariable, [cfp_ptr.self, req, ctx.fisk.rax]
+          rt.rb_funcall self, :compile_getinstancevariable, [cfp_ptr.self, req, rt.return_value]
           rt.pop_reg REG_BP
 
           rt.NUM2INT(rt.return_value)
@@ -470,6 +473,7 @@ class TenderJIT
 
       __.lea(__.rax, __.rip)
       __.jmp(__.absolute(deferred.entry.to_i))
+      __.mov(write_loc, __.rax)
     end
 
     def compile_opt_aref stack, req, patch_loc
@@ -1097,7 +1101,7 @@ class TenderJIT
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
       unless target_block
-        exit_addr = exits.make_exit("opt_getinlinecache", req.current_pc, dup_stack.size)
+        exit_addr = exits.make_exit("temporary_exit", req.current_pc, dup_stack.size)
 
         jit_buffer.patch_jump at: patch_loc,
                               to: exit_addr,

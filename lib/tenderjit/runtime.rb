@@ -41,6 +41,10 @@ class TenderJIT
       @fisk.rax
     end
 
+    def return_value= v
+      @fisk.mov @fisk.rax, v
+    end
+
     def patchable_jump dest
       @fisk.lea(return_value, @fisk.rip)
       jump dest
@@ -449,6 +453,8 @@ class TenderJIT
         if val.is_a?(Fisk::Operand)
           if val.memory?
             @ec.write_memory @reg, @base + (idx * size), val
+          elsif val.register?
+            @ec.write_register @reg, @base + (idx * size), val
           else
             raise NotImplementedError
           end
