@@ -196,5 +196,31 @@ class TenderJIT
       assert_equal 4, jit.executed_methods
       assert_equal 0, jit.exits
     end
+
+    class B
+      def foo
+        self
+      end
+    end
+
+    def test_iseq_self
+      x1 = B.new
+      x2 = B.new
+
+      jit = TenderJIT.new
+      jit.compile method(:wow)
+
+      jit.enable!
+      v1 = wow(x1)
+      v2 = wow(x2)
+      jit.disable!
+
+      assert_same x1, v1
+      assert_same x2, v2
+
+      assert_equal 2, jit.compiled_methods
+      assert_equal 4, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
   end
 end

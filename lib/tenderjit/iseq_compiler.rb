@@ -722,7 +722,7 @@ class TenderJIT
       # `vm_push_frame`
       vm_push_frame iseq_ptr,
         VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL,
-        recv,
+        temp_stack.peek(temp_stack.size - 1 - argc).loc,
         0, #ci.block_handler,
         cme,
         iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
@@ -789,7 +789,7 @@ class TenderJIT
 
       vm_push_frame(0,
                     frame_type,
-                    recv,
+                    temp_stack.peek(temp_stack.size - 1 - argc).loc,
                     0, #ci.block_handler,
                     cme,
                     0,
