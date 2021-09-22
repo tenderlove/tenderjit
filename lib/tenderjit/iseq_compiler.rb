@@ -212,21 +212,21 @@ class TenderJIT
         raise NotImplementedError, "no ivar reads on non objects #{type}"
       end
 
-      klass        = RBasic.klass(recv)
-      iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass))
+      klass        = CFuncs.rb_obj_class(recv)
+      iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
       value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
 
       if iv_index_tbl == 0 || 0 == CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
         CFuncs.rb_ivar_set(recv, req.id, Qundef)
-        iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass))
+        iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
         CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
       end
 
       ivar_idx = value.ptr.to_int
 
       code_start = jit_buffer.address
-      return_loc = patch_source_jump jit_buffer, at: (loc - jit_buffer.memory.to_i),
-                                                 to: code_start
+      patch_at   = loc - jit_buffer.memory.to_i
+      return_loc = patch_at + 5
 
       with_runtime do |rt|
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
@@ -237,7 +237,7 @@ class TenderJIT
         self_ptr = rt.pointer(temp, type: RObject)
 
         # If the object class is the same, continue
-        rt.if_eq(self_ptr.basic.klass, klass) {
+        rt.if_eq(self_ptr.basic.klass, RBasic.klass(recv).to_i) {
 
           # If it's an embedded object, read the ivar out of the object
           rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
@@ -256,6 +256,8 @@ class TenderJIT
 
         rt.jump jit_buffer.memory.to_i + return_loc
       end
+
+      patch_source_jump jit_buffer, at: patch_at, to: code_start
 
       code_start
     end
@@ -318,7 +320,7 @@ class TenderJIT
         raise NotImplementedError, "no ivar reads on non objects #{type}"
       end
 
-      klass        = RBasic.klass(recv)
+      klass        = CFuncs.rb_obj_class(recv).to_i
       iv_index_tbl = RClass.new(klass).ptr.iv_index_tbl.to_i
 
       value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
@@ -432,6 +434,8 @@ class TenderJIT
     def handle_getinstancevariable id, ic
       req = IVarRequest.new(id, current_pc, next_pc, @temp_stack.size)
 
+      exit_addr = exits.make_exit("temporary_exit", current_pc, @temp_stack.size)
+
       write_loc = @temp_stack.push(:unknown)
 
       @compile_requests << Fiddle::Pinned.new(req)
@@ -440,13 +444,36 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.push_reg REG_BP
-          rt.rb_funcall self, :compile_getinstancevariable, [cfp_ptr.self, req, rt.return_value]
-          rt.pop_reg REG_BP
+          temp = rt.temp_var
+          temp.write rt.pointer(rt.return_value)[0]
+          temp.shl   24
+          temp.shr   32
+          rt.add     temp, 5
+          rt.add     temp, rt.return_value
 
-          rt.NUM2INT(rt.return_value)
+          rt.if_eq(temp.to_register, deferred.entry.to_i) {
+            temp.write 0xFFFFFF_00000000_FF
+            temp.and rt.pointer(rt.return_value)[0]
+            rt.pointer(rt.return_value)[0] = temp
+            temp.write exit_addr
+            temp.sub rt.return_value
+            rt.sub temp.to_register, 5
+            temp.shl 8
+            temp.or rt.pointer(rt.return_value)[0]
+            rt.pointer(rt.return_value)[0] = temp
+            temp.release!
 
-          rt.jump rt.return_value
+            rt.push_reg REG_BP
+            rt.rb_funcall self, :compile_getinstancevariable, [cfp_ptr.self, req, rt.return_value]
+            rt.pop_reg REG_BP
+
+            rt.NUM2INT(rt.return_value)
+
+            rt.jump rt.return_value
+          }.else {
+            rt.break
+            rt.jump exit_addr
+          }
         end
       end
 
@@ -567,6 +594,8 @@ class TenderJIT
       cd = RbCallData.new call_data
       ci = RbCallInfo.new cd.ci
 
+      exit_addr = exits.make_exit("temporary_exit", current_pc, @temp_stack.size)
+
       # only handle simple methods
       #return unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
 
@@ -582,13 +611,36 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.push_reg REG_BP
-          rt.rb_funcall self, :compile_opt_send_without_block, [cfp_ptr.sp, compile_request, ctx.fisk.rax]
-          rt.pop_reg REG_BP
+          temp = rt.temp_var
+          temp.write rt.pointer(rt.return_value)[0]
+          temp.shl   24
+          temp.shr   32
+          rt.add     temp, 5
+          rt.add     temp, rt.return_value
 
-          rt.NUM2INT(rt.return_value)
+          rt.if_eq(temp.to_register, deferred.entry.to_i) {
+            temp.write 0xFFFFFF_00000000_FF
+            temp.and rt.pointer(rt.return_value)[0]
+            rt.pointer(rt.return_value)[0] = temp
+            temp.write exit_addr
+            temp.sub rt.return_value
+            rt.sub temp.to_register, 5
+            temp.shl 8
+            temp.or rt.pointer(rt.return_value)[0]
+            rt.pointer(rt.return_value)[0] = temp
+            temp.release!
 
-          rt.jump rt.return_value
+            rt.push_reg REG_BP
+            rt.rb_funcall self, :compile_opt_send_without_block, [cfp_ptr.sp, compile_request, ctx.fisk.rax]
+            rt.pop_reg REG_BP
+
+            rt.NUM2INT(rt.return_value)
+
+            rt.jump rt.return_value
+          }.else {
+            rt.break
+            rt.jump exit_addr
+          }
         end
       end
 
@@ -722,7 +774,7 @@ class TenderJIT
       # `vm_push_frame`
       vm_push_frame iseq_ptr,
         VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL,
-        temp_stack.peek(temp_stack.size - 1 - argc).loc,
+        compile_request.temp_stack.peek(compile_request.temp_stack.size - 1 - argc).loc,
         0, #ci.block_handler,
         cme,
         iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
@@ -789,7 +841,7 @@ class TenderJIT
 
       vm_push_frame(0,
                     frame_type,
-                    temp_stack.peek(temp_stack.size - 1 - argc).loc,
+                    compile_request.temp_stack.peek(compile_request.temp_stack.size - 1 - argc).loc,
                     0, #ci.block_handler,
                     cme,
                     0,
@@ -854,7 +906,7 @@ class TenderJIT
 
       vm_push_frame iseq.to_i,
         type | VM_FRAME_FLAG_BMETHOD,
-        temp_stack.peek(temp_stack.size - 1 - argc).loc,
+        compile_request.temp_stack.peek(compile_request.temp_stack.size - 1 - argc).loc,
         VM_GUARDED_PREV_EP(captured.ep),
         cme,
         iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
