@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Just some additions to fiddle that maybe we should upstream?
 
 require "fiddle"
