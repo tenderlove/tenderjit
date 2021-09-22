@@ -87,7 +87,7 @@ module Layout
       <%- if struct.aliases.any? -%>
       # <%= struct.aliases.join(", ") %>
       <%- end -%>
-      <%= "  " * indent %>Fiddle::Layout::Struct.new(<%= struct.byte_size %>,
+      <%= "  " * indent %>Fiddle::Layout::Struct.new(<%= struct.name.dump %>, <%= struct.byte_size %>,
       <%= "  " * indent %>  <%= PP.pp(struct.children.map(&:name), '').chomp %>,
       <%= "  " * indent %>  [
       <%- struct.children.each do |child| -%>
@@ -102,7 +102,7 @@ module Layout
       <%- if struct.aliases.any? -%>
       # <%= struct.aliases.join(", ") %>
       <%- end -%>
-      <%= "  " * indent %>Fiddle::Layout::Union.new(<%= struct.byte_size %>,
+      <%= "  " * indent %>Fiddle::Layout::Union.new(<%= struct.name.dump %>, <%= struct.byte_size %>,
       <%= "  " * indent %>  <%= PP.pp(struct.children.map(&:name), '').chomp %>,
       <%= "  " * indent %>  [
       <%- struct.children.each do |child| -%>

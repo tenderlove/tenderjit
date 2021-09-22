@@ -9,7 +9,6 @@ class TenderJIT
     end
 
     def test_putself
-      jit = TenderJIT.new
       jit.compile method(:putself)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods

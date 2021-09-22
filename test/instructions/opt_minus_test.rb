@@ -17,7 +17,6 @@ class TenderJIT
     end
 
     def test_sub_lits
-      jit = TenderJIT.new
       jit.compile method(:sub_lits)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -33,7 +32,6 @@ class TenderJIT
     end
 
     def test_sub_params
-      jit = TenderJIT.new
       jit.compile method(:sub_params)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -49,7 +47,6 @@ class TenderJIT
     end
 
     def test_sub_lit_and_params
-      jit = TenderJIT.new
       jit.compile method(:sub_lit_and_param)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -65,7 +62,6 @@ class TenderJIT
     end
 
     def test_sub_strings_bails
-      jit = TenderJIT.new
       jit.compile method(:sub_params)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods

@@ -9,7 +9,6 @@ class TenderJIT
     end
 
     def test_opt_getinlinecache
-      jit = TenderJIT.new
       jit.compile(method(:getconst))
 
       # Keep calling "getconst" until it stops recompiling.  `opt_getinlinecache`

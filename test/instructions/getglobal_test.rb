@@ -9,7 +9,6 @@ class TenderJIT
     end
 
     def test_getglobal
-      jit = TenderJIT.new
       jit.compile method(:check_debug)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods

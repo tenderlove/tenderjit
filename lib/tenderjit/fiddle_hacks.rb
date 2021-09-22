@@ -164,9 +164,10 @@ module Fiddle
         end
       end
 
-      attr_reader :byte_size, :instance_class
+      attr_reader :byte_size, :instance_class, :name
 
-      def initialize byte_size, names, types, offsets = nil
+      def initialize name, byte_size, names, types, offsets = nil
+        @name = name
         @members_by_name = {}
 
         names.map.with_index do |name, i|

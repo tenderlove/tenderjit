@@ -13,7 +13,6 @@ class TenderJIT
     end
 
     def test_branchunless
-      jit = TenderJIT.new
       jit.compile method(:compare)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -30,7 +29,6 @@ class TenderJIT
     end
 
     def test_branchunless_other_side
-      jit = TenderJIT.new
       jit.compile method(:compare)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods

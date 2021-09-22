@@ -13,7 +13,6 @@ class TenderJIT
     end
 
     def test_opt_aref
-      jit = TenderJIT.new
       jit.compile method(:aref)
 
       jit.enable!
@@ -27,7 +26,6 @@ class TenderJIT
     end
 
     def test_opt_aref_twice
-      jit = TenderJIT.new
       jit.compile method(:aref)
 
       jit.enable!
@@ -42,7 +40,6 @@ class TenderJIT
     end
 
     def test_opt_aref_hash
-      jit = TenderJIT.new
       jit.compile method(:aref)
 
       jit.enable!
@@ -56,7 +53,6 @@ class TenderJIT
     end
 
     def test_hash_then_array
-      jit = TenderJIT.new
       jit.compile method(:aref)
 
       jit.enable!
@@ -72,7 +68,6 @@ class TenderJIT
     end
 
     def test_hash_then_array_twice
-      jit = TenderJIT.new
       jit.compile method(:aref)
 
       jit.enable!

@@ -13,7 +13,6 @@ class TenderJIT
     end
 
     def test_method_call
-      jit = TenderJIT.new
       jit.compile method(:call_function_simple)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -41,7 +40,6 @@ class TenderJIT
     alias :mm :call_p
 
     def test_call_p
-      jit = TenderJIT.new
       jit.compile method(:call_p)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -63,7 +61,6 @@ class TenderJIT
     end
 
     def test_call_bang
-      jit = TenderJIT.new
       jit.compile method(:call_bang)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -89,7 +86,6 @@ class TenderJIT
     end
 
     def test_deep_exit
-      jit = TenderJIT.new
       jit.compile method(:one)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -114,7 +110,6 @@ class TenderJIT
       expected = Fiddle.dlwrap obj
 
       success = false
-      jit = TenderJIT.new
       jit.compile(method(:cfunc))
       5.times do
         recompiles = jit.recompiles
@@ -150,7 +145,6 @@ class TenderJIT
     end
 
     def test_call_bmethod_twice
-      jit = TenderJIT.new
       jit.compile method(:call_bmethod)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -173,6 +167,10 @@ class TenderJIT
       m.foo
     end
 
+    def wow2 m
+      m.foo(m)
+    end
+
     def test_subclass_bmethod
       x = Class.new(A) {
         define_method(:foo) { self }
@@ -181,7 +179,6 @@ class TenderJIT
       x1 = x.new
       x2 = x.new
 
-      jit = TenderJIT.new
       jit.compile method(:wow)
 
       jit.enable!
@@ -198,28 +195,40 @@ class TenderJIT
     end
 
     class B
-      def foo
-        self
+      def initialize
+        @omg = Class.new {
+          attr_reader :x
+
+          def initialize x
+            @x = x
+          end
+        }
+      end
+
+      def foo m
+        @omg.new self
       end
     end
 
     def test_iseq_self
       x1 = B.new
       x2 = B.new
+      x3 = B.new
 
-      jit = TenderJIT.new
-      jit.compile method(:wow)
+      jit.compile method(:wow2)
 
       jit.enable!
-      v1 = wow(x1)
-      v2 = wow(x2)
+      v1 = wow2(x1)
+      v2 = wow2(x2)
+      v3 = wow2(x3)
       jit.disable!
 
-      assert_same x1, v1
-      assert_same x2, v2
+      assert_same x1, v1.x
+      assert_same x2, v2.x
+      assert_same x3, v3.x
 
       assert_equal 2, jit.compiled_methods
-      assert_equal 4, jit.executed_methods
+      assert_equal 6, jit.executed_methods
       assert_equal 0, jit.exits
     end
   end

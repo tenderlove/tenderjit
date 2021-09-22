@@ -11,7 +11,6 @@ class TenderJIT
     def test_setglobal
       $foo = true
 
-      jit = TenderJIT.new
       jit.compile method(:set_debug)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods

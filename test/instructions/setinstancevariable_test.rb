@@ -13,7 +13,6 @@ class TenderJIT
     end
 
     def test_setinstancevariable
-      jit = TenderJIT.new
       jit.compile(Foo.instance_method(:initialize))
       assert_equal 0, jit.executed_methods
       jit.enable!
@@ -38,7 +37,6 @@ class TenderJIT
     end
 
     def test_setinstancevariable_extended
-      jit = TenderJIT.new
       jit.compile(Extended.instance_method(:initialize))
       assert_equal 0, jit.executed_methods
       jit.enable!

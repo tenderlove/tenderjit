@@ -33,7 +33,6 @@ class TenderJIT
     end
 
     def test_getinstancevariable_embedded
-      jit = TenderJIT.new
       jit.compile(Foo.instance_method(:read))
       foo = Foo.new
       jit.enable!
@@ -46,7 +45,6 @@ class TenderJIT
     end
 
     def test_getinstancevariable_extended
-      jit = TenderJIT.new
       jit.compile(Foo.instance_method(:read))
       foo = Foo.new
       foo.expand
@@ -60,7 +58,6 @@ class TenderJIT
     end
 
     def test_getinstancevariable_subclass
-      jit = TenderJIT.new
       jit.compile(Parent.instance_method(:read))
 
       Parent.new.read # populate the iv table

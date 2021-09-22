@@ -10,7 +10,6 @@ class TenderJIT
     end
 
     def test_duparray
-      jit = TenderJIT.new
       jit.compile method(:duparray)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods

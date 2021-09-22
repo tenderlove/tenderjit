@@ -9,7 +9,6 @@ class TenderJIT
     end
 
     def test_simple_method
-      jit = TenderJIT.new
       jit.compile method(:simple)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods

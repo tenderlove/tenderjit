@@ -38,7 +38,6 @@ class TenderJIT
     end
 
     def test_fib
-      jit = TenderJIT.new
       jit.compile method(:fib)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -63,7 +62,6 @@ class TenderJIT
     end
 
     def test_recursive
-      jit = TenderJIT.new
       jit.compile method(:cool)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -86,7 +84,6 @@ class TenderJIT
     end
 
     def test_compile_adds_codeblock
-      jit = TenderJIT.new
       jit.compile method(:lt_true)
       cbs = jit.code_blocks(method(:lt_true))
       assert_operator cbs.length, :>, 0
@@ -95,7 +92,6 @@ class TenderJIT
     end
 
     def test_uncompile_removes_codeblocks
-      jit = TenderJIT.new
       jit.compile method(:lt_true)
       cbs = jit.code_blocks(method(:lt_true))
       assert_operator cbs.length, :>, 0
@@ -105,7 +101,6 @@ class TenderJIT
     end
 
     def test_uncompile_without_compile
-      jit = TenderJIT.new
       jit.uncompile method(:lt_true)
       cbs = jit.code_blocks(method(:lt_true))
       assert_nil cbs
@@ -122,7 +117,6 @@ class TenderJIT
     end
 
     def test_compile_two_methods
-      jit = TenderJIT.new
       jit.compile method(:simple)
       jit.compile method(:putself)
       assert_equal 2, jit.compiled_methods
@@ -152,7 +146,6 @@ class TenderJIT
     end
 
     def test_funcall_with_splat
-      jit = TenderJIT.new
       jit.compile method(:call_with_block)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -183,7 +176,6 @@ class TenderJIT
 
     def xtest_it_does_not_crash
       pid = fork {
-        jit = TenderJIT.new
         jit.compile(jit.method(:compile))
         6.times do
           jit.enable!

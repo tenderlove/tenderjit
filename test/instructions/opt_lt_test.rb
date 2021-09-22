@@ -17,7 +17,6 @@ class TenderJIT
     end
 
     def test_lt_true
-      jit = TenderJIT.new
       jit.compile method(:lt_true)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -33,7 +32,6 @@ class TenderJIT
     end
 
     def test_lt_false
-      jit = TenderJIT.new
       jit.compile method(:lt_false)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -49,7 +47,6 @@ class TenderJIT
     end
 
     def test_lt_params
-      jit = TenderJIT.new
       jit.compile method(:lt_params)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -67,7 +64,6 @@ class TenderJIT
     end
 
     def test_lt_exits
-      jit = TenderJIT.new
       jit.compile method(:lt_params)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -85,7 +81,6 @@ class TenderJIT
     end
 
     def test_lt_left_exits
-      jit = TenderJIT.new
       jit.compile method(:lt_params)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -106,7 +101,6 @@ class TenderJIT
     end
 
     def test_lt_right_exits
-      jit = TenderJIT.new
       jit.compile method(:lt_params)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods

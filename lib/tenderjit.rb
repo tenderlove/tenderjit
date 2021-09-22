@@ -220,11 +220,15 @@ class TenderJIT
   def self.uncompile method
     rb_iseq = RubyVM::InstructionSequence.of(method)
     return false unless rb_iseq
-    addr = RTypedData.new(Fiddle.dlwrap(rb_iseq)).data.to_i
+    uncompile_iseq_t RTypedData.data(Fiddle.dlwrap(rb_iseq)).to_i
+  end
+
+  def self.uncompile_iseq_t addr
     rb_iseq = RbISeqT.new(addr)
     rb_iseq.body.jit_func = 0
-    cov_ptr = Fiddle.dlunwrap(rb_iseq.body.variable.coverage)
-    cov_ptr[2] = nil if cov_ptr
+    cov_ptr = rb_iseq.body.variable.coverage.to_i
+    return if cov_ptr == 0
+    rb_iseq.body.variable.coverage = 0
   end
 
   SIZE = 4096 * (4 * 3)
@@ -393,6 +397,7 @@ class TenderJIT
     memory += SIZE / 3
     exit_buffer   = Fisk::Helpers::JITBuffer.new(memory, SIZE / 3)
     @exit_code    = ExitCode.new exit_buffer, @stats.to_i, @exit_stats.to_i
+    @compiled_iseq_addrs = []
   end
 
   def deferred_call temp_stack, &block
@@ -455,6 +460,12 @@ class TenderJIT
     end
   end
 
+  def uncompile_iseqs
+    while addr = @compiled_iseq_addrs.shift
+      self.class.uncompile_iseq_t addr
+    end
+  end
+
   # rdi, rsi, rdx, rcx, r8 - r15
   #
   # Caller saved regs:
@@ -462,7 +473,7 @@ class TenderJIT
 
   def compile_iseq_t addr
     body = RbISeqT.new(addr).body
-    ptr = body.variable.coverage
+    ptr = body.variable.coverage.to_i
 
     ary = nil
     if ptr == 0
@@ -483,6 +494,8 @@ class TenderJIT
       iseq_compiler = ISEQCompiler.new(self, addr)
       ary[2] = iseq_compiler
     end
+
+    @compiled_iseq_addrs << addr
 
     iseq_compiler.compile
     iseq_compiler

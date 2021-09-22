@@ -17,7 +17,6 @@ class TenderJIT
       iseq = RubyVM::InstructionSequence.of(m)
       assert_includes iseq.to_a.flatten, :concatstrings
 
-      jit = TenderJIT.new
       jit.compile m
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods

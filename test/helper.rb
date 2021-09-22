@@ -28,6 +28,18 @@ class TenderJIT
   end
 
   class JITTest < Test
+    attr_reader :jit
+
+    def setup
+      @jit = TenderJIT.new
+      super
+    end
+
+    def teardown
+      @jit.uncompile_iseqs
+    end
+
+
     def assert_change thing, by: 1
       initial = thing.call
       yield
@@ -53,16 +65,8 @@ class TenderJIT
       assert_equal executed, jit.executed_methods - before_executed, "executed"
       assert_equal exits, jit.exits, "exits"
       v
-    end
-
-    def teardown
-      super
-      self.class.instance_methods(false).each do |m|
-        next if m.to_s =~ /^test_/
-
-        meth = method m
-        TenderJIT.uncompile(meth) if TenderJIT.compiled?(meth)
-      end
+    ensure
+      jit.uncompile_iseqs
     end
   end
 end

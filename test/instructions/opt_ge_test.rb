@@ -17,7 +17,6 @@ class TenderJIT
     end
 
     def test_gt_true
-      jit = TenderJIT.new
       jit.compile method(:gt_true)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -33,7 +32,6 @@ class TenderJIT
     end
 
     def test_gt_false
-      jit = TenderJIT.new
       jit.compile method(:gt_false)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -49,7 +47,6 @@ class TenderJIT
     end
 
     def test_gt_params
-      jit = TenderJIT.new
       jit.compile method(:gt_params)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -65,7 +62,6 @@ class TenderJIT
     end
 
     def test_gt_exits
-      jit = TenderJIT.new
       jit.compile method(:gt_params)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -81,7 +77,6 @@ class TenderJIT
     end
 
     def test_gt_left_exits
-      jit = TenderJIT.new
       jit.compile method(:gt_params)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -100,7 +95,6 @@ class TenderJIT
     end
 
     def test_gt_right_exits
-      jit = TenderJIT.new
       jit.compile method(:gt_params)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods

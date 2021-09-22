@@ -9,7 +9,6 @@ class TenderJIT
     end
 
     def test_getlocal_wc_0
-      jit = TenderJIT.new
       jit.compile method(:getlocal_wc_0)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -30,7 +29,6 @@ class TenderJIT
     end
 
     def test_two_locals
-      jit = TenderJIT.new
       jit.compile method(:getlocal_wc_0_2)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
