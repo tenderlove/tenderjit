@@ -854,7 +854,7 @@ class TenderJIT
 
       vm_push_frame iseq.to_i,
         type | VM_FRAME_FLAG_BMETHOD,
-        recv,
+        temp_stack.peek(temp_stack.size - 1 - argc).loc,
         VM_GUARDED_PREV_EP(captured.ep),
         cme,
         iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
@@ -886,7 +886,7 @@ class TenderJIT
       ci = compile_request.call_info
       mid = ci.vm_ci_mid
       argc = ci.vm_ci_argc
-      recv = topn(stack, ci.vm_ci_argc).to_i
+      recv = topn(stack, argc).to_i
 
       overflow_exit = compile_request.make_exit(exits)
 
