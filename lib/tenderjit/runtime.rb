@@ -110,7 +110,11 @@ class TenderJIT
     end
 
     def and reg, num
-      @fisk.and(reg, @fisk.imm(num))
+      @fisk.and(reg, cast_to_fisk(num))
+    end
+
+    def or reg, num
+      @fisk.or(reg, cast_to_fisk(num))
     end
 
     def flush
@@ -129,11 +133,11 @@ class TenderJIT
     end
 
     def sub reg, val
-      @fisk.sub reg, @fisk.uimm(val)
+      @fisk.sub reg, cast_to_fisk(val)
     end
 
     def add reg, val
-      @fisk.add reg.to_register, @fisk.uimm(val)
+      @fisk.add reg.to_register, cast_to_fisk(val)
     end
 
     def write_memory reg, offset, val
@@ -196,6 +200,16 @@ class TenderJIT
 
     def break
       @fisk.int(@fisk.lit(3))
+    end
+
+    # Shift op1 right by op2
+    def shr op1, op2
+      @fisk.shr cast_to_fisk(op1), cast_to_fisk(op2)
+    end
+
+    # Shift op1 left by op2
+    def shl op1, op2
+      @fisk.shl cast_to_fisk(op1), cast_to_fisk(op2)
     end
 
     def test_flags obj, flags
@@ -399,7 +413,7 @@ class TenderJIT
       when Fisk::Operand, TemporaryVariable
         val
       else
-        @fisk.uimm(val)
+        @fisk.imm(val)
       end
     end
 
@@ -450,6 +464,8 @@ class TenderJIT
       end
 
       def []= idx, val
+        val = val.to_register if val.is_a?(TemporaryVariable)
+
         if val.is_a?(Fisk::Operand)
           if val.memory?
             @ec.write_memory @reg, @base + (idx * size), val
@@ -466,7 +482,11 @@ class TenderJIT
       # Mutates this pointer.  Subtracts the size from itself.  Similar to
       # C's `--` operator
       def sub num = 1
-        @ec.sub reg, size * num
+        if num.is_a?(Fisk::Operand)
+          @ec.sub reg, num
+        else
+          @ec.sub reg, size * num
+        end
       end
 
       # Mutates this pointer.  Adds the size to itself.  Similar to
@@ -523,7 +543,11 @@ class TenderJIT
             @ec.write_to_mem @reg, type.offsetof(member), v.reg
           else
             if v.is_a?(Fisk::Operand)
-              @ec.write_register @reg, type.offsetof(member), v
+              if v.memory?
+                @ec.write_memory @reg, type.offsetof(member), v
+              else
+                @ec.write_register @reg, type.offsetof(member), v
+              end
             else
               @ec.write_immediate @reg, type.offsetof(member), v.to_i
             end
@@ -544,6 +568,20 @@ class TenderJIT
 
       def and num
         @ec.and(reg, num)
+      end
+
+      def or num
+        @ec.or(reg, num)
+      end
+
+      # Shift right
+      def shr val
+        @ec.shr reg, val
+      end
+
+      # Shift left
+      def shl val
+        @ec.shl reg, val
       end
 
       def to_register
