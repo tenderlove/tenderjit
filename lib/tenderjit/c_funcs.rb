@@ -43,5 +43,6 @@ class TenderJIT
     make_function "rb_callable_method_entry", [TYPE_VOIDP, TYPE_INT], TYPE_VOIDP
     make_function "rb_iseq_path", [TYPE_VOIDP], TYPE_VOIDP
     make_function "rb_iseq_label", [TYPE_VOIDP], TYPE_VOIDP
+    make_function "rb_obj_class", [TYPE_VOIDP], TYPE_VOIDP
   end
 end
