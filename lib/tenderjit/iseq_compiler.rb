@@ -21,6 +21,9 @@ class TenderJIT
 
       if $DEBUG
         puts "New ISEQ Compiler: <#{sprintf("%#x", addr)} #{@iseq_path}:#{@iseq_label}>"
+        size = 1048576
+        memory        = Fisk::Helpers.mmap_jit(size)
+        @string_buffer = Fisk::Helpers::JITBuffer.new(memory, size)
       end
 
       @jit        = jit
@@ -114,11 +117,14 @@ class TenderJIT
         params = @insns[@insn_idx + 1, len - 1]
 
         if $DEBUG
-          puts "#{@insn_idx} compiling #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)}"
+          puts "#{@insn_idx} compiling #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)} SP #{@temp_stack.size}"
         end
         if respond_to?("handle_#{name}", true)
           if $DEBUG
-            Fisk.new { |_| print_str(_, "#{@insn_idx} running   #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)}\n") }.write_to(jit_buffer)
+            Fisk.new { |__|
+              __.jmp(__.absolute(@string_buffer.address))
+            }.write_to(jit_buffer)
+            print_str("#{sprintf("%2d", @insn_idx)} running   #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)} SP #{@temp_stack.size}\n")
           end
           @fisk = Fisk.new
           v = send("handle_#{name}", *params)
@@ -1590,18 +1596,21 @@ class TenderJIT
       fisk.int fisk.lit(3)
     end
 
-    def print_str fisk, string
+    def print_str string
+      fisk = Fisk.new
       fisk.jmp(fisk.label(:after_bytes))
       pos = nil
-      fisk.lazy { |x| pos = x; string.bytes.each { |b| jit_buffer.putc b } }
+      fisk.lazy { |x| pos = x; string.bytes.each { |b| @string_buffer.putc b } }
       fisk.put_label(:after_bytes)
       fisk.mov fisk.rdi, fisk.uimm(2)
       fisk.lazy { |x|
-        fisk.mov fisk.rsi, fisk.uimm(jit_buffer.memory + pos)
+        fisk.mov fisk.rsi, fisk.uimm(@string_buffer.memory + pos)
       }
       fisk.mov fisk.rdx, fisk.uimm(string.bytesize)
       fisk.mov fisk.rax, fisk.uimm(0x02000004)
       fisk.syscall
+      fisk.jmp(fisk.absolute(jit_buffer.address.to_i))
+      fisk.write_to(@string_buffer)
     end
 
     def VM_GUARDED_PREV_EP ep
