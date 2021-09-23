@@ -201,8 +201,8 @@ class TenderJIT
     end
 
     class CallCompileRequest < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
-      def make_exit exits
-        exits.make_exit("opt_send_without_block", current_pc, temp_stack.size)
+      def make_exit exits, name = "opt_send_without_block"
+        exits.make_exit(name, current_pc, temp_stack.size)
       end
     end
 
@@ -1055,36 +1055,34 @@ class TenderJIT
       entry_location
     end
 
-    def compile_opt_send_without_block stack, compile_request, loc
-      ci = compile_request.call_info
+    def compile_opt_send_without_block stack, req, loc
+      ci = req.call_info
       mid = ci.vm_ci_mid
       argc = ci.vm_ci_argc
       recv = topn(stack, argc).to_i
 
-      overflow_exit = compile_request.make_exit(exits)
-
       patch_loc = loc - jit_buffer.memory.to_i
 
-      jit_buffer.patch_jump at: patch_loc,
-                            to: overflow_exit
+      # Get the class. If it's a heap object we need the immediate class pointer
+      # which can pointe at an ICLASS (so we handle singletons). Otherwise use
+      # rb_obj_class to get the class
+      klass = if rb.RB_SPECIAL_CONST_P(recv)
+                CFuncs.rb_obj_class(recv).to_i
+              else
+                RBasic.new(recv).klass
+              end
 
-      klass = nil
-
-      if rb.RB_SPECIAL_CONST_P(recv)
-        klass = CFuncs.rb_obj_class(recv).to_i
-        #raise NotImplementedError, "non-heap objects not implemented"
-      else
-        klass = RBasic.new(recv).klass
-      end
-
-      ## Compile the target method
-
+      # Get the method definition
       cme_ptr = CFuncs.rb_callable_method_entry(klass, mid)
+
+      # It the method isn't defined, use a side exit and return
       if cme_ptr.null?
-        patch_source_jump jit_buffer, at: patch_loc, to: overflow_exit
-        return overflow_exit
+        side_exit = req.make_exit(exits, "method_missing")
+        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
+        return side_exit
       end
 
+      # Get the method definition
       cme = RbCallableMethodEntryT.new(cme_ptr)
       method_definition = RbMethodDefinitionStruct.new(cme.def)
 
@@ -1099,25 +1097,26 @@ class TenderJIT
       # kwargs, etc right now
       #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
       unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
-        patch_source_jump jit_buffer, at: patch_loc, to: overflow_exit
-        return overflow_exit
+        side_exit = req.make_exit(exits, "complex_method")
+        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
+        return side_exit
       end
 
       case method_definition.type
       when VM_METHOD_TYPE_CFUNC
-        compile_call_cfunc iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
+        compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, patch_loc
       when VM_METHOD_TYPE_ISEQ
-        compile_call_iseq iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
+        compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, patch_loc
       when VM_METHOD_TYPE_BMETHOD
-        compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
+        compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, patch_loc
       else
-        patch_source_jump jit_buffer, at: patch_loc, to: overflow_exit
-        overflow_exit
+        side_exit = req.make_exit(exits, "unknown_method_type")
+        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
+        return side_exit
       end
     end
 
-    def handle_nop
-    end
+    def handle_nop; end
 
     def handle_duparray ary
       write_loc = @temp_stack.push(:object, type: T_ARRAY)

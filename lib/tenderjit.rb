@@ -203,7 +203,12 @@ class TenderJIT
 
   ExitStats = struct RubyVM::INSTRUCTION_NAMES.map { |n|
     "uint64_t #{n}"
-  } + ["uint64_t temporary_exit"]
+  } + [
+    "uint64_t temporary_exit",
+    "uint64_t method_missing",
+    "uint64_t complex_method",
+    "uint64_t unknown_method_type",
+  ]
 
   attr_reader :jit_buffer, :exit_code
 
