@@ -320,12 +320,40 @@ class TenderJIT
       end
     end
 
+    class OtherThing
+      def is_a? m
+        :lol
+      end
+    end
+
     def is_a_thing x
       x.is_a?(Thing)
     end
 
     def test_isa_specialize_class_non_immediates
       a = Object.new
+      b = Thing.new
+      a_expected = is_a_thing(a)
+      b_expected = is_a_thing(b)
+
+      jit.compile method(:is_a_thing)
+      jit.enable!
+      # Heat
+      is_a_thing a
+      is_a_thing a
+      is_a_thing a
+      is_a_thing a
+      a_actual = is_a_thing a
+      # Test
+      b_actual = is_a_thing b
+      jit.disable!
+
+      assert_equal a_expected, a_actual
+      assert_equal b_expected, b_actual
+    end
+
+    def test_specialize_class_iseq_methods
+      a = OtherThing.new
       b = Thing.new
       a_expected = is_a_thing(a)
       b_expected = is_a_thing(b)
