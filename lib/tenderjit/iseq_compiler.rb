@@ -820,8 +820,6 @@ class TenderJIT
       # pop locals and recv off the stack
       #(ci.vm_ci_argc + 1).times { @temp_stack.pop }
 
-      entry_location = jit_buffer.address
-
       return_loc = patch_source_jump jit_buffer, at: patch_loc
 
       overflow_exit = compile_request.make_exit(exits)
@@ -872,8 +870,6 @@ class TenderJIT
 
         var.release!
       end
-
-      entry_location
     end
 
     def compile_call_cfunc iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
@@ -887,8 +883,6 @@ class TenderJIT
                    end
 
       frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL
-
-      method_entry_addr = jit_buffer.address
 
       return_loc = patch_source_jump jit_buffer, at: patch_loc
 
@@ -987,8 +981,6 @@ class TenderJIT
 
         rt.jump jit_buffer.memory.to_i + return_loc
       end
-
-      method_entry_addr
     end
 
     def compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
@@ -996,19 +988,11 @@ class TenderJIT
       proc_obj = RbMethodDefinitionStruct.new(cme.def).body.bmethod.proc
       proc = RData.new(proc_obj).data
       rb_block_t    = RbProcT.new(proc).block
-      if rb_block_t.type != rb.c("block_type_iseq")
-        raise NotImplementedError
-      end
       captured = rb_block_t.as.captured
       _self = recv
       type = VM_FRAME_MAGIC_BLOCK
-      iseq = RbISeqT.new(captured.code.iseq)
 
       param_size = iseq.body.param.size
-
-      @jit.compile_iseq_t iseq.to_i
-
-      entry_location = jit_buffer.address
 
       return_loc = patch_source_jump jit_buffer, at: patch_loc
 
@@ -1051,8 +1035,6 @@ class TenderJIT
           rt.jump var
         end
       end
-
-      entry_location
     end
 
     def compile_opt_send_without_block stack, req, loc
@@ -1093,6 +1075,22 @@ class TenderJIT
         @jit.compile_iseq_t iseq_ptr
       end
 
+      # If we find a bmethod method, compile the block iseq.
+      if method_definition.type == VM_METHOD_TYPE_BMETHOD
+        proc_obj = RbMethodDefinitionStruct.new(cme.def).body.bmethod.proc
+        proc = RData.new(proc_obj).data
+        rb_block_t    = RbProcT.new(proc).block
+        if rb_block_t.type != rb.c("block_type_iseq")
+          raise NotImplementedError
+        end
+
+        iseq_ptr = rb_block_t.as.captured.code.iseq
+
+        iseq = RbISeqT.new(iseq_ptr)
+
+        @jit.compile_iseq_t iseq_ptr
+      end
+
       # Bail on any method calls that aren't "simple".  Not handling *args,
       # kwargs, etc right now
       #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
@@ -1101,6 +1099,8 @@ class TenderJIT
         patch_source_jump jit_buffer, at: patch_loc, to: side_exit
         return side_exit
       end
+
+      method_entry_addr = jit_buffer.address
 
       case method_definition.type
       when VM_METHOD_TYPE_CFUNC
@@ -1114,6 +1114,8 @@ class TenderJIT
         patch_source_jump jit_buffer, at: patch_loc, to: side_exit
         return side_exit
       end
+
+      method_entry_addr
     end
 
     def handle_nop; end
