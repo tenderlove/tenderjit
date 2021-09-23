@@ -7,6 +7,7 @@ require "tenderjit/jit_context"
 class TenderJIT
   class ISEQCompiler
     LJUST = 22
+    JMP_BYTES = 5
 
     SCRATCH_REGISTERS = [
       Fisk::Registers::R9,
@@ -1096,7 +1097,7 @@ class TenderJIT
 
       method_entry_addr = jit_buffer.address
 
-      return_loc = patch_source_jump jit_buffer, at: patch_loc
+      return_loc = patch_loc + JMP_BYTES
 
       case method_definition.type
       when VM_METHOD_TYPE_CFUNC
@@ -1110,6 +1111,8 @@ class TenderJIT
         patch_source_jump jit_buffer, at: patch_loc, to: side_exit
         return side_exit
       end
+
+      patch_source_jump jit_buffer, at: patch_loc, to: method_entry_addr
 
       method_entry_addr
     end
