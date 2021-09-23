@@ -806,7 +806,7 @@ class TenderJIT
       return_loc
     end
 
-    def compile_call_iseq iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
+    def compile_call_iseq iseq, compile_request, argc, iseq_ptr, recv, cme, return_loc
       # `vm_call_iseq_setup`
       param_size = iseq.body.param.size
       local_size = iseq.body.local_table_size
@@ -819,8 +819,6 @@ class TenderJIT
 
       # pop locals and recv off the stack
       #(ci.vm_ci_argc + 1).times { @temp_stack.pop }
-
-      return_loc = patch_source_jump jit_buffer, at: patch_loc
 
       overflow_exit = compile_request.make_exit(exits)
 
@@ -872,7 +870,7 @@ class TenderJIT
       end
     end
 
-    def compile_call_cfunc iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
+    def compile_call_cfunc iseq, compile_request, argc, iseq_ptr, recv, cme, return_loc
       cfunc = RbMethodDefinitionStruct.new(cme.def).body.cfunc
       param_size = if cfunc.argc == -1
                      argc
@@ -883,8 +881,6 @@ class TenderJIT
                    end
 
       frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL
-
-      return_loc = patch_source_jump jit_buffer, at: patch_loc
 
       temp_stack = compile_request.temp_stack
       idx = temp_stack.size - (argc + 1)
@@ -983,7 +979,7 @@ class TenderJIT
       end
     end
 
-    def compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme, patch_loc
+    def compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme, return_loc
       opt_pc     = 0 # we don't handle optional parameters rn
       proc_obj = RbMethodDefinitionStruct.new(cme.def).body.bmethod.proc
       proc = RData.new(proc_obj).data
@@ -993,8 +989,6 @@ class TenderJIT
       type = VM_FRAME_MAGIC_BLOCK
 
       param_size = iseq.body.param.size
-
-      return_loc = patch_source_jump jit_buffer, at: patch_loc
 
       temp_stack = compile_request.temp_stack
 
@@ -1102,13 +1096,15 @@ class TenderJIT
 
       method_entry_addr = jit_buffer.address
 
+      return_loc = patch_source_jump jit_buffer, at: patch_loc
+
       case method_definition.type
       when VM_METHOD_TYPE_CFUNC
-        compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, patch_loc
+        compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, return_loc
       when VM_METHOD_TYPE_ISEQ
-        compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, patch_loc
+        compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, return_loc
       when VM_METHOD_TYPE_BMETHOD
-        compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, patch_loc
+        compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, return_loc
       else
         side_exit = req.make_exit(exits, "unknown_method_type")
         patch_source_jump jit_buffer, at: patch_loc, to: side_exit
