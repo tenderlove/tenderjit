@@ -906,16 +906,57 @@ class TenderJIT
 
       recv_loc = temp_stack.peek(temp_stack.size - 1 - argc).loc
 
+      # Lift the address up to a Ruby object.  `recv` is the address of the
+      # Ruby object, not the object itself.  Lets get the object itself so we
+      # can perform tests on it.
+      rb_recv = Fiddle.dlunwrap recv
+
       with_runtime do |rt|
+        # If the compile time receiver is a special constant, we need to check
+        # that it's still a special constant at runtime
         if rb.RB_SPECIAL_CONST_P(recv)
-          rt.if(rt.RB_SPECIAL_CONST_P(recv_loc)) {
-          }.else {
-            rt.patchable_jump compile_request.deferred_entry
-          }
+          if rb_recv == nil
+            rt.if_eq(recv_loc, Fiddle.dlwrap(nil)).else {
+              rt.patchable_jump compile_request.deferred_entry
+              rt.jump jit_buffer.memory.to_i + return_loc
+            }
+          elsif rb_recv == false
+            rt.if_eq(recv_loc, Fiddle.dlwrap(false)).else {
+              rt.patchable_jump compile_request.deferred_entry
+              rt.jump jit_buffer.memory.to_i + return_loc
+            }
+          else
+            flags = recv & RUBY_IMMEDIATE_MASK
+
+            tv = rt.temp_var
+            tv.write recv_loc
+            tv.and RUBY_IMMEDIATE_MASK
+
+            rt.if_eq(tv.to_register, flags).else {
+              rt.patchable_jump compile_request.deferred_entry
+              rt.jump jit_buffer.memory.to_i + return_loc
+            }
+
+            tv.release!
+          end
         else
           rt.if(rt.RB_SPECIAL_CONST_P(recv_loc)) {
             rt.patchable_jump compile_request.deferred_entry
-          }.else { }
+            rt.jump jit_buffer.memory.to_i + return_loc
+          }.else {
+
+            tv = rt.temp_var
+            tv.write recv_loc
+
+            recv_ptr = rt.pointer(tv, type: RObject)
+
+            rt.if_eq(RBasic.klass(recv), recv_ptr.basic.klass).else {
+              rt.patchable_jump compile_request.deferred_entry
+              rt.jump jit_buffer.memory.to_i + return_loc
+            }
+
+            tv.release!
+          }
         end
       end
 
@@ -1027,12 +1068,16 @@ class TenderJIT
       jit_buffer.patch_jump at: patch_loc,
                             to: overflow_exit
 
+      klass = nil
+
       if rb.RB_SPECIAL_CONST_P(recv)
-        raise NotImplementedError, "non-heap objects not implemented"
+        klass = CFuncs.rb_obj_class(recv).to_i
+        #raise NotImplementedError, "non-heap objects not implemented"
+      else
+        klass = RBasic.new(recv).klass
       end
 
       ## Compile the target method
-      klass = RBasic.new(recv).klass # FIXME: this only works on heap allocated objects
 
       cme_ptr = CFuncs.rb_callable_method_entry(klass, mid)
       if cme_ptr.null?

@@ -250,7 +250,7 @@ class TenderJIT
         end
         @fisk.jz else_label # else label
       end
-      yield
+      yield if block_given?
       @fisk.jmp finish_label # finish label
       self
     end
@@ -266,7 +266,7 @@ class TenderJIT
       end
       @fisk.jne push_label # else label
       finish_label = push_label
-      yield
+      yield if block_given?
       @fisk.jmp finish_label # finish label
       self
     end

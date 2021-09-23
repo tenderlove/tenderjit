@@ -237,7 +237,6 @@ class TenderJIT
     end
 
     def test_isa
-      skip "FIXME"
       obj = Object.new
       jit.compile method(:polymorphic)
       jit.enable!
@@ -254,6 +253,97 @@ class TenderJIT
       refute v2
       refute v3
       assert v7
+    end
+
+    def test_isa_specialize_nil
+      jit.compile method(:polymorphic)
+      jit.enable!
+      # Heat
+      polymorphic nil
+      polymorphic nil
+      polymorphic nil
+      v1 = polymorphic nil
+      # Test
+      v2 = polymorphic 1
+      jit.disable!
+
+      refute v1
+      assert v2
+    end
+
+    def test_isa_specialize_false
+      jit.compile method(:polymorphic)
+      jit.enable!
+      # Heat
+      polymorphic false
+      polymorphic false
+      polymorphic false
+      v1 = polymorphic false
+      # Test
+      v2 = polymorphic 1
+      jit.disable!
+
+      refute v1
+      assert v2
+    end
+
+    def get_next_float x
+      x.next_float
+    rescue NoMethodError
+      :nope
+    end
+
+    def test_isa_specialize_immediate
+      float = 3.2
+      int = 1
+      float_expected = get_next_float(float)
+      int_expected = get_next_float(int)
+
+      jit.compile method(:get_next_float)
+      jit.enable!
+      # Heat
+      get_next_float float
+      get_next_float float
+      get_next_float float
+      v1 = get_next_float float
+      # Test
+      v2 = get_next_float int
+      jit.disable!
+
+      assert_equal float_expected, v1
+      assert_equal int_expected, v2
+    end
+
+    class Thing
+      def is_a? m
+        :omg
+      end
+    end
+
+    def is_a_thing x
+      x.is_a?(Thing)
+    end
+
+    def test_isa_specialize_class_non_immediates
+      a = Object.new
+      b = Thing.new
+      a_expected = is_a_thing(a)
+      b_expected = is_a_thing(b)
+
+      jit.compile method(:is_a_thing)
+      jit.enable!
+      # Heat
+      is_a_thing a
+      is_a_thing a
+      is_a_thing a
+      is_a_thing a
+      a_actual = is_a_thing a
+      # Test
+      b_actual = is_a_thing b
+      jit.disable!
+
+      assert_equal a_expected, a_actual
+      assert_equal b_expected, b_actual
     end
   end
 end
