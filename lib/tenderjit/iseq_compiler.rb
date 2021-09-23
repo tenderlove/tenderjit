@@ -200,7 +200,7 @@ class TenderJIT
       }
     end
 
-    class CallCompileRequest < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc)
+    class CallCompileRequest < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
       def make_exit exits
         exits.make_exit("opt_send_without_block", current_pc, temp_stack.size)
       end
@@ -547,6 +547,61 @@ class TenderJIT
       entry_location
     end
 
+    def compile_opt_aset stack, req, patch_loc
+      ci = req.call_info
+      peek_recv = topn(stack, ci.vm_ci_argc).to_i
+
+      if rb.RB_SPECIAL_CONST_P(peek_recv)
+        raise NotImplementedError, "no aref reads on non-heap objects"
+      end
+
+      ## Compile the target method
+      klass = RBasic.new(peek_recv).klass # FIXME: this only works on heap allocated objects
+
+      entry_location = jit_buffer.address
+
+      patch_loc = patch_loc - jit_buffer.memory.to_i
+
+      jit_buffer.patch_jump at: patch_loc, to: entry_location
+
+      param1 = req.temp_stack.peek(-1).loc # param
+      param2 = req.temp_stack.peek(-2).loc # param
+      recv   = req.temp_stack.peek(-3).loc # recv
+
+      with_runtime do |rt|
+        rt.set_c_param(0, recv)
+        _self = rt.pointer(rt.c_param(0), type: RObject)
+
+        rt.if_eq(_self.basic.klass, klass) {
+          klass = Fiddle.dlunwrap(klass)
+
+          # We know it's an array at compile time
+          if klass == ::Array
+            raise
+            rt.push_reg REG_BP # alignment
+            rt.call_cfunc(rb.symbol_address("rb_ary_store"), [recv, param])
+            rt.pop_reg REG_BP  # alignment
+
+            # We know it's a hash at compile time
+          elsif klass == ::Hash
+            rt.push_reg REG_BP # alignment
+            rt.call_cfunc(rb.symbol_address("rb_hash_aset"), [recv, param1, param2])
+            rt.pop_reg REG_BP  # alignment
+
+          else
+            raise NotImplementedError
+          end
+        }.else {
+          rt.patchable_jump req.deferred_entry
+        }
+
+        # patched a jmp and it is 5 bytes
+        rt.jump jit_buffer.memory.to_i + patch_loc + 5
+      end
+
+      entry_location
+    end
+
     CompileOptAref = Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
 
     def handle_opt_aref call_data
@@ -650,6 +705,8 @@ class TenderJIT
         end
       end
 
+      compile_request.deferred_entry = deferred.entry
+
       deferred.call
 
       # Jump in to the deferred compiler
@@ -725,7 +782,7 @@ class TenderJIT
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
       unless target_block
-        resume_compiling req.jump_idx, req.temp_stack
+        resume_compiling req.jump_idx, req.temp_stack.dup
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
       end
 
@@ -777,6 +834,8 @@ class TenderJIT
         rt.check_vm_stack_overflow compile_request.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
       end
 
+      recv_loc = compile_request.temp_stack.peek(compile_request.temp_stack.size - 1 - argc).loc
+
       # `vm_push_frame`
       vm_push_frame iseq_ptr,
         VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL,
@@ -827,7 +886,7 @@ class TenderJIT
                      cfunc.argc
                    end
 
-      frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL;
+      frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL
 
       method_entry_addr = jit_buffer.address
 
@@ -842,12 +901,27 @@ class TenderJIT
       with_runtime do |rt|
         rt.flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
 
-        rt.check_vm_stack_overflow compile_request.temp_stack, overflow_exit, 0, 0
+        rt.check_vm_stack_overflow temp_stack, overflow_exit, 0, 0
+      end
+
+      recv_loc = temp_stack.peek(temp_stack.size - 1 - argc).loc
+
+      with_runtime do |rt|
+        if rb.RB_SPECIAL_CONST_P(recv)
+          rt.if(rt.RB_SPECIAL_CONST_P(recv_loc)) {
+          }.else {
+            rt.patchable_jump compile_request.deferred_entry
+          }
+        else
+          rt.if(rt.RB_SPECIAL_CONST_P(recv_loc)) {
+            rt.patchable_jump compile_request.deferred_entry
+          }.else { }
+        end
       end
 
       vm_push_frame(0,
                     frame_type,
-                    compile_request.temp_stack.peek(compile_request.temp_stack.size - 1 - argc).loc,
+                    temp_stack.peek(temp_stack.size - 1 - argc).loc,
                     0, #ci.block_handler,
                     cme,
                     0,
@@ -857,7 +931,7 @@ class TenderJIT
       with_runtime do |rt|
         rt.with_ref(temp_stack[temp_stack.size - argc]) do |sp|
           rt.push_reg REG_BP
-          rt.call_cfunc cfunc.invoker.to_i, [recv, argc, sp, cfunc.func.to_i]
+          rt.call_cfunc cfunc.invoker.to_i, [recv_loc, argc, sp, cfunc.func.to_i]
           rt.pop_reg REG_BP
         end
 
@@ -1032,6 +1106,8 @@ class TenderJIT
         raise NotImplementedError, "FIXME"
       end
 
+      read_loc = @temp_stack.pop
+
       patch_request = BranchUnless.new jump_pc, :jz, @temp_stack.dup
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
@@ -1039,7 +1115,7 @@ class TenderJIT
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
           rt.push_reg REG_BP
-          rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
+          rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request, rt.return_value]
           rt.pop_reg REG_BP
 
           rt.NUM2INT(rt.return_value)
@@ -1052,7 +1128,8 @@ class TenderJIT
 
       deferred.call
 
-      __.test(@temp_stack.pop, __.imm(~Qnil))
+        #__.int(__.lit(3))
+      __.test(read_loc, __.imm(~Qnil))
         .lea(__.rax, __.rip)
         .jz(__.absolute(deferred.entry.to_i))
 
@@ -1137,7 +1214,7 @@ class TenderJIT
 
       dup_stack = req.temp_stack.dup
 
-      loc = req.temp_stack.push(:cache_get)
+      loc = req.temp_stack.last.loc
 
       # Find the next block we'll jump to
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
@@ -1149,7 +1226,7 @@ class TenderJIT
                               to: exit_addr,
                               type: req.jump_type
 
-        resume_compiling req.jump_idx, req.temp_stack
+        resume_compiling req.jump_idx, req.temp_stack.dup
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
       end
 
@@ -1177,6 +1254,8 @@ class TenderJIT
 
       dst = @insn_idx + dst + len
 
+      loc = @temp_stack.push(:cache_get)
+
       patch_request = HandleOptGetinlinecache.new dst, :jmp, @temp_stack.dup, ic, current_pc
       @compile_requests << Fiddle::Pinned.new(patch_request)
 
@@ -1195,8 +1274,6 @@ class TenderJIT
       end
 
       deferred.call
-
-      loc = @temp_stack.push(:cache_get)
 
       ary_head = Fiddle::Pointer.new(CONST_WATCHERS)
       watcher_count = ary_head[0, Fiddle::SIZEOF_VOIDP].unpack1("l!")
@@ -1547,7 +1624,7 @@ class TenderJIT
       # Write the frame pointer back to the ec
       __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
       __.ret
-      :continue
+      :stop
     end
 
     def handle_splatarray flag
@@ -1570,6 +1647,73 @@ class TenderJIT
 
       __.put_label(:continue)
         .mov(store_loc, __.rax)
+    end
+
+    def handle_opt_aset call_data
+      cd = RbCallData.new call_data
+      ci = RbCallInfo.new cd.ci
+
+      argc = ci.vm_ci_argc
+      return :quit unless argc == 2
+
+      # only handle simple methods
+      #return unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+
+      req = CompileOptAref.new
+      req.call_info = ci
+      req.temp_stack = @temp_stack.dup
+      req.current_pc = current_pc
+      req.next_pc = next_pc
+
+      @compile_requests << Fiddle::Pinned.new(req)
+
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
+        ctx.with_runtime do |rt|
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+          rt.push_reg REG_BP # alignment
+          rt.rb_funcall self, :compile_opt_aset, [cfp_ptr.sp, req, rt.return_value]
+          rt.pop_reg REG_BP # alignment
+
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
+        end
+      end
+
+      deferred.call
+
+      req.deferred_entry = deferred.entry.to_i
+
+      (argc + 1).times { @temp_stack.pop }
+
+      #Jump in to the deferred compiler
+      __.lea(__.rax, __.rip)
+      __.jmp(__.absolute(deferred.entry))
+
+      # The call will return here, and its return value will be in RAX
+      loc = @temp_stack.push(:unknown)
+      __.mov(loc, __.rax)
+    end
+
+    def handle_setn n
+      item = @temp_stack.peek(-n)
+      with_runtime do |rt|
+        rt.write @temp_stack.peek(0).loc, item.loc
+      end
+    end
+
+    def handle_dupn num
+      last = @temp_stack.last(num)
+      with_runtime do |rt|
+        last.each do |item|
+          rt.push item.loc, name: item.name, type: item.type
+        end
+      end
+    end
+
+    def handle_adjuststack n
+      n.times { @temp_stack.pop }
     end
 
     # Call a C function at `func_loc` with `params`. Return value will be in RAX

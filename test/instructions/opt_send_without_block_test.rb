@@ -231,5 +231,29 @@ class TenderJIT
       assert_equal 6, jit.executed_methods
       assert_equal 0, jit.exits
     end
+
+    def polymorphic x
+      x.is_a?(Integer)
+    end
+
+    def test_isa
+      skip "FIXME"
+      obj = Object.new
+      jit.compile method(:polymorphic)
+      jit.enable!
+      v1 = polymorphic obj
+      v2 = polymorphic obj
+      v3 = polymorphic obj
+      polymorphic obj
+      polymorphic obj
+      polymorphic obj
+      v7 = polymorphic 4
+      jit.disable!
+
+      refute v1
+      refute v2
+      refute v3
+      assert v7
+    end
   end
 end

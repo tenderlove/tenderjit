@@ -29,8 +29,8 @@ class TenderJIT
       }.loc
     end
 
-    def last
-      @stack.last
+    def last *args
+      @stack.last(*args)
     end
 
     # Push a value on the temp stack. Returns the memory location where

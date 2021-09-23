@@ -4,8 +4,20 @@ require "helper"
 
 class TenderJIT
   class DupnTest < JITTest
+    def omg peeks
+      peeks[:foo] ||= :foo
+    end
+
     def test_dupn
-      skip "Please implement dupn!"
+      obj = {}
+      jit.compile(method(:omg))
+      jit.enable!
+      omg obj
+      jit.disable!
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.exits
+      assert_equal :foo, obj[:foo]
     end
   end
 end
