@@ -117,14 +117,14 @@ class TenderJIT
         params = @insns[@insn_idx + 1, len - 1]
 
         if $DEBUG
-          puts "#{@insn_idx} compiling #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)} SP #{@temp_stack.size}"
+          puts "#{sprintf("%04d", @insn_idx)} compiling #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)} SP #{@temp_stack.size}"
         end
         if respond_to?("handle_#{name}", true)
           if $DEBUG
             Fisk.new { |__|
               __.jmp(__.absolute(@string_buffer.address))
             }.write_to(jit_buffer)
-            print_str("#{sprintf("%2d", @insn_idx)} running   #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)} SP #{@temp_stack.size}\n")
+            print_str("#{sprintf("%04d", @insn_idx)} running   #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)} SP #{@temp_stack.size}\n")
           end
           @fisk = Fisk.new
           v = send("handle_#{name}", *params)
