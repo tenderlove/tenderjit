@@ -1,6 +1,6 @@
 # TenderJIT
 
-TenderJIT is an experimental JIT compile for Ruby that is written in Ruby.
+TenderJIT is an experimental JIT compiler for Ruby that is written in Ruby.
 It's design is highly based off [YJIT](https://github.com/shopify/yjit).
 
 ## Using TenderJIT
