@@ -355,5 +355,14 @@ class TenderJIT
       assert_equal [-Fiddle::TYPE_LONG, -Fiddle::TYPE_LONG], rBasic.types
       assert_equal ["flags", "klass"], rBasic.members
     end
+
+    def test_rb_class_of
+      assert_equal CFuncs.rb_obj_class(Qfalse).to_i, @rb.rb_class_of(Qfalse)
+      assert_equal CFuncs.rb_obj_class(Qnil).to_i, @rb.rb_class_of(Qnil)
+      assert_equal CFuncs.rb_obj_class(Qtrue).to_i, @rb.rb_class_of(Qtrue)
+      assert_equal CFuncs.rb_obj_class(Fiddle.dlwrap(123)).to_i,  @rb.rb_class_of(Fiddle.dlwrap(123))
+      assert_equal CFuncs.rb_obj_class(Fiddle.dlwrap(:foo)).to_i, @rb.rb_class_of(Fiddle.dlwrap(:foo))
+      assert_equal CFuncs.rb_obj_class(Fiddle.dlwrap(2.3)).to_i,  @rb.rb_class_of(Fiddle.dlwrap(2.3))
+    end
   end
 end

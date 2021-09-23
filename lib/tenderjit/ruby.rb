@@ -90,10 +90,47 @@ class TenderJIT
       self.RB_IMMEDIATE_P(obj_addr) || !self.RB_TEST(obj_addr)
     end
 
+    def rb_class_of obj_addr
+      if !self.RB_SPECIAL_CONST_P(obj_addr)
+        RBasic.klass(obj_addr).to_i
+      else
+        case obj_addr
+        when Qfalse
+          Fiddle.read_ptr Ruby::SYMBOLS["rb_cFalseClass"], 0
+        when Qnil
+          Fiddle.read_ptr Ruby::SYMBOLS["rb_cNilClass"], 0
+        when Qtrue
+          Fiddle.read_ptr Ruby::SYMBOLS["rb_cTrueClass"], 0
+        else
+          if self.RB_FIXNUM_P obj_addr
+            Fiddle.read_ptr Ruby::SYMBOLS["rb_cInteger"], 0
+          elsif self.RB_STATIC_SYM_P obj_addr
+            Fiddle.read_ptr Ruby::SYMBOLS["rb_cSymbol"], 0
+          elsif self.RB_FLONUM_P obj_addr
+            Fiddle.read_ptr Ruby::SYMBOLS["rb_cFloat"], 0
+          else
+            raise "Unexpected type!"
+          end
+        end
+      end
+    end
+
     def RB_FIXNUM_P obj_addr
       0 != obj_addr & RUBY_FIXNUM_FLAG
     end
     alias :fixnum? :RB_FIXNUM_P
+
+    UINTPTR_MAX = 0xFFFFFFFFFFFFFFFF # on macos anyway
+    RBIMPL_VALUE_FULL = UINTPTR_MAX
+
+    def RB_STATIC_SYM_P obj_addr
+      mask = ~(RBIMPL_VALUE_FULL << RUBY_SPECIAL_SHIFT)
+      (obj_addr & mask) == RUBY_SYMBOL_FLAG
+    end
+
+    def RB_FLONUM_P obj_addr
+      (obj_addr & RUBY_FLONUM_MASK) == RUBY_FLONUM_FLAG
+    end
 
     def RB_BUILTIN_TYPE obj_addr
       raise if RB_SPECIAL_CONST_P(obj_addr)

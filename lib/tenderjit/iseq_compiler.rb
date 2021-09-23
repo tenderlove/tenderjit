@@ -553,7 +553,7 @@ class TenderJIT
       peek_recv = topn(stack, ci.vm_ci_argc).to_i
 
       if rb.RB_SPECIAL_CONST_P(peek_recv)
-        raise NotImplementedError, "no aref reads on non-heap objects"
+        raise NotImplementedError, "no aset on non-heap objects"
       end
 
       ## Compile the target method
@@ -986,14 +986,10 @@ class TenderJIT
 
       patch_loc = loc - jit_buffer.memory.to_i
 
-      # Get the class. If it's a heap object we need the immediate class pointer
-      # which can pointe at an ICLASS (so we handle singletons). Otherwise use
-      # rb_obj_class to get the class
-      klass = if rb.RB_SPECIAL_CONST_P(recv)
-                CFuncs.rb_obj_class(recv).to_i
-              else
-                RBasic.new(recv).klass
-              end
+      # Get the class of the receiver.  It could be an ICLASS if the object has
+      # a singleton class.  This is important for doing method lookup (in case
+      # of singleton methods).
+      klass = rb.rb_class_of(recv)
 
       # Get the method definition
       cme_ptr = CFuncs.rb_callable_method_entry(klass, mid)
@@ -1056,17 +1052,19 @@ class TenderJIT
         # If the compile time receiver is a special constant, we need to check
         # that it's still a special constant at runtime
         if rb.RB_SPECIAL_CONST_P(recv)
+          # If the receiver is nil at compile time, make sure it's also nil
+          # at runtime
           if rb_recv == nil
             rt.if_eq(recv_loc, Fiddle.dlwrap(nil)).else {
               rt.patchable_jump req.deferred_entry
               rt.jump jit_buffer.memory.to_i + return_loc
             }
-          elsif rb_recv == false
+          elsif rb_recv == false # Same here
             rt.if_eq(recv_loc, Fiddle.dlwrap(false)).else {
               rt.patchable_jump req.deferred_entry
               rt.jump jit_buffer.memory.to_i + return_loc
             }
-          else
+          else # Otherwise it must be some other type of tagged pointer
             flags = recv & RUBY_IMMEDIATE_MASK
 
             tv = rt.temp_var
