@@ -1811,16 +1811,5 @@ class TenderJIT
       yield rt
       rt.write!
     end
-
-    def patch_call at_pos:, to:
-      pos = jit_buffer.pos
-      rel_jump = 0xCAFE
-      2.times do
-        jit_buffer.seek at_pos, IO::SEEK_SET
-        Fisk.new { |__| __.call(__.rel32(rel_jump)) }.write_to(jit_buffer)
-        rel_jump = to - jit_buffer.address
-      end
-      jit_buffer.seek pos, IO::SEEK_SET
-    end
   end
 end
