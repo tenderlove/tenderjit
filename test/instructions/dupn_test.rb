@@ -5,7 +5,7 @@ require "helper"
 class TenderJIT
   class DupnTest < JITTest
     def omg peeks
-      peeks[:foo] ||= :foo
+      peeks[:foo] ||= :bar
     end
 
     def test_dupn
@@ -17,7 +17,7 @@ class TenderJIT
 
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.exits
-      assert_equal :foo, obj[:foo]
+      assert_equal :bar, obj[:foo]
     end
   end
 end

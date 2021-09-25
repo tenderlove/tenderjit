@@ -1254,15 +1254,13 @@ class TenderJIT
     def compile_opt_getinlinecache stack, req, patch_loc
       patch_loc = patch_loc - jit_buffer.memory.to_i
 
-      dup_stack = req.temp_stack.dup
-
       loc = req.temp_stack.last.loc
 
       # Find the next block we'll jump to
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
       unless target_block
-        exit_addr = exits.make_exit("temporary_exit", req.current_pc, dup_stack.size)
+        exit_addr = exits.make_exit("temporary_exit", req.current_pc, req.temp_stack.size)
 
         jit_buffer.patch_jump at: patch_loc,
                               to: exit_addr,
@@ -1746,9 +1744,9 @@ class TenderJIT
     end
 
     def handle_dupn num
-      last = @temp_stack.last(num)
+      from_top = @temp_stack.last(num)
       with_runtime do |rt|
-        last.each do |item|
+        from_top.each do |item|
           rt.push item.loc, name: item.name, type: item.type
         end
       end
