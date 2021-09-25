@@ -9,6 +9,11 @@ class TenderJIT
       @sizeof_sp = TenderJIT.member_size(RbControlFrameStruct, "sp")
     end
 
+    def freeze
+      @stack.freeze
+      super
+    end
+
     # Flush the SP to the CFP within the +fisk+ context
     def flush fisk
       temp = fisk.register
@@ -22,6 +27,10 @@ class TenderJIT
       @stack.fetch idx
     end
 
+    def at idx
+      peek(@stack.length - idx - 1)
+    end
+
     # Returns the stack location +idx+.
     def [] idx
       @stack.fetch(idx) {
@@ -31,6 +40,10 @@ class TenderJIT
 
     def last *args
       @stack.last(*args)
+    end
+
+    def first *args
+      @stack.first(*args)
     end
 
     # Push a value on the temp stack. Returns the memory location where
@@ -49,6 +62,7 @@ class TenderJIT
 
     def initialize_copy other
       @stack = other.stack.dup
+      super
     end
 
     # Get an operand for the stack pointer plus some bytes

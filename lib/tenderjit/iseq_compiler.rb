@@ -562,9 +562,9 @@ class TenderJIT
 
       jit_buffer.patch_jump at: patch_loc, to: entry_location
 
-      param1 = req.temp_stack.peek(-1).loc # param
-      param2 = req.temp_stack.peek(-2).loc # param
-      recv   = req.temp_stack.peek(-3).loc # recv
+      param2 = req.temp_stack.at(0).loc # param
+      param1 = req.temp_stack.at(1).loc # param
+      recv   = req.temp_stack.at(2).loc # recv
 
       with_runtime do |rt|
         rt.set_c_param(0, recv)
@@ -1737,9 +1737,9 @@ class TenderJIT
     end
 
     def handle_setn n
-      item = @temp_stack.peek(-n)
+      item = @temp_stack.last
       with_runtime do |rt|
-        rt.write @temp_stack.peek(0).loc, item.loc
+        rt.write @temp_stack.peek(@temp_stack.size - n - 1).loc, item.loc
       end
     end
 
