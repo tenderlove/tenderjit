@@ -22,7 +22,7 @@ class TenderJIT
     def check_vm_stack_overflow temp_stack, exit_location, local_size, stack_max
       margin = ((local_size + stack_max) * Fiddle::SIZEOF_VOIDP) + RbControlFrameStruct.byte_size
 
-      loc = temp_stack.last.loc + (margin / Fiddle::SIZEOF_VOIDP)
+      loc = temp_stack.first.loc + (margin / Fiddle::SIZEOF_VOIDP)
       with_ref(loc) do |reg|
         self.if(reg, :>, REG_CFP) {
           # do nothing

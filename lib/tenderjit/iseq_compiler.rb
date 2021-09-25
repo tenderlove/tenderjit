@@ -278,7 +278,7 @@ class TenderJIT
 
     def handle_setglobal gid
       global_name = Fiddle.dlunwrap(CFuncs.rb_id2str(gid))
-      stack_val   = @temp_stack.last.type
+      stack_val   = @temp_stack.first.type
       loc = @temp_stack.pop
 
       addr = Fiddle::Handle::DEFAULT["rb_gvar_set"]
@@ -294,14 +294,14 @@ class TenderJIT
     end
 
     def handle_dup
-      last = @temp_stack.last
+      last = @temp_stack.peek(0)
       with_runtime do |rt|
         rt.push last.loc, name: last.name, type: last.type
       end
     end
 
     def handle_concatstrings num
-      loc = @temp_stack[@temp_stack.size - num]
+      loc = @temp_stack[num + 1]
       num.times { @temp_stack.pop }
       addr = Fiddle::Handle::DEFAULT["rb_str_concat_literals"]
       with_runtime do |rt|
@@ -508,8 +508,8 @@ class TenderJIT
 
       jit_buffer.patch_jump at: patch_loc, to: entry_location
 
-      param = req.temp_stack.peek(-1).loc # param
-      recv  = req.temp_stack.peek(-2).loc # recv
+      param = req.temp_stack.peek(0).loc # param
+      recv  = req.temp_stack.peek(1).loc # recv
 
       with_runtime do |rt|
         rt.set_c_param(0, recv)
@@ -562,9 +562,9 @@ class TenderJIT
 
       jit_buffer.patch_jump at: patch_loc, to: entry_location
 
-      param2 = req.temp_stack.at(0).loc # param
-      param1 = req.temp_stack.at(1).loc # param
-      recv   = req.temp_stack.at(2).loc # recv
+      param2 = req.temp_stack.peek(0).loc # param
+      param1 = req.temp_stack.peek(1).loc # param
+      recv   = req.temp_stack.peek(2).loc # recv
 
       with_runtime do |rt|
         rt.set_c_param(0, recv)
@@ -820,24 +820,25 @@ class TenderJIT
 
       overflow_exit = compile_request.make_exit(exits)
 
+      recv_loc = temp_stack.peek(argc).loc
+
       # Write next PC to CFP
       # Pop params and self from the stack
-      idx = temp_stack.size - (argc + 1)
       with_runtime do |rt|
-        rt.flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
+        rt.flush_pc_and_sp compile_request.next_pc, recv_loc
         rt.check_vm_stack_overflow compile_request.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
       end
 
-      recv_loc = compile_request.temp_stack.peek(compile_request.temp_stack.size - 1 - argc).loc
+      next_sp = temp_stack[argc - param_size - 1]
 
       # `vm_push_frame`
       vm_push_frame iseq_ptr,
         VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL,
-        compile_request.temp_stack.peek(compile_request.temp_stack.size - 1 - argc).loc,
+        recv_loc,
         0, #ci.block_handler,
         cme,
         iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-        temp_stack[(temp_stack.size - argc) + param_size],
+        next_sp,
         local_size - param_size
 
       with_runtime do |rt|
@@ -881,30 +882,30 @@ class TenderJIT
       frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL
 
       temp_stack = compile_request.temp_stack
-      idx = temp_stack.size - (argc + 1)
 
       overflow_exit = compile_request.make_exit(exits)
 
       ## Pop params and self from the stack
       with_runtime do |rt|
-        rt.flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
+        rt.flush_pc_and_sp compile_request.next_pc, temp_stack[argc]
 
         rt.check_vm_stack_overflow temp_stack, overflow_exit, 0, 0
       end
 
-      recv_loc = temp_stack.peek(temp_stack.size - 1 - argc).loc
+      recv_loc = temp_stack.peek(argc).loc
+      next_sp = temp_stack[argc - param_size - 1]
 
       vm_push_frame(0,
                     frame_type,
-                    temp_stack.peek(temp_stack.size - 1 - argc).loc,
+                    temp_stack.peek(argc).loc,
                     0, #ci.block_handler,
                     cme,
                     0,
-                    temp_stack[(temp_stack.size - argc) + param_size + 1],
+                    next_sp,
                     0)
 
       with_runtime do |rt|
-        rt.with_ref(temp_stack[temp_stack.size - argc]) do |sp|
+        rt.with_ref(temp_stack[argc + 1]) do |sp|
           rt.push_reg REG_BP
           rt.call_cfunc cfunc.invoker.to_i, [recv_loc, argc, sp, cfunc.func.to_i]
           rt.pop_reg REG_BP
@@ -936,24 +937,27 @@ class TenderJIT
 
       temp_stack = compile_request.temp_stack
 
-      idx = temp_stack.size - (argc + 1)
       local_size = iseq.body.local_table_size - param_size
 
       overflow_exit = compile_request.make_exit(exits)
 
+      recv_loc = temp_stack.peek(argc).loc
+
       with_runtime do |rt|
         ## Pop params and self from the stack
-        rt.flush_pc_and_sp compile_request.next_pc, temp_stack[idx]
+        rt.flush_pc_and_sp compile_request.next_pc, recv_loc
         rt.check_vm_stack_overflow compile_request.temp_stack, overflow_exit, local_size, iseq.body.stack_max
       end
 
+      next_sp = temp_stack[argc - param_size - 1]
+
       vm_push_frame iseq.to_i,
         type | VM_FRAME_FLAG_BMETHOD,
-        compile_request.temp_stack.peek(compile_request.temp_stack.size - 1 - argc).loc,
+        compile_request.temp_stack.peek(argc).loc,
         VM_GUARDED_PREV_EP(captured.ep),
         cme,
         iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-        temp_stack[temp_stack.size - argc + param_size],
+        next_sp,
         iseq.body.local_table_size - param_size
 
       with_runtime do |rt|
@@ -1044,7 +1048,7 @@ class TenderJIT
 
       with_runtime do |rt|
         temp_stack = req.temp_stack
-        recv_loc = temp_stack.peek(temp_stack.size - 1 - argc).loc
+        recv_loc = temp_stack.peek(argc).loc
 
         # If the compile time receiver is a special constant, we need to check
         # that it's still a special constant at runtime
@@ -1254,7 +1258,7 @@ class TenderJIT
     def compile_opt_getinlinecache stack, req, patch_loc
       patch_loc = patch_loc - jit_buffer.memory.to_i
 
-      loc = req.temp_stack.last.loc
+      loc = req.temp_stack.peek(0).loc
 
       # Find the next block we'll jump to
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
@@ -1406,10 +1410,9 @@ class TenderJIT
 
       # Generate runtime checks if we need them
       2.times do |i|
-        idx = ts.size - i - 1
-        if ts.peek(idx).type != T_FIXNUM
+        if ts.peek(i).type != T_FIXNUM
           # Is the argument a fixnum?
-          __.test(ts.peek(idx).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
+          __.test(ts.peek(i).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
             .jz(__.label(:quit!))
         end
       end
@@ -1444,10 +1447,9 @@ class TenderJIT
 
       # Generate runtime checks if we need them
       2.times do |i|
-        idx = ts.size - i - 1
-        if ts.peek(idx).type != T_FIXNUM
+        if ts.peek(i).type != T_FIXNUM
           # Is the argument a fixnum?
-          __.test(ts.peek(idx).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
+          __.test(ts.peek(i).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
             .jz(__.label(:quit!))
         end
       end
@@ -1483,12 +1485,11 @@ class TenderJIT
 
       # Generate runtime checks if we need them
       2.times do |i|
-        idx = ts.size - i - 1
-        if ts.peek(idx).type != T_FIXNUM
+        if ts.peek(i).type != T_FIXNUM
           exit_addr ||= exits.make_exit(insn_name, current_pc, @temp_stack.size)
 
           # Is the argument a fixnum?
-          __.test(ts.peek(idx).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
+          __.test(ts.peek(i).loc, __.uimm(rb.c("RUBY_FIXNUM_FLAG")))
             .jz(__.label(:quit!))
         end
       end
@@ -1737,14 +1738,14 @@ class TenderJIT
     end
 
     def handle_setn n
-      item = @temp_stack.last
+      item = @temp_stack.peek(0)
       with_runtime do |rt|
-        rt.write @temp_stack.peek(@temp_stack.size - n - 1).loc, item.loc
+        rt.write @temp_stack.peek(n).loc, item.loc
       end
     end
 
     def handle_dupn num
-      from_top = @temp_stack.last(num)
+      from_top = @temp_stack.first(num)
       with_runtime do |rt|
         from_top.each do |item|
           rt.push item.loc, name: item.name, type: item.type

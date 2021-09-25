@@ -22,28 +22,27 @@ class TenderJIT
       fisk.release_register temp
     end
 
-    # Returns the info stored for stack location +idx+
+    # Returns the info stored for stack location +idx+.  0 is the TOP of the
+    # stack, or the last thing pushed.
     def peek idx
-      @stack.fetch idx
+      @stack.fetch(@stack.length - idx - 1)
     end
 
-    def at idx
-      peek(@stack.length - idx - 1)
-    end
-
-    # Returns the stack location +idx+.
+    # Returns the stack location +idx+.  0 is the TOP of the stack, or the last
+    # thing that was pushed.
     def [] idx
+      idx = @stack.length - idx - 1
       @stack.fetch(idx) {
         return Fisk::M64.new(REG_BP, idx * @sizeof_sp)
       }.loc
     end
 
-    def last *args
-      @stack.last(*args)
-    end
-
-    def first *args
-      @stack.first(*args)
+    def first num = nil
+      if num
+        @stack.last(num)
+      else
+        @stack.last
+      end
     end
 
     # Push a value on the temp stack. Returns the memory location where
