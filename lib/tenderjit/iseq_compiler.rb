@@ -122,9 +122,6 @@ class TenderJIT
         end
         if respond_to?("handle_#{name}", true)
           if $DEBUG
-            Fisk.new { |__|
-              __.jmp(__.absolute(@string_buffer.address))
-            }.write_to(jit_buffer)
             print_str("#{sprintf("%04d", @insn_idx)} running   #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)} SP #{@temp_stack.size}\n")
           end
           @fisk = Fisk.new
@@ -1786,6 +1783,10 @@ class TenderJIT
     end
 
     def print_str string
+      Fisk.new { |__|
+        __.jmp(__.absolute(@string_buffer.address))
+      }.write_to(jit_buffer)
+
       fisk = Fisk.new
       fisk.jmp(fisk.label(:after_bytes))
       pos = nil
