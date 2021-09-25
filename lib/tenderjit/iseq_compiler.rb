@@ -614,7 +614,7 @@ class TenderJIT
 
       req = CompileOptAref.new
       req.call_info = ci
-      req.temp_stack = @temp_stack.dup
+      req.temp_stack = @temp_stack.dup.freeze
       req.current_pc = current_pc
       req.next_pc = next_pc
 
@@ -660,7 +660,7 @@ class TenderJIT
 
       compile_request = CallCompileRequest.new
       compile_request.call_info = ci
-      compile_request.temp_stack = @temp_stack.dup
+      compile_request.temp_stack = @temp_stack.dup.freeze
       compile_request.current_pc = current_pc
       compile_request.next_pc = next_pc
 
@@ -1150,7 +1150,7 @@ class TenderJIT
 
       read_loc = @temp_stack.pop
 
-      patch_request = BranchUnless.new jump_pc, :jz, @temp_stack.dup
+      patch_request = BranchUnless.new jump_pc, :jz, @temp_stack.dup.freeze
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
@@ -1208,10 +1208,10 @@ class TenderJIT
 
       target_jump_block = @blocks.find { |b| b.entry_idx == jump_idx }
 
-      patch_false = BranchIf.new next_idx, :jmp, @temp_stack.dup
+      patch_false = BranchIf.new next_idx, :jmp, @temp_stack.dup.freeze
       @compile_requests << Fiddle::Pinned.new(patch_false)
 
-      patch_true = BranchIf.new jump_idx, :jnz, @temp_stack.dup
+      patch_true = BranchIf.new jump_idx, :jnz, @temp_stack.dup.freeze
       @compile_requests << Fiddle::Pinned.new(patch_true)
 
       deferred_true, deferred_false = [patch_true, patch_false].map do |patch|
@@ -1296,7 +1296,7 @@ class TenderJIT
 
       loc = @temp_stack.push(:cache_get)
 
-      patch_request = HandleOptGetinlinecache.new dst, :jmp, @temp_stack.dup, ic, current_pc
+      patch_request = HandleOptGetinlinecache.new dst, :jmp, @temp_stack.dup.freeze, ic, current_pc
       @compile_requests << Fiddle::Pinned.new(patch_request)
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
@@ -1365,7 +1365,7 @@ class TenderJIT
 
       dst = @insn_idx + dst + len
 
-      patch_request = HandleJump.new dst, :jmp, @temp_stack.dup
+      patch_request = HandleJump.new dst, :jmp, @temp_stack.dup.freeze
       @compile_requests << Fiddle::Pinned.new(patch_request)
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
@@ -1701,7 +1701,7 @@ class TenderJIT
 
       req = CompileOptAref.new
       req.call_info = ci
-      req.temp_stack = @temp_stack.dup
+      req.temp_stack = @temp_stack.dup.freeze
       req.current_pc = current_pc
       req.next_pc = next_pc
 
