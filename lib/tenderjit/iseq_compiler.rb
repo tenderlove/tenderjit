@@ -351,7 +351,7 @@ class TenderJIT
         self_ptr = rt.pointer(temp, type: RObject)
 
         # If the object class is the same, continue
-        rt.if_eq(self_ptr.basic.klass, klass) {
+        rt.if_eq(self_ptr.basic.klass, RBasic.klass(recv).to_i) {
 
           # If it's an embedded object, write to the embedded array
           rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
