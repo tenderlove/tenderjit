@@ -905,7 +905,7 @@ class TenderJIT
                     0)
 
       with_runtime do |rt|
-        rt.with_ref(temp_stack[argc + 1]) do |sp|
+        rt.with_ref(temp_stack[argc - 1]) do |sp|
           rt.push_reg REG_BP
           rt.call_cfunc cfunc.invoker.to_i, [recv_loc, argc, sp, cfunc.func.to_i]
           rt.pop_reg REG_BP
