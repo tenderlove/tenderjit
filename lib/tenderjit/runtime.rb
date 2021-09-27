@@ -299,6 +299,9 @@ class TenderJIT
       __ = @fisk
       reg = @fisk.rax
       @fisk.mov(reg, loc)
+      @fisk.test(reg, reg)        # Is the parameter Qfalse?
+      @fisk.cmovz(reg, @fisk.rsi) # If so, set the register to $rsi (it's non-zero)
+      @fisk.jz(is_immediate)      # cmov didn't clear ZF, so we can jump if it's 0
       @fisk.test(reg, __.uimm(RUBY_IMMEDIATE_MASK))
       @fisk.jnz(is_immediate)
       @fisk.test(reg, __.imm(~Qnil))
