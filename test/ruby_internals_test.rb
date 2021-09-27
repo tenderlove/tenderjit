@@ -124,7 +124,7 @@ class TenderJIT
       assert_equal [-Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP], rObject_as_heap.types
 
       # Check the "ary" member. It's an array of unsigned long
-      assert_equal -Fiddle::TYPE_LONG, rObject_as.types.last.type
+      assert_equal (-Fiddle::TYPE_LONG), rObject_as.types.last.type
       assert_equal 3, rObject_as.types.last.len
     end
 
@@ -217,7 +217,6 @@ class TenderJIT
       fisk = Fisk.new
 
       jitbuf = Fisk::Helpers.jitbuffer 4096
-      fmt = "%x\n"
 
       tc = self
       fisk.asm(jitbuf) do
@@ -312,7 +311,6 @@ class TenderJIT
 
       fisk = Fisk.new
 
-      rb = self.rb
       binary = fisk.asm do
         push rbp
         mov rcx, rdi # save the first parameter, it's the iseq
