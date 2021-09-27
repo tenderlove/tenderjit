@@ -519,6 +519,8 @@ class TenderJIT
         rt.if_eq(_self.basic.klass, klass) {
           klass = Fiddle.dlunwrap(klass)
 
+          rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
+
           # We know it's an array at compile time
           if klass == ::Array
             rt.push_reg REG_BP # alignment
@@ -567,11 +569,15 @@ class TenderJIT
       recv   = req.temp_stack.peek(2).loc # recv
 
       with_runtime do |rt|
-        rt.set_c_param(0, recv)
-        _self = rt.pointer(rt.c_param(0), type: RObject)
+        temp = rt.temp_var
+        temp.write recv
 
-        rt.if_eq(_self.basic.klass, klass) {
+        _self = rt.pointer(temp, type: RObject)
+
+        rt.if_eq(_self.basic.klass, RBasic.klass(peek_recv).to_i) {
           klass = Fiddle.dlunwrap(klass)
+
+          rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
 
           # We know it's an array at compile time
           if klass == ::Array
@@ -592,6 +598,7 @@ class TenderJIT
         }.else {
           rt.patchable_jump req.deferred_entry
         }
+        temp.release!
 
         # patched a jmp and it is 5 bytes
         rt.jump jit_buffer.memory.to_i + patch_loc + 5

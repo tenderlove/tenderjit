@@ -83,5 +83,22 @@ class TenderJIT
       assert_equal 4, jit.executed_methods
       assert_equal 0, jit.exits
     end
+
+    def test_opt_aref_does_not_crash
+      @peeks = {}
+      jit.compile method(:add_mappings)
+      jit.enable!
+      add_mappings(Object.new)
+      add_mappings(Object.new)
+      add_mappings(Object.new)
+      jit.enable!
+    end
+
+    private
+
+    def add_mappings(peek)
+      # filter the logically equivalent objects
+      @peeks[peek] ||= peek
+    end
   end
 end
