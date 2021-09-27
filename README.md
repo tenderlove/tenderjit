@@ -3,7 +3,22 @@
 TenderJIT is an experimental JIT compiler for Ruby written in Ruby.
 Its design is mostly based off [YJIT](https://github.com/shopify/yjit).
 
-## Using TenderJIT
+## Getting Started with TenderJIT
+
+TenderJIT isn't available as a gem (yet).  To start using it, clone the
+repository and run the following commands:
+
+```
+$ bundle install
+$ bundle exec rake test
+```
+
+If the tests pass, then you're ready to go!
+
+TenderJIT currently requires Ruby 3.0.2 or the edge version of Ruby.  It *may*
+work on 3.0.X, but I haven't tested older versions.
+
+## Running JIT code
 
 Right now, TenderJIT doesn't automatically compile methods.  You must manually
 tell TenderJIT to compile a method.
