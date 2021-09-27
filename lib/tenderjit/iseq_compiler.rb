@@ -1587,10 +1587,9 @@ class TenderJIT
 
           # Get the local value from the EP
           temp.write cfp_ptr.ep
-          temp.sub idx
 
           # dereference the temp var
-          temp.write temp[0]
+          temp.write temp[-idx]
 
           # push it on the stack
           rt.push temp, name: :local
