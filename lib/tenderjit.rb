@@ -481,7 +481,7 @@ class TenderJIT
     ptr = body.variable.coverage.to_i
 
     ary = nil
-    if ptr == 0
+    if ptr == 0 || ptr == Qnil
       ary = []
       body.variable.coverage = Fiddle.dlwrap(ary)
     else

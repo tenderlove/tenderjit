@@ -165,6 +165,18 @@ class TenderJIT
     end
   end
 
+  class SpecialMethods < JITTest
+    class Foo
+    end
+
+    def test_special_methods_do_not_break
+      jit.compile Foo.instance_method(:tap)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+  end
+
   class CompileItself < JITTest
     def fib n
       if n < 3
