@@ -1265,7 +1265,9 @@ class TenderJIT
     def compile_opt_getinlinecache stack, req, patch_loc
       patch_loc = patch_loc - jit_buffer.memory.to_i
 
-      loc = req.temp_stack.peek(0).loc
+      stack = req.temp_stack.dup
+
+      loc = stack.push(:cache_get)
 
       # Find the next block we'll jump to
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
@@ -1277,7 +1279,7 @@ class TenderJIT
                               to: exit_addr,
                               type: req.jump_type
 
-        resume_compiling req.jump_idx, req.temp_stack.dup
+        resume_compiling req.jump_idx, stack
         target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
       end
 
@@ -1305,8 +1307,6 @@ class TenderJIT
 
       dst = @insn_idx + dst + len
 
-      loc = @temp_stack.push(:cache_get)
-
       patch_request = HandleOptGetinlinecache.new dst, :jmp, @temp_stack.dup.freeze, ic, current_pc
       @compile_requests << Fiddle::Pinned.new(patch_request)
 
@@ -1325,6 +1325,8 @@ class TenderJIT
       end
 
       deferred.call
+
+      loc = @temp_stack.push(:cache_get)
 
       ary_head = Fiddle::Pointer.new(CONST_WATCHERS)
       watcher_count = ary_head[0, Fiddle::SIZEOF_VOIDP].unpack1("l!")
