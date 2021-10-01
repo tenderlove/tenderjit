@@ -381,6 +381,7 @@ class TenderJIT
       end
       @fisk.mov(@fisk.rax, @fisk.uimm(func_loc))
         .call(@fisk.rax)
+      @fisk.rax
     end
 
     def release_temp temp

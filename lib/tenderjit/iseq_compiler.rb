@@ -1133,12 +1133,11 @@ class TenderJIT
       with_runtime do |rt|
         rt.push_reg REG_BP
         rt.with_ref(@temp_stack.peek(num - 1).loc) do |ref|
-          rt.call_cfunc(address, [REG_EC, num, ref])
+          num.times { @temp_stack.pop }
+          ret = rt.call_cfunc(address, [REG_EC, num, ref])
+          rt.push ret, name: "array"
         end
         rt.pop_reg REG_BP # magic
-
-        num.times { @temp_stack.pop }
-        rt.push rt.return_value, name: "array"
       end
     end
 
