@@ -726,18 +726,17 @@ class TenderJIT
           # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
           cfp_ptr.sub # like -- in C
 
-          # FIXME: Initialize local variables to nil
-          # for (int i=0; i < local_size; i++) {
-          #     *sp++ = Qnil;
-          # }
+          local_size.times do |i|
+            sp_ptr[i] = Qnil
+          end
 
           # /* setup ep with managing data */
           # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
           # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
           # *sp++ = type;       /* ep[-0] / ENV_FLAGS */
-          sp_ptr[0] = cref_or_me
-          sp_ptr[1] = specval
-          sp_ptr[2] = type
+          sp_ptr[local_size + 0] = cref_or_me
+          sp_ptr[local_size + 1] = specval
+          sp_ptr[local_size + 2] = type
 
           # /* setup new frame */
           # *cfp = (const struct rb_control_frame_struct) {
