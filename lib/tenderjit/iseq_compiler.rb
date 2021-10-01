@@ -1786,6 +1786,19 @@ class TenderJIT
       n.times { @temp_stack.pop }
     end
 
+    def handle_tostring
+      address = Fiddle::Handle::DEFAULT["rb_obj_as_string_result"]
+      val = @temp_stack.pop
+      str = @temp_stack.pop
+
+      with_runtime do |rt|
+        rt.push_reg REG_BP
+        new_string_address = rt.call_cfunc_without_alignment(address, [val, str])
+        rt.push new_string_address, name: "string"
+        rt.pop_reg REG_BP
+      end
+    end
+
     # Call a C function at `func_loc` with `params`. Return value will be in RAX
     def call_cfunc func_loc, params, fisk = __
       raise NotImplementedError, "too many parameters" if params.length > 6
