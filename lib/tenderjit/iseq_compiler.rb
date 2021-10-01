@@ -269,9 +269,7 @@ class TenderJIT
     def handle_getglobal gid
       addr = Fiddle::Handle::DEFAULT["rb_gvar_get"]
       with_runtime do |rt|
-        rt.push_reg REG_BP
         rt.call_cfunc addr, [gid]
-        rt.pop_reg REG_BP
         rt.push rt.return_value, name: :unknown
       end
     end
@@ -286,9 +284,7 @@ class TenderJIT
         if global_name == "$halt_at_runtime" && stack_val == true
           rt.break
         else
-          rt.push_reg REG_BP
           rt.call_cfunc addr, [gid, loc]
-          rt.pop_reg REG_BP
         end
       end
     end
@@ -306,9 +302,7 @@ class TenderJIT
       addr = Fiddle::Handle::DEFAULT["rb_str_concat_literals"]
       with_runtime do |rt|
         rt.with_ref(loc) do |reg|
-          rt.push_reg REG_BP
           rt.call_cfunc addr, [num, reg]
-          rt.pop_reg REG_BP
         end
         rt.push rt.return_value, name: __method__, type: :string
       end
@@ -523,15 +517,11 @@ class TenderJIT
 
           # We know it's an array at compile time
           if klass == ::Array
-            rt.push_reg REG_BP # alignment
             rt.call_cfunc(rb.symbol_address("rb_ary_aref1"), [recv, param])
-            rt.pop_reg REG_BP  # alignment
 
             # We know it's a hash at compile time
           elsif klass == ::Hash
-            rt.push_reg REG_BP # alignment
             rt.call_cfunc(rb.symbol_address("rb_hash_aref"), [recv, param])
-            rt.pop_reg REG_BP  # alignment
 
           else
             raise NotImplementedError
@@ -582,15 +572,11 @@ class TenderJIT
           # We know it's an array at compile time
           if klass == ::Array
             raise
-            rt.push_reg REG_BP # alignment
             rt.call_cfunc(rb.symbol_address("rb_ary_store"), [recv, param])
-            rt.pop_reg REG_BP  # alignment
 
             # We know it's a hash at compile time
           elsif klass == ::Hash
-            rt.push_reg REG_BP # alignment
             rt.call_cfunc(rb.symbol_address("rb_hash_aset"), [recv, param1, param2])
-            rt.pop_reg REG_BP  # alignment
 
           else
             raise NotImplementedError
@@ -913,9 +899,7 @@ class TenderJIT
 
       with_runtime do |rt|
         rt.with_ref(temp_stack[argc - 1]) do |sp|
-          rt.push_reg REG_BP
           rt.call_cfunc cfunc.invoker.to_i, [recv_loc, argc, sp, cfunc.func.to_i]
-          rt.pop_reg REG_BP
         end
 
         ec_ptr = rt.pointer REG_EC, type: RbExecutionContextT
@@ -1134,7 +1118,7 @@ class TenderJIT
         rt.push_reg REG_BP
         rt.with_ref(@temp_stack.peek(num - 1).loc) do |ref|
           num.times { @temp_stack.pop }
-          ret = rt.call_cfunc(address, [REG_EC, num, ref])
+          ret = rt.call_cfunc_without_alignment(address, [REG_EC, num, ref])
           rt.push ret, name: "array"
         end
         rt.pop_reg REG_BP # magic

@@ -364,6 +364,12 @@ class TenderJIT
     end
 
     def call_cfunc func_loc, params
+      @fisk.push REG_BP.to_register # alignment
+      call_cfunc_without_alignment func_loc, params
+      @fisk.pop REG_BP.to_register  # alignment
+    end
+
+    def call_cfunc_without_alignment func_loc, params
       raise NotImplementedError, "too many parameters" if params.length > 6
       raise "No function location" unless func_loc > 0
 
