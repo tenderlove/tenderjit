@@ -5,7 +5,7 @@ require "helper"
 class TenderJIT
   class DuphashTest < JITTest
     def duphash
-      a = {a: 1, b: 2}
+      {a: 1, b: 2}
     end
 
     def test_duphash
