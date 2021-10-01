@@ -1148,6 +1148,16 @@ class TenderJIT
       __.mov write_loc, __.rax
     end
 
+    def handle_duphash hash
+      write_loc = @temp_stack.push(:object, type: RUBY_T_HASH)
+
+      __.push REG_BP
+      call_cfunc rb.symbol_address("rb_hash_resurrect"), [__.uimm(hash)]
+      __.pop REG_BP
+
+      __.mov write_loc, __.rax
+    end
+
     class BranchUnless < Struct.new(:jump_idx, :jump_type, :temp_stack)
     end
 
