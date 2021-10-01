@@ -1132,11 +1132,24 @@ class TenderJIT
 
       with_runtime do |rt|
         rt.push_reg REG_BP
-        rt.with_ref(@temp_stack.peek(num - 1).loc) do |ref|
+
+        values_loc = if num > 0
+          @temp_stack.peek(num - 1).loc
+        else
+          # When there are no values to create an array from, there is no
+          # meaningful address to pass; MRI doesn't use the address in this case
+          # (see https://github.com/ruby/ruby/blob/v3_0_2/array.c#L838).
+          # For simplicity/safety, we send a null pointer.
+          #
+          Fisk::Imm64.new(0)
+        end
+
+        rt.with_ref(values_loc) do |ref|
           num.times { @temp_stack.pop }
           ret = rt.call_cfunc(address, [REG_EC, num, ref])
           rt.push ret, name: "array"
         end
+
         rt.pop_reg REG_BP # magic
       end
     end
