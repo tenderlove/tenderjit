@@ -1605,9 +1605,9 @@ class TenderJIT
     end
 
     def handle_setlocal_WC_0 idx
-      loc = @temp_stack.pop
-
       addr = exits.make_exit("setlocal_WC_0", current_pc, @temp_stack.size)
+
+      loc = @temp_stack.pop
 
       reg_ep = __.register "ep"
       reg_local = __.register "local"
