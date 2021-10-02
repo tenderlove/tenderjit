@@ -665,8 +665,6 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
-
           temp = rt.temp_var
           temp.write rt.pointer(rt.return_value)[0]
           temp.shl   24
@@ -686,7 +684,7 @@ class TenderJIT
             rt.pointer(rt.return_value)[0] = temp
             temp.release!
 
-            rt.rb_funcall self, :compile_opt_send_without_block, [cfp_ptr.sp, compile_request, ctx.fisk.rax]
+            rt.rb_funcall self, :compile_opt_send_without_block, [REG_CFP, compile_request, ctx.fisk.rax]
 
             rt.NUM2INT(rt.return_value)
 
@@ -971,7 +969,9 @@ class TenderJIT
       end
     end
 
-    def compile_opt_send_without_block stack, req, loc
+    def compile_opt_send_without_block cfp, req, loc
+      stack = RbControlFrameStruct.sp(cfp)
+
       ci = req.call_info
       mid = ci.vm_ci_mid
       argc = ci.vm_ci_argc
