@@ -3,6 +3,7 @@
 require "tenderjit/temp_stack"
 require "tenderjit/runtime"
 require "tenderjit/jit_context"
+require "tenderjit/iseq_compiler/frames"
 
 class TenderJIT
   class ISEQCompiler
@@ -716,58 +717,6 @@ class TenderJIT
       Fiddle::Pointer.new(stack - (Fiddle::SIZEOF_VOIDP * (i + 1))).ptr
     end
 
-    def vm_push_frame iseq, type, _self, specval, cref_or_me, pc, argv, local_size
-      with_runtime do |rt|
-        rt.with_ref(argv) do |sp|
-          sp_ptr = rt.pointer sp
-          ec_ptr = rt.pointer REG_EC, type: RbExecutionContextT
-          cfp_ptr = rt.pointer REG_CFP, type: RbControlFrameStruct
-
-          # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
-          cfp_ptr.sub # like -- in C
-
-          local_size.times do |i|
-            sp_ptr[i] = Qnil
-          end
-
-          # /* setup ep with managing data */
-          # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
-          # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
-          # *sp++ = type;       /* ep[-0] / ENV_FLAGS */
-          sp_ptr[local_size + 0] = cref_or_me
-          sp_ptr[local_size + 1] = specval
-          sp_ptr[local_size + 2] = type
-
-          # /* setup new frame */
-          # *cfp = (const struct rb_control_frame_struct) {
-          #     .pc         = pc,
-          #     .sp         = sp,
-          #     .iseq       = iseq,
-          #     .self       = self,
-          #     .ep         = sp - 1,
-          #     .block_code = NULL,
-          #     .__bp__     = sp
-          # };
-          cfp_ptr.pc = pc
-
-          sp_ptr.with_ref(3 + local_size) do |new_sp|
-            cfp_ptr.sp     = new_sp
-            cfp_ptr.__bp__ = new_sp
-
-            new_sp.sub
-            cfp_ptr.ep     = new_sp
-          end
-
-          cfp_ptr.iseq = iseq
-          cfp_ptr.self = _self
-          cfp_ptr.block_code = 0
-
-          # ec->cfp = cfp;
-          ec_ptr.cfp = cfp_ptr
-        end
-      end
-    end
-
     def compile_jump stack, req, patch_loc
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
@@ -823,17 +772,17 @@ class TenderJIT
 
       next_sp = temp_stack[argc - param_size - 1]
 
-      # `vm_push_frame`
-      vm_push_frame iseq_ptr,
-        VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL,
-        recv_loc,
-        0, #ci.block_handler,
-        cme,
-        iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-        next_sp,
-        local_size - param_size
-
       with_runtime do |rt|
+        # `vm_push_frame`
+        Frames::ISeq.new(
+          iseq_ptr,
+          recv_loc,
+          0, #ci.block_handler,
+          cme,
+          iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
+          next_sp,
+          local_size - param_size).push rt
+
         # Save the base pointer
         rt.push_reg REG_BP
 
@@ -871,8 +820,6 @@ class TenderJIT
                      cfunc.argc
                    end
 
-      frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL
-
       temp_stack = compile_request.temp_stack
 
       overflow_exit = compile_request.make_exit(exits)
@@ -887,16 +834,12 @@ class TenderJIT
       recv_loc = temp_stack.peek(argc).loc
       next_sp = temp_stack[argc - param_size - 1]
 
-      vm_push_frame(0,
-                    frame_type,
-                    temp_stack.peek(argc).loc,
-                    0, #ci.block_handler,
-                    cme,
-                    0,
-                    next_sp,
-                    0)
-
       with_runtime do |rt|
+        Frames::CFunc.new(temp_stack.peek(argc).loc,
+                          0, #ci.block_handler,
+                          cme,
+                          next_sp).push(rt)
+
         rt.with_ref(temp_stack[argc - 1]) do |sp|
           rt.call_cfunc cfunc.invoker.to_i, [recv_loc, argc, sp, cfunc.func.to_i]
         end
@@ -941,16 +884,16 @@ class TenderJIT
 
       next_sp = temp_stack[argc - param_size - 1]
 
-      vm_push_frame iseq.to_i,
-        type | VM_FRAME_FLAG_BMETHOD,
-        compile_request.temp_stack.peek(argc).loc,
-        VM_GUARDED_PREV_EP(captured.ep),
-        cme,
-        iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-        next_sp,
-        iseq.body.local_table_size - param_size
-
       with_runtime do |rt|
+        Frames::BMethod.new(
+          iseq.to_i,
+          compile_request.temp_stack.peek(argc).loc,
+          VM_GUARDED_PREV_EP(captured.ep),
+          cme,
+          iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
+          next_sp,
+          iseq.body.local_table_size - param_size).push(rt)
+
         rt.push_reg REG_BP
 
         rt.temp_var do |var|
