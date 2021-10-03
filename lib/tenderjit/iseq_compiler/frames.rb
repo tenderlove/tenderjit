@@ -66,7 +66,9 @@ class TenderJIT
         end
 
         def write_specval rt, sp_ptr
-          sp_ptr[local_size + 1] = specval
+          specval.write(rt) do |val|
+            sp_ptr[local_size + 1] = val
+          end
         end
       end
 
@@ -92,6 +94,32 @@ class TenderJIT
           type = VM_FRAME_MAGIC_BLOCK | VM_FRAME_FLAG_BMETHOD,
 
           super(iseq, type, _self, specval, cref_or_me, pc, argv, local_size)
+        end
+      end
+    end
+
+    module SpecVals
+      class Null
+        def write rt
+          yield 0
+        end
+      end
+
+      NULL = Null.new
+
+      class PreviousEP
+        def initialize ep
+          @ep = ep.to_i
+        end
+
+        def write rt
+          yield VM_GUARDED_PREV_EP(@ep)
+        end
+
+        private
+
+        def VM_GUARDED_PREV_EP ep
+          ep | 0x01
         end
       end
     end

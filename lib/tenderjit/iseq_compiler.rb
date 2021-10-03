@@ -777,7 +777,7 @@ class TenderJIT
         Frames::ISeq.new(
           iseq_ptr,
           recv_loc,
-          0, #ci.block_handler,
+          SpecVals::NULL,
           cme,
           iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
           next_sp,
@@ -836,7 +836,7 @@ class TenderJIT
 
       with_runtime do |rt|
         Frames::CFunc.new(temp_stack.peek(argc).loc,
-                          0, #ci.block_handler,
+                          SpecVals::NULL,
                           cme,
                           next_sp).push(rt)
 
@@ -888,7 +888,7 @@ class TenderJIT
         Frames::BMethod.new(
           iseq.to_i,
           compile_request.temp_stack.peek(argc).loc,
-          VM_GUARDED_PREV_EP(captured.ep),
+          SpecVals::PreviousEP.new(captured.ep),
           cme,
           iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
           next_sp,
@@ -1763,10 +1763,6 @@ class TenderJIT
       fisk.syscall
       fisk.jmp(fisk.absolute(jit_buffer.address.to_i))
       fisk.write_to(@string_buffer)
-    end
-
-    def VM_GUARDED_PREV_EP ep
-      ep.to_i | 0x01
     end
 
     def with_runtime
