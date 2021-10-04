@@ -382,7 +382,7 @@ class TenderJIT
           rt.push_reg REG_BP
           rt.push_reg REG_BP
           rt.push_reg rt.c_param(0)
-          rt.rb_funcall self, :compile_setinstancevariable, [cfp_ptr.self, req, rt.return_value]
+          rt.rb_funcall_without_alignment self, :compile_setinstancevariable, [cfp_ptr.self, req, rt.return_value]
           rt.pop_reg rt.c_param(0)
           rt.pop_reg REG_BP
           rt.pop_reg REG_BP
@@ -461,9 +461,7 @@ class TenderJIT
             rt.pointer(rt.return_value)[0] = temp
             temp.release!
 
-            rt.push_reg REG_BP
             rt.rb_funcall self, :compile_getinstancevariable, [cfp_ptr.self, req, rt.return_value]
-            rt.pop_reg REG_BP
 
             rt.NUM2INT(rt.return_value)
 
@@ -617,9 +615,7 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.push_reg REG_BP # alignment
           rt.rb_funcall self, :compile_opt_aref, [cfp_ptr.sp, req, ctx.fisk.rax]
-          rt.pop_reg REG_BP # alignment
 
           rt.NUM2INT(rt.return_value)
 
@@ -682,9 +678,7 @@ class TenderJIT
             rt.pointer(rt.return_value)[0] = temp
             temp.release!
 
-            rt.push_reg REG_BP
             rt.rb_funcall self, :compile_opt_send_without_block, [cfp_ptr.sp, compile_request, ctx.fisk.rax]
-            rt.pop_reg REG_BP
 
             rt.NUM2INT(rt.return_value)
 
@@ -1187,9 +1181,7 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.push_reg REG_BP
           rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request, rt.return_value]
-          rt.pop_reg REG_BP
 
           rt.NUM2INT(rt.return_value)
 
@@ -1250,9 +1242,7 @@ class TenderJIT
           ctx.with_runtime do |rt|
             cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-            rt.push_reg REG_BP
             rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch, ctx.fisk.rax]
-            rt.pop_reg REG_BP
 
             rt.NUM2INT(rt.return_value)
 
@@ -1334,9 +1324,7 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.push_reg REG_BP
           rt.rb_funcall self, :compile_opt_getinlinecache, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
-          rt.pop_reg REG_BP
 
           rt.NUM2INT(rt.return_value)
 
@@ -1405,9 +1393,7 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.push_reg REG_BP
           rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
-          rt.pop_reg REG_BP
 
           rt.NUM2INT(rt.return_value)
 
@@ -1740,9 +1726,7 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.push_reg REG_BP # alignment
           rt.rb_funcall self, :compile_opt_aset, [cfp_ptr.sp, req, rt.return_value]
-          rt.pop_reg REG_BP # alignment
 
           rt.NUM2INT(rt.return_value)
 
