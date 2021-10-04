@@ -69,6 +69,12 @@ class TenderJIT
     end
 
     def rb_funcall recv, method_name, params
+      @fisk.push REG_BP.to_register # alignment
+      rb_funcall_without_alignment recv, method_name, params
+      @fisk.pop REG_BP.to_register  # alignment
+    end
+
+    def rb_funcall_without_alignment recv, method_name, params
       raise "Too many parameters!" if params.length > 3
 
       func_addr = Internals.symbol_address "rb_funcall"
