@@ -27,36 +27,44 @@ class RubyInternals
         # Instruction length tables seem to be compiled with numbers, and
         # embedded multiple times. Try to find the first one that has
         # the data we need
-        symbol_addresses.keys.grep(/^t\.\d+/).each do |key|
-          addr = symbol_addresses.fetch(key)
+        if symbol_addresses.key?("rb_vm_insn_len_info")
+          addr = symbol_addresses.fetch("rb_vm_insn_len_info")
           len  = RubyVM::INSTRUCTION_NAMES.length
-          list = Fiddle::Pointer.new(addr)[0, len * Fiddle::SIZEOF_CHAR].unpack("C#{len}")
+          Fiddle::Pointer.new(addr)[0, len * Fiddle::SIZEOF_CHAR].unpack("C#{len}")
+        else
+          symbol_addresses.keys.grep(/^t\.\d+/).each do |key|
+            addr = symbol_addresses.fetch(key)
+            len  = RubyVM::INSTRUCTION_NAMES.length
+            list = Fiddle::Pointer.new(addr)[0, len * Fiddle::SIZEOF_CHAR].unpack("C#{len}")
 
-          # This is probably it
-          if list.first(4) == [1, 3, 3, 3]
-            return list
+            # This is probably it
+            if list.first(4) == [1, 3, 3, 3]
+              return list
+            end
           end
+
+          raise "Couldn't find instruction lengths"
         end
       end
 
       def self.read_instruction_op_types symbol_addresses
+        insn_lens = read_instruction_lengths(symbol_addresses)
+
+        # Length of the string that contains the op types table
+        rb_vm_insn_op_base_len = insn_lens.inject(:+)
+
         len  = RubyVM::INSTRUCTION_NAMES.length
 
-        map = symbol_addresses.keys.grep(/^y\.\d+/).each do |key|
-          insn_map = symbol_addresses.fetch(key)
-          l = Fiddle::Pointer.new(insn_map)[0, len * Fiddle::SIZEOF_SHORT].unpack("S#{len}")
-          break l if l.first(4) == [0, 1, 4, 7] # probably the right one
-        end
+        op_types = symbol_addresses.fetch("rb_vm_insn_op_base") {
+          sym = symbol_addresses.keys.grep(/^x\.\d+/).find { |name|
+            start = symbol_addresses.fetch(name)
+            candidate = Fiddle::Pointer.new(start)[0, rb_vm_insn_op_base_len].unpack("Z*" * len)
+            candidate.first(3) == ["", "LN", "LN"] && candidate.last(3) == ["L", "", ""]
+          }
+          symbol_addresses.fetch(sym || raise("Couldn't find symbol"))
+        }
 
-        key = symbol_addresses.keys.grep(/^x\.\d+/).first
-        op_types = symbol_addresses.fetch(key)
-
-        str_buffer_end = map.last
-
-        while Fiddle::Pointer.new(op_types + str_buffer_end)[0] != 0
-          str_buffer_end += 1
-        end
-        Fiddle::Pointer.new(op_types)[0, str_buffer_end].unpack("Z*" * len)
+        Fiddle::Pointer.new(op_types)[0, rb_vm_insn_op_base_len].unpack("Z*" * len)
       end
     end
 
@@ -64,9 +72,13 @@ class RubyInternals
       def self.read_instruction_op_types symbol_addresses
         # FIXME: this needs to be tested on Linux, certainly the name will be
         # different.
-        op_types = symbol_addresses.fetch("insn_op_types.x")
+        op_types = symbol_addresses.fetch("rb_vm_insn_op_base") {
+          symbol_addresses.fetch("insn_op_types.x")
+        }
 
-        insn_map = symbol_addresses.fetch("insn_op_types.y")
+        insn_map = symbol_addresses.fetch("rb_vm_insn_op_offset") {
+          symbol_addresses.fetch("insn_op_types.y")
+        }
 
         # FIXME: we should use DWARF data to figure out the array type rather
         # than hardcoding "sizeof short" below
@@ -83,7 +95,9 @@ class RubyInternals
       def self.read_instruction_lengths symbol_addresses
         # FIXME: this needs to be tested on Linux, certainly the name will be
         # different.
-        addr = symbol_addresses.fetch("insn_len.t")
+        addr = symbol_addresses.fetch("rb_vm_insn_len_info") {
+          symbol_addresses.fetch("insn_len.t")
+        }
 
         # FIXME: we should use DWARF data to figure out the array type rather
         # than hardcoding "sizeof char" below
