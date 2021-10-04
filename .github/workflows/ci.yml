@@ -10,6 +10,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu, macos]
+        ruby:
+          - '3.0.2'
+          - head
 
     steps:
       - uses: actions/checkout@v2
@@ -26,9 +29,9 @@ jobs:
             brew install capstone
 
       - name: Set up Ruby
-        uses: tenderlove/setup-ruby@958450b9580ab6dae181237d74f1ecbb1d3b9a4b
+        uses: tenderlove/setup-ruby@0a3bd51d9e8e1b30bc129bbb6934f68bdb648f45
         with:
-          ruby-version: "3.0.2"
+          ruby-version: ${{ matrix.ruby }}
       - name: Install dependencies
         run: bundle install
       - name: Run tests
