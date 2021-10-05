@@ -266,6 +266,14 @@ class TenderJIT
       code_start
     end
 
+    def handle_putstring str
+      addr = Fiddle::Handle::DEFAULT["rb_ec_str_resurrect"]
+      with_runtime do |rt|
+        rt.call_cfunc addr, [REG_EC, str]
+        rt.push rt.return_value, name: :string
+      end
+    end
+
     def handle_getglobal gid
       addr = Fiddle::Handle::DEFAULT["rb_gvar_get"]
       with_runtime do |rt|
