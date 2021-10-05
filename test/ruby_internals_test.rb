@@ -156,14 +156,6 @@ class TenderJIT
     end
 
     require "fisk"
-    require "crabstone"
-
-    def print_disasm binary
-      cs = Crabstone::Disassembler.new(Crabstone::ARCH_X86, Crabstone::MODE_64)
-      cs.disasm(binary, 0x0000).each {|i|
-        printf("0x%x:\t%s\t\t%s\n",i.address, i.mnemonic, i.op_str)
-      }
-    end
 
     def test_constant_body_size
       rb_iseq_constant_body = rb.struct("rb_iseq_constant_body")
