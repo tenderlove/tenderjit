@@ -243,7 +243,7 @@ class TenderJIT
         rhs = cast_to_fisk rhs
 
         maybe_reg lhs do |op1|
-          maybe_reg rhs do |op2|
+          maybe_reg rhs, only_64: true do |op2|
             @fisk.cmp op1, op2
           end
         end
@@ -266,7 +266,7 @@ class TenderJIT
       rhs = cast_to_fisk rhs
 
       maybe_reg lhs do |op1|
-        maybe_reg rhs do |op2|
+        maybe_reg rhs, only_64: true do |op2|
           @fisk.cmp op1, op2
         end
       end
@@ -413,8 +413,15 @@ class TenderJIT
       @labels.pop
     end
 
-    def maybe_reg op
-      if op.immediate? && op.size == 64
+    # If the operator is immediate, move to a register, otherwise, leave as is.
+    # This is useful for instructions that don't support immediate for the given
+    # operator, e.g. CMP $immediate, $other_op.
+    #
+    # params
+    # - :only_64: move to register only if the immediate is 64 bits
+    #
+    def maybe_reg op, only_64: false
+      if op.immediate? && (op.size == 64 || !only_64)
         @fisk.with_register do |tmp|
           @fisk.mov(tmp, op)
           yield tmp
