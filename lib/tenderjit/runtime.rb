@@ -265,6 +265,11 @@ class TenderJIT
       lhs = cast_to_fisk lhs
       rhs = cast_to_fisk rhs
 
+      # The swap could be avoided in the lhs:imm64 sub-case, but keep it simple for now,
+      # as it may be entirely removed in the future.
+      #
+      lhs, rhs = rhs, lhs if lhs.immediate? && !rhs.immediate?
+
       maybe_reg lhs do |op1|
         maybe_reg rhs, only_64: true do |op2|
           @fisk.cmp op1, op2
