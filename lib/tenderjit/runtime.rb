@@ -19,6 +19,17 @@ class TenderJIT
       end
     end
 
+    def load_address_in dest, src
+      if src.memory?
+        offset = src.displacement
+        reg = src.register
+      else
+        raise NotImplementedError
+      end
+
+      @fisk.lea(dest, @fisk.m(reg, offset))
+    end
+
     def check_vm_stack_overflow temp_stack, exit_location, local_size, stack_max
       margin = ((local_size + stack_max) * Fiddle::SIZEOF_VOIDP) + RbControlFrameStruct.byte_size
 
@@ -592,6 +603,10 @@ class TenderJIT
         else
           @ec.write_immediate_to_reg reg, operand
         end
+      end
+
+      def write_address_of arg
+        @ec.load_address_in reg, arg
       end
 
       def and num

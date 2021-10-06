@@ -16,53 +16,59 @@ class TenderJIT
         end
 
         def push rt
-          rt.with_ref(argv) do |sp|
-            sp_ptr = rt.pointer sp
-            ec_ptr = rt.pointer REG_EC, type: RbExecutionContextT
-            cfp_ptr = rt.pointer REG_CFP, type: RbControlFrameStruct
+          new_sp = nil
 
-            # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
-            cfp_ptr.sub # like -- in C
+          ec_ptr = rt.pointer REG_EC, type: RbExecutionContextT
+          cfp_ptr = rt.pointer REG_CFP, type: RbControlFrameStruct
 
-            local_size.times do |i|
-              sp_ptr[i] = Qnil
-            end
+          temp = rt.temp_var
+          temp.write_address_of argv
+          sp = temp
 
-            # /* setup ep with managing data */
-            # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
-            # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
-            # *sp++ = type;       /* ep[-0] / ENV_FLAGS */
-            sp_ptr[local_size + 0] = cref_or_me
-            write_specval rt, sp_ptr
-            sp_ptr[local_size + 2] = type
+          sp_ptr = rt.pointer sp
 
-            # /* setup new frame */
-            # *cfp = (const struct rb_control_frame_struct) {
-            #     .pc         = pc,
-            #     .sp         = sp,
-            #     .iseq       = iseq,
-            #     .self       = self,
-            #     .ep         = sp - 1,
-            #     .block_code = NULL,
-            #     .__bp__     = sp
-            # };
-            cfp_ptr.pc = pc
+          # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
+          cfp_ptr.sub # like -- in C
 
-            sp_ptr.with_ref(3 + local_size) do |new_sp|
-              cfp_ptr.sp     = new_sp
-              cfp_ptr.__bp__ = new_sp
-
-              new_sp.sub
-              cfp_ptr.ep     = new_sp
-            end
-
-            cfp_ptr.iseq = iseq
-            cfp_ptr.self = _self
-            cfp_ptr.block_code = 0
-
-            # ec->cfp = cfp;
-            ec_ptr.cfp = cfp_ptr
+          local_size.times do |i|
+            sp_ptr[i] = Qnil
           end
+
+          # /* setup ep with managing data */
+          # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
+          # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
+          # *sp++ = type;       /* ep[-0] / ENV_FLAGS */
+          sp_ptr[local_size + 0] = cref_or_me
+          write_specval rt, sp_ptr
+          sp_ptr[local_size + 2] = type
+
+          temp.write_address_of temp[3 + local_size]
+          new_sp = temp
+
+          # /* setup new frame */
+          # *cfp = (const struct rb_control_frame_struct) {
+          #     .pc         = pc,
+          #     .sp         = sp,
+          #     .iseq       = iseq,
+          #     .self       = self,
+          #     .ep         = sp - 1,
+          #     .block_code = NULL,
+          #     .__bp__     = sp
+          # };
+          cfp_ptr.pc = pc
+          cfp_ptr.sp     = new_sp
+          cfp_ptr.__bp__ = new_sp
+
+          new_sp.sub
+          cfp_ptr.ep     = new_sp
+
+          cfp_ptr.iseq = iseq
+          cfp_ptr.self = _self
+          cfp_ptr.block_code = 0
+
+          # ec->cfp = cfp;
+          ec_ptr.cfp = cfp_ptr
+          temp.release!
         end
 
         def write_specval rt, sp_ptr
