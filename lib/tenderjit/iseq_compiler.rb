@@ -476,28 +476,41 @@ class TenderJIT
       end
     end
 
-    def compile_block cfp, req, loc
-      ep = rb.VM_EP_LEP(RbControlFrameStruct.ep(cfp))
-      bh = rb.VM_ENV_BLOCK_HANDLER(ep)
+    def compile_invokeblock_no_handler cfp, req, loc
+      side_exit = req.make_exit(exits)
 
-      patch_loc = loc - jit_buffer.memory.to_i
-      return_loc = patch_loc + JMP_BYTES
+      method_entry_addr = jit_buffer.address
 
-      if bh == VM_BLOCK_HANDLER_NONE
-        raise NotImplementedError
-        # TODO: this should probably side exit
+      with_runtime do |rt|
+        rt.flush_pc_and_sp req.next_pc, REG_BP
+        # TODO: We need an overflow check here, I think
+        #rt.check_vm_stack_overflow req.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
+        cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+        temp = rt.temp_var
+        temp.write cfp_ptr.ep
+        ep_ptr = rt.pointer(temp)
+
+        # Find the LEP (or "Local" EP)
+        rt.test_flags(ep_ptr[VM_ENV_DATA_INDEX_FLAGS], VM_ENV_FLAG_LOCAL).else {
+          # TODO: need a test for this case
+          rt.break
+        }
+
+        # Get the block handler
+        temp.write ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]
+        rt.if_eq(temp, VM_BLOCK_HANDLER_NONE) {
+          rt.jump side_exit
+        }.else {
+          rt.patchable_jump req.deferred_entry
+        }
+        temp.release!
       end
 
-      if rb.VM_BH_ISEQ_BLOCK_P(bh)
-        captured_block = rb.VM_BH_TO_ISEQ_BLOCK(bh)
-        captured = rb.struct("rb_captured_block").new(captured_block)
-        iseq_ptr = captured.code.iseq
-        @jit.compile_iseq_t iseq_ptr
-      else
-        raise NotImplementedError
-        # TODO: need to implement vm_block_handler_type
-      end
+      method_entry_addr
+    end
 
+    def compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, patch_loc, req
       temp_stack = req.temp_stack
 
       ci = req.call_info
@@ -544,8 +557,7 @@ class TenderJIT
             # Convert it to a captured block
             temp.and(~0x3)
           }.else {
-            # TODO: need a test for this case
-            rt.break
+            rt.patchable_jump req.deferred_entry
           }
         end
 
@@ -583,12 +595,35 @@ class TenderJIT
         rt.jump var
 
         var.release!
-        #temp.release!
       end
 
       patch_source_jump jit_buffer, at: patch_loc, to: method_entry_addr
 
       method_entry_addr
+    end
+
+    def compile_invokeblock cfp, req, loc
+      ep = rb.VM_EP_LEP(RbControlFrameStruct.ep(cfp))
+      bh = rb.VM_ENV_BLOCK_HANDLER(ep)
+
+      patch_loc = loc - jit_buffer.memory.to_i
+      return_loc = patch_loc + JMP_BYTES
+
+      if bh == VM_BLOCK_HANDLER_NONE
+        return compile_invokeblock_no_handler cfp, req, loc
+      end
+
+      if rb.VM_BH_ISEQ_BLOCK_P(bh)
+        captured_block = rb.VM_BH_TO_ISEQ_BLOCK(bh)
+        captured = rb.struct("rb_captured_block").new(captured_block)
+        iseq_ptr = captured.code.iseq
+        @jit.compile_iseq_t iseq_ptr
+
+        compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, patch_loc, req
+      else
+        raise NotImplementedError
+        # TODO: need to implement vm_block_handler_type
+      end
     end
 
     def handle_invokeblock call_data
@@ -615,7 +650,7 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.rb_funcall self, :compile_block, [REG_CFP, req, rt.return_value]
+          rt.rb_funcall self, :compile_invokeblock, [REG_CFP, req, rt.return_value]
 
           rt.NUM2INT(rt.return_value)
 

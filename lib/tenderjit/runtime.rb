@@ -449,8 +449,10 @@ class TenderJIT
 
     def cast_to_fisk val
       case val
-      when Fisk::Operand, TemporaryVariable
+      when Fisk::Operand
         val
+      when TemporaryVariable
+        val.to_register
       else
         @fisk.imm(val)
       end
