@@ -291,146 +291,8 @@ class TenderJIT
       end
     end
 
-    def compile_send cfp, req, loc
-      stack = RbControlFrameStruct.sp(cfp)
-      ci = req.call_info
-      mid = ci.vm_ci_mid
-      argc = ci.vm_ci_argc
-      recv = topn(stack, argc).to_i
-
-      patch_loc = loc - jit_buffer.memory.to_i
-
-      # Get the class of the receiver.  It could be an ICLASS if the object has
-      # a singleton class.  This is important for doing method lookup (in case
-      # of singleton methods).
-      klass = rb.rb_class_of(recv)
-
-      # Get the method definition
-      cme_ptr = CFuncs.rb_callable_method_entry(klass, mid)
-
-      # It the method isn't defined, use a side exit and return
-      if cme_ptr.null?
-        side_exit = req.make_exit(exits, "method_missing")
-        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
-        return side_exit
-      end
-
-      # Get the method definition
-      cme = RbCallableMethodEntryT.new(cme_ptr)
-      method_definition = RbMethodDefinitionStruct.new(cme.def)
-
-      # If we find an iseq method, compile it, even if we don't enter.
-      if method_definition.type == VM_METHOD_TYPE_ISEQ
-        iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
-        iseq = RbISeqT.new(iseq_ptr)
-        @jit.compile_iseq_t iseq_ptr
-      end
-
-      # If we find a bmethod method, compile the block iseq.
-      if method_definition.type == VM_METHOD_TYPE_BMETHOD
-        proc_obj = RbMethodDefinitionStruct.new(cme.def).body.bmethod.proc
-        proc = RData.new(proc_obj).data
-        rb_block_t    = RbProcT.new(proc).block
-        if rb_block_t.type != rb.c("block_type_iseq")
-          raise NotImplementedError
-        end
-
-        iseq_ptr = rb_block_t.as.captured.code.iseq
-
-        iseq = RbISeqT.new(iseq_ptr)
-
-        @jit.compile_iseq_t iseq_ptr
-      end
-
-      # Bail on any method calls that aren't "simple".  Not handling *args,
-      # kwargs, etc right now
-      #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
-
-      unless ((ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE) ||
-          ((ci.vm_ci_flag & VM_CALL_FCALL) == VM_CALL_FCALL)
-        side_exit = req.make_exit(exits, "complex_method")
-        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
-        return side_exit
-      end
-
-      method_entry_addr = jit_buffer.address
-      return_loc = patch_loc + JMP_BYTES
-
-      # Lift the address up to a Ruby object.  `recv` is the address of the
-      # Ruby object, not the object itself.  Lets get the object itself so we
-      # can perform tests on it.
-      rb_recv = Fiddle.dlunwrap recv
-
-      with_runtime do |rt|
-        temp_stack = req.temp_stack
-        recv_loc = temp_stack.peek(argc).loc
-
-        # If the compile time receiver is a special constant, we need to check
-        # that it's still a special constant at runtime
-        if rb.RB_SPECIAL_CONST_P(recv)
-          # If the receiver is nil at compile time, make sure it's also nil
-          # at runtime
-          if rb_recv == nil
-            rt.if_eq(recv_loc, Fiddle.dlwrap(nil)).else {
-              rt.patchable_jump req.deferred_entry
-              rt.jump jit_buffer.memory.to_i + return_loc
-            }
-          elsif rb_recv == false # Same here
-            rt.if_eq(recv_loc, Fiddle.dlwrap(false)).else {
-              rt.patchable_jump req.deferred_entry
-              rt.jump jit_buffer.memory.to_i + return_loc
-            }
-          else # Otherwise it must be some other type of tagged pointer
-            flags = recv & RUBY_IMMEDIATE_MASK
-
-            tv = rt.temp_var
-            tv.write recv_loc
-            tv.and RUBY_IMMEDIATE_MASK
-
-            rt.if_eq(tv.to_register, flags).else {
-              rt.patchable_jump req.deferred_entry
-              rt.jump jit_buffer.memory.to_i + return_loc
-            }
-
-            tv.release!
-          end
-        else
-          rt.if(rt.RB_SPECIAL_CONST_P(recv_loc)) {
-            rt.patchable_jump req.deferred_entry
-            rt.jump jit_buffer.memory.to_i + return_loc
-          }.else {
-
-            tv = rt.temp_var
-            tv.write recv_loc
-
-            recv_ptr = rt.pointer(tv, type: RObject)
-
-            rt.if_eq(RBasic.klass(recv), recv_ptr.basic.klass).else {
-              rt.patchable_jump req.deferred_entry
-              rt.jump jit_buffer.memory.to_i + return_loc
-            }
-
-            tv.release!
-          }
-        end
-      end
-
-      case method_definition.type
-      when VM_METHOD_TYPE_CFUNC
-        compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, return_loc
-      when VM_METHOD_TYPE_ISEQ
-        compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, return_loc
-      when VM_METHOD_TYPE_BMETHOD
-        compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, return_loc
-      else
-        side_exit = req.make_exit(exits, "unknown_method_type")
-        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
-        return side_exit
-      end
-
-      patch_source_jump jit_buffer, at: patch_loc, to: method_entry_addr
-
-      method_entry_addr
+    def compile_opt_send_without_block cfp, req, loc
+      compile_send cfp, req, loc
     end
 
     def handle_send call_data, blockiseq
@@ -648,8 +510,6 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
-
           rt.rb_funcall self, :compile_invokeblock, [REG_CFP, req, rt.return_value]
 
           rt.NUM2INT(rt.return_value)
@@ -1165,8 +1025,6 @@ class TenderJIT
         rt.flush_pc_and_sp req.next_pc, recv_loc
         rt.check_vm_stack_overflow req.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
 
-        cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
-
         next_sp = temp_stack[argc - param_size - 1]
 
         if req.has_block?
@@ -1273,7 +1131,6 @@ class TenderJIT
       rb_block_t    = RbProcT.new(proc).block
       captured = rb_block_t.as.captured
       _self = recv
-      type = VM_FRAME_MAGIC_BLOCK
 
       param_size = iseq.body.param.size
 
@@ -1321,7 +1178,7 @@ class TenderJIT
       end
     end
 
-    def compile_opt_send_without_block cfp, req, loc
+    def compile_send cfp, req, loc
       stack = RbControlFrameStruct.sp(cfp)
 
       ci = req.call_info
@@ -1376,7 +1233,10 @@ class TenderJIT
       # Bail on any method calls that aren't "simple".  Not handling *args,
       # kwargs, etc right now
       #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
-      unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+      # If we're compiling a send that has a block, the "simple" ones are tagged
+      # with VM_CALL_FCALL, otherwise we have to look for ARGS_SIMPLE
+      flags = req.has_block? ? VM_CALL_FCALL : VM_CALL_ARGS_SIMPLE
+      unless ((ci.vm_ci_flag & flags) == flags)
         side_exit = req.make_exit(exits, "complex_method")
         patch_source_jump jit_buffer, at: patch_loc, to: side_exit
         return side_exit
