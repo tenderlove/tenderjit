@@ -2,7 +2,9 @@
 
 require "digest/md5"
 
-folder = Digest::MD5.hexdigest(RUBY_DESCRIPTION)[0, 5]
+require_relative "ruby_interpreter_metadata_helper"
+
+folder = TenderJIT::RubyInterpreterMetadataHelper.fingerprint
 
 require "tenderjit/fiddle_hacks"
 require "tenderjit/ruby/#{folder}/structs"

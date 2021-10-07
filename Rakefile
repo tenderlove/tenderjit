@@ -2,6 +2,8 @@ require "digest/md5"
 require "rake/testtask"
 require "rake/clean"
 
+require_relative "lib/tenderjit/ruby_interpreter_metadata_helper"
+
 file 'lib/tendertools/dwarf/constants.rb' => ['lib/tendertools/dwarf/constants.yml', 'lib/tendertools/dwarf/constants.erb'] do |t|
   require 'psych'
   require 'erb'
@@ -32,7 +34,7 @@ end
   test_file
 end
 
-folder = Digest::MD5.hexdigest(RUBY_DESCRIPTION)[0, 5]
+folder = TenderJIT::RubyInterpreterMetadataHelper.fingerprint
 
 gen_files = %w{ constants structs symbols }.map { |name|
   "lib/tenderjit/ruby/#{folder}/#{name}.rb"
