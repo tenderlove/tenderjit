@@ -1112,6 +1112,27 @@ class TenderJIT
 
     def handle_nop; end
 
+    def handle_newhash num
+      address = Fiddle::Handle::DEFAULT["rb_hash_new_with_size"]
+
+      with_runtime do |rt|
+        rt.push_reg REG_BP
+
+        values_loc = if num > 0
+          @temp_stack.peek(num - 1).loc
+        else
+          Fisk::Imm64.new(0)
+        end
+
+        rt.with_ref(values_loc) do |ref|
+          ret = rt.call_cfunc_without_alignment(address, [num / 2])
+          rt.push ret, name: "hash"
+        end
+
+        rt.pop_reg REG_BP # magic
+      end
+    end
+
     def handle_newarray num
       address = Fiddle::Handle::DEFAULT["rb_ec_ary_new_from_values"]
 
