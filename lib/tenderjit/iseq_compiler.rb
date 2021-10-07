@@ -492,18 +492,6 @@ class TenderJIT
       cd = RbCallData.new call_data
       ci = RbCallInfo.new cd.ci
 
-      # sp_inc_of_sendish
-      argb = ci.vm_ci_flag & VM_CALL_ARGS_BLOCKARG == VM_CALL_ARGS_BLOCKARG ? 1 : 0
-      argc = ci.vm_ci_argc
-      recv = 1
-      retn = 1
-
-      sp_inc_of_sendish = 0 - argb - argc - recv + retn
-      sp_inc_of_invokeblock = sp_inc_of_sendish + 1
-
-      # How can this be *not* 1?
-      #raise NotImplementedError unless sp_inc_of_invokeblock == 1
-
       req = CompileBlock.new(ci, @temp_stack.dup.freeze, current_pc, next_pc)
 
       @compile_requests << Fiddle::Pinned.new(req)
