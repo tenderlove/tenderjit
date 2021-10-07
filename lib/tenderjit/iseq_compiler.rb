@@ -199,18 +199,6 @@ class TenderJIT
       }
     end
 
-    class CallCompileRequest < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
-      def make_exit exits, name = "opt_send_without_block"
-        exits.make_exit(name, current_pc, temp_stack.size)
-      end
-
-      def block_handler
-        0
-      end
-
-      def has_block?; false; end
-    end
-
     IVarRequest = Struct.new(:id, :current_pc, :next_pc, :stack_loc, :deferred_entry)
 
     def compile_getinstancevariable recv, req, loc
@@ -290,6 +278,19 @@ class TenderJIT
         blockiseq != 0
       end
     end
+
+    class CompileSendWithoutBlock < CompileSend
+      def initialize call_info, temp_stack, current_pc, next_pc
+        super(call_info, temp_stack, current_pc, next_pc, 0)
+      end
+
+      def make_exit exits, name = "opt_send_without_block"
+        exits.make_exit(name, current_pc, temp_stack.size)
+      end
+
+      def has_block?; false; end
+    end
+
 
     def compile_opt_send_without_block cfp, req, loc
       compile_send cfp, req, loc
@@ -900,11 +901,7 @@ class TenderJIT
       # only handle simple methods
       #return unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
 
-      compile_request = CallCompileRequest.new
-      compile_request.call_info = ci
-      compile_request.temp_stack = @temp_stack.dup.freeze
-      compile_request.current_pc = current_pc
-      compile_request.next_pc = next_pc
+      compile_request = CompileSendWithoutBlock.new(ci, @temp_stack.dup.freeze, current_pc, next_pc)
 
       @compile_requests << Fiddle::Pinned.new(compile_request)
 
