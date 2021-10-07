@@ -203,6 +203,12 @@ class TenderJIT
       def make_exit exits, name = "opt_send_without_block"
         exits.make_exit(name, current_pc, temp_stack.size)
       end
+
+      def block_handler
+        0
+      end
+
+      def has_block?; false; end
     end
 
     IVarRequest = Struct.new(:id, :current_pc, :next_pc, :stack_loc, :deferred_entry)
@@ -273,6 +279,361 @@ class TenderJIT
         rt.call_cfunc addr, [REG_EC, str]
         rt.push rt.return_value, name: :string
       end
+    end
+
+    class CompileSend < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :blockiseq, :deferred_entry)
+      def make_exit exits, name = "send"
+        exits.make_exit(name, current_pc, temp_stack.size)
+      end
+
+      def has_block?
+        blockiseq != 0
+      end
+    end
+
+    def compile_send cfp, req, loc
+      stack = RbControlFrameStruct.sp(cfp)
+      ci = req.call_info
+      mid = ci.vm_ci_mid
+      argc = ci.vm_ci_argc
+      recv = topn(stack, argc).to_i
+
+      patch_loc = loc - jit_buffer.memory.to_i
+
+      # Get the class of the receiver.  It could be an ICLASS if the object has
+      # a singleton class.  This is important for doing method lookup (in case
+      # of singleton methods).
+      klass = rb.rb_class_of(recv)
+
+      # Get the method definition
+      cme_ptr = CFuncs.rb_callable_method_entry(klass, mid)
+
+      # It the method isn't defined, use a side exit and return
+      if cme_ptr.null?
+        side_exit = req.make_exit(exits, "method_missing")
+        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
+        return side_exit
+      end
+
+      # Get the method definition
+      cme = RbCallableMethodEntryT.new(cme_ptr)
+      method_definition = RbMethodDefinitionStruct.new(cme.def)
+
+      # If we find an iseq method, compile it, even if we don't enter.
+      if method_definition.type == VM_METHOD_TYPE_ISEQ
+        iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
+        iseq = RbISeqT.new(iseq_ptr)
+        @jit.compile_iseq_t iseq_ptr
+      end
+
+      # If we find a bmethod method, compile the block iseq.
+      if method_definition.type == VM_METHOD_TYPE_BMETHOD
+        proc_obj = RbMethodDefinitionStruct.new(cme.def).body.bmethod.proc
+        proc = RData.new(proc_obj).data
+        rb_block_t    = RbProcT.new(proc).block
+        if rb_block_t.type != rb.c("block_type_iseq")
+          raise NotImplementedError
+        end
+
+        iseq_ptr = rb_block_t.as.captured.code.iseq
+
+        iseq = RbISeqT.new(iseq_ptr)
+
+        @jit.compile_iseq_t iseq_ptr
+      end
+
+      # Bail on any method calls that aren't "simple".  Not handling *args,
+      # kwargs, etc right now
+      #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
+
+      unless ((ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE) ||
+          ((ci.vm_ci_flag & VM_CALL_FCALL) == VM_CALL_FCALL)
+        side_exit = req.make_exit(exits, "complex_method")
+        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
+        return side_exit
+      end
+
+      method_entry_addr = jit_buffer.address
+      return_loc = patch_loc + JMP_BYTES
+
+      # Lift the address up to a Ruby object.  `recv` is the address of the
+      # Ruby object, not the object itself.  Lets get the object itself so we
+      # can perform tests on it.
+      rb_recv = Fiddle.dlunwrap recv
+
+      with_runtime do |rt|
+        temp_stack = req.temp_stack
+        recv_loc = temp_stack.peek(argc).loc
+
+        # If the compile time receiver is a special constant, we need to check
+        # that it's still a special constant at runtime
+        if rb.RB_SPECIAL_CONST_P(recv)
+          # If the receiver is nil at compile time, make sure it's also nil
+          # at runtime
+          if rb_recv == nil
+            rt.if_eq(recv_loc, Fiddle.dlwrap(nil)).else {
+              rt.patchable_jump req.deferred_entry
+              rt.jump jit_buffer.memory.to_i + return_loc
+            }
+          elsif rb_recv == false # Same here
+            rt.if_eq(recv_loc, Fiddle.dlwrap(false)).else {
+              rt.patchable_jump req.deferred_entry
+              rt.jump jit_buffer.memory.to_i + return_loc
+            }
+          else # Otherwise it must be some other type of tagged pointer
+            flags = recv & RUBY_IMMEDIATE_MASK
+
+            tv = rt.temp_var
+            tv.write recv_loc
+            tv.and RUBY_IMMEDIATE_MASK
+
+            rt.if_eq(tv.to_register, flags).else {
+              rt.patchable_jump req.deferred_entry
+              rt.jump jit_buffer.memory.to_i + return_loc
+            }
+
+            tv.release!
+          end
+        else
+          rt.if(rt.RB_SPECIAL_CONST_P(recv_loc)) {
+            rt.patchable_jump req.deferred_entry
+            rt.jump jit_buffer.memory.to_i + return_loc
+          }.else {
+
+            tv = rt.temp_var
+            tv.write recv_loc
+
+            recv_ptr = rt.pointer(tv, type: RObject)
+
+            rt.if_eq(RBasic.klass(recv), recv_ptr.basic.klass).else {
+              rt.patchable_jump req.deferred_entry
+              rt.jump jit_buffer.memory.to_i + return_loc
+            }
+
+            tv.release!
+          }
+        end
+      end
+
+      case method_definition.type
+      when VM_METHOD_TYPE_CFUNC
+        compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, return_loc
+      when VM_METHOD_TYPE_ISEQ
+        compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, return_loc
+      when VM_METHOD_TYPE_BMETHOD
+        compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, return_loc
+      else
+        side_exit = req.make_exit(exits, "unknown_method_type")
+        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
+        return side_exit
+      end
+
+      patch_source_jump jit_buffer, at: patch_loc, to: method_entry_addr
+
+      method_entry_addr
+    end
+
+    def handle_send call_data, blockiseq
+      cd = RbCallData.new call_data
+      ci = RbCallInfo.new cd.ci
+
+      if ci.vm_ci_flag & VM_CALL_ARGS_BLOCKARG == VM_CALL_ARGS_BLOCKARG
+        raise NotImplementedError
+      end
+
+      req = CompileSend.new(ci, @temp_stack.dup.freeze, current_pc, next_pc, blockiseq)
+
+      @compile_requests << Fiddle::Pinned.new(req)
+
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
+        ctx.with_runtime do |rt|
+          rt.rb_funcall self, :compile_send, [REG_CFP, req, rt.return_value]
+
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
+        end
+      end
+
+      req.deferred_entry = deferred.entry.to_i
+      deferred.call
+
+      (ci.vm_ci_argc + 1).times { @temp_stack.pop }
+
+      # The method call will return here, and its return value will be in RAX
+      loc = @temp_stack.push(:unknown)
+
+      # Jump in to the deferred compiler
+      __.lea(__.rax, __.rip)
+      __.jmp(__.absolute(deferred.entry))
+      __.pop(REG_BP)
+      __.mov(loc, __.rax)
+    end
+
+    class CompileBlock < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
+      def make_exit exits, name = "invokeblock"
+        exits.make_exit(name, current_pc, temp_stack.size)
+      end
+    end
+
+    def compile_block cfp, req, loc
+      ep = rb.VM_EP_LEP(RbControlFrameStruct.ep(cfp))
+      bh = rb.VM_ENV_BLOCK_HANDLER(ep)
+
+      patch_loc = loc - jit_buffer.memory.to_i
+      return_loc = patch_loc + JMP_BYTES
+
+      if bh == VM_BLOCK_HANDLER_NONE
+        raise NotImplementedError
+        # TODO: this should probably side exit
+      end
+
+      if rb.VM_BH_ISEQ_BLOCK_P(bh)
+        captured_block = rb.VM_BH_TO_ISEQ_BLOCK(bh)
+        captured = rb.struct("rb_captured_block").new(captured_block)
+        iseq_ptr = captured.code.iseq
+        @jit.compile_iseq_t iseq_ptr
+      else
+        raise NotImplementedError
+        # TODO: need to implement vm_block_handler_type
+      end
+
+      temp_stack = req.temp_stack
+
+      ci = req.call_info
+
+      unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+        # TODO: can this happen?
+        raise NotImplementedError
+      end
+
+      iseq = RbISeqT.new iseq_ptr
+      param_size = iseq.body.param.size
+      local_size = iseq.body.local_table_size
+      opt_pc     = 0 # we don't handle optional parameters rn
+      argc       = ci.vm_ci_argc
+
+      next_sp = temp_stack[argc - param_size - 1]
+
+      method_entry_addr = jit_buffer.address
+
+      with_runtime do |rt|
+        rt.flush_pc_and_sp req.next_pc, REG_BP
+        # TODO: We need an overflow check here, I think
+        #rt.check_vm_stack_overflow req.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
+        cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+        temp = rt.temp_var
+        temp.write cfp_ptr.ep
+        ep_ptr = rt.pointer(temp)
+
+        # Find the LEP (or "Local" EP)
+        rt.test_flags(ep_ptr[VM_ENV_DATA_INDEX_FLAGS], VM_ENV_FLAG_LOCAL).else {
+          # TODO: need a test for this case
+          rt.break
+        }
+
+        # Get the block handler
+        temp.write ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]
+
+        rt.temp_var do |check|
+          check.write temp.to_register
+          check.and 0x3
+          # Check if it's an ISEQ
+          rt.if_eq(check.to_register, 0x1) {
+            # Convert it to a captured block
+            temp.and(~0x3)
+          }.else {
+            # TODO: need a test for this case
+            rt.break
+          }
+        end
+
+        # Dereference the captured block
+        captured_ptr = rt.pointer(temp, type: rb.struct("rb_captured_block"))
+        temp.write captured_ptr.self
+
+        Frames::Block.new(
+          iseq_ptr,
+          temp,
+          SpecVals::PreviousEP.new(captured.ep),
+          0,
+          iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
+          next_sp,
+          local_size - param_size).push(rt)
+
+        # Save the base pointer
+        rt.push_reg REG_BP
+
+        ret_loc = jit_buffer.memory.to_i + return_loc
+        var = rt.temp_var
+        var.write ret_loc
+
+        # Callee will `ret` to return which will pop this address from the
+        # stack and jump to it
+        rt.push_reg var
+
+        # Dereference the JIT function address, skipping the REG_* assigments
+        # and jump to it
+        var.write iseq.body.to_i
+        iseq_body = rt.pointer(var, type: RbIseqConstantBody)
+        var.write iseq_body.jit_func
+        rt.add var, @skip_bytes
+
+        rt.jump var
+
+        var.release!
+        #temp.release!
+      end
+
+      patch_source_jump jit_buffer, at: patch_loc, to: method_entry_addr
+
+      method_entry_addr
+    end
+
+    def handle_invokeblock call_data
+      cd = RbCallData.new call_data
+      ci = RbCallInfo.new cd.ci
+
+      # sp_inc_of_sendish
+      argb = ci.vm_ci_flag & VM_CALL_ARGS_BLOCKARG == VM_CALL_ARGS_BLOCKARG ? 1 : 0
+      argc = ci.vm_ci_argc
+      recv = 1
+      retn = 1
+
+      sp_inc_of_sendish = 0 - argb - argc - recv + retn
+      sp_inc_of_invokeblock = sp_inc_of_sendish + 1
+
+      # How can this be *not* 1?
+      #raise NotImplementedError unless sp_inc_of_invokeblock == 1
+
+      req = CompileBlock.new(ci, @temp_stack.dup.freeze, current_pc, next_pc)
+
+      @compile_requests << Fiddle::Pinned.new(req)
+
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
+        ctx.with_runtime do |rt|
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+          rt.rb_funcall self, :compile_block, [REG_CFP, req, rt.return_value]
+
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
+        end
+      end
+
+      req.deferred_entry = deferred.entry.to_i
+      deferred.call
+
+      # The method call will return here, and its return value will be in RAX
+      loc = @temp_stack.push(:unknown)
+
+      # Jump in to the deferred compiler
+      __.lea(__.rax, __.rip)
+      __.jmp(__.absolute(deferred.entry))
+      __.pop(REG_BP)
+      __.mov(loc, __.rax)
     end
 
     def handle_getglobal gid
@@ -745,7 +1106,7 @@ class TenderJIT
       return_loc
     end
 
-    def compile_call_iseq iseq, compile_request, argc, iseq_ptr, recv, cme, return_loc
+    def compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, return_loc
       # `vm_call_iseq_setup`
       param_size = iseq.body.param.size
       local_size = iseq.body.local_table_size
@@ -754,35 +1115,48 @@ class TenderJIT
       # `vm_call_iseq_setup_2` FIXME: we need to deal with TAILCALL
       # `vm_call_iseq_setup_normal` FIXME: we need to deal with TAILCALL
 
-      temp_stack = compile_request.temp_stack
+      temp_stack = req.temp_stack
 
       # pop locals and recv off the stack
       #(ci.vm_ci_argc + 1).times { @temp_stack.pop }
 
-      overflow_exit = compile_request.make_exit(exits)
+      overflow_exit = req.make_exit(exits)
 
       recv_loc = temp_stack.peek(argc).loc
 
       # Write next PC to CFP
       # Pop params and self from the stack
       with_runtime do |rt|
-        rt.flush_pc_and_sp compile_request.next_pc, recv_loc
-        rt.check_vm_stack_overflow compile_request.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
+        rt.flush_pc_and_sp req.next_pc, recv_loc
+        rt.check_vm_stack_overflow req.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
+
+        cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+        next_sp = temp_stack[argc - param_size - 1]
+
+        if req.has_block?
+          Frames::ISeq.new(
+            iseq_ptr,
+            recv_loc,
+            SpecVals::CapturedBlock.new(rb, req.blockiseq),
+            cme,
+            iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
+            next_sp,
+            local_size - param_size).push(rt)
+        else
+          # `vm_push_frame`
+          Frames::ISeq.new(
+            iseq_ptr,
+            recv_loc,
+            SpecVals::NULL,
+            cme,
+            iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
+            next_sp,
+            local_size - param_size).push rt
+        end
       end
 
-      next_sp = temp_stack[argc - param_size - 1]
-
       with_runtime do |rt|
-        # `vm_push_frame`
-        Frames::ISeq.new(
-          iseq_ptr,
-          recv_loc,
-          SpecVals::NULL,
-          cme,
-          iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-          next_sp,
-          local_size - param_size).push rt
-
         # Save the base pointer
         rt.push_reg REG_BP
 
