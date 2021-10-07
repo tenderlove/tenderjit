@@ -115,6 +115,33 @@ class TenderJIT
       end
     end
 
+    def VM_ENV_LOCAL_P ep
+      flags = Fiddle.read_ptr(ep, VM_ENV_DATA_INDEX_FLAGS * Fiddle::SIZEOF_VOIDP)
+      raise "Wrong flags" unless RB_FIXNUM_P(flags) # Check this is a fixnum
+      flags & VM_ENV_FLAG_LOCAL == VM_ENV_FLAG_LOCAL
+    end
+
+    def VM_EP_LEP ep
+      while !VM_ENV_LOCAL_P(ep)
+        raise NotImplementedError
+        # TODO: this isn't implemented / tested
+        ep = VM_ENV_PREV_EP(ep)
+      end
+      ep
+    end
+
+    def VM_ENV_BLOCK_HANDLER ep
+      Fiddle.read_ptr(ep, VM_ENV_DATA_INDEX_SPECVAL * Fiddle::SIZEOF_VOIDP)
+    end
+
+    def VM_BH_ISEQ_BLOCK_P bh
+      bh & 0x03 == 0x01
+    end
+
+    def VM_BH_TO_ISEQ_BLOCK bh
+      bh & ~0x03
+    end
+
     def RB_FIXNUM_P obj_addr
       0 != obj_addr & RUBY_FIXNUM_FLAG
     end

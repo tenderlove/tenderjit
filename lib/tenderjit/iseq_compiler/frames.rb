@@ -29,6 +29,8 @@ class TenderJIT
 
           # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
           cfp_ptr.sub # like -- in C
+          cfp_ptr.self = _self
+          _self.release! if _self.is_a?(Runtime::TemporaryVariable)
 
           local_size.times do |i|
             sp_ptr[i] = Qnil
@@ -63,8 +65,7 @@ class TenderJIT
           cfp_ptr.ep     = new_sp
 
           cfp_ptr.iseq = iseq
-          cfp_ptr.self = _self
-          cfp_ptr.block_code = 0
+          write_block_code rt, cfp_ptr
 
           # ec->cfp = cfp;
           ec_ptr.cfp = cfp_ptr
@@ -75,6 +76,17 @@ class TenderJIT
           specval.write(rt) do |val|
             sp_ptr[local_size + 1] = val
           end
+        end
+
+        def write_block_code rt, cfp_ptr
+          specval.write_block_code rt, cfp_ptr
+        end
+      end
+
+      class Block < Virtual
+        def initialize iseq, _self, specval, cref_or_me, pc, argv, local_size
+          type = VM_FRAME_MAGIC_BLOCK
+          super(iseq, type, _self, specval, cref_or_me, pc, argv, local_size)
         end
       end
 
@@ -109,6 +121,10 @@ class TenderJIT
         def write rt
           yield 0
         end
+
+        def write_block_code rt, cfp_ptr
+          cfp_ptr.block_code = 0
+        end
       end
 
       NULL = Null.new
@@ -122,10 +138,39 @@ class TenderJIT
           yield VM_GUARDED_PREV_EP(@ep)
         end
 
+        def write_block_code rt, cfp_ptr
+          cfp_ptr.block_code = 0
+        end
+
         private
 
         def VM_GUARDED_PREV_EP ep
           ep | 0x01
+        end
+      end
+
+      class CapturedBlock
+        def initialize rb, blockiseq
+          @rb        = rb
+          @blockiseq = blockiseq
+        end
+
+        def write rt
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+          rt.with_ref(cfp_ptr.self) do |self_ref|
+            VM_BH_FROM_ISEQ_BLOCK(rt, self_ref)
+            yield self_ref
+          end
+        end
+
+        def write_block_code rt, cfp_ptr
+          cfp_ptr.block_code = @blockiseq
+        end
+
+        private
+
+        def VM_BH_FROM_ISEQ_BLOCK rt, self_ref
+          rt.or self_ref, 0x01
         end
       end
     end
