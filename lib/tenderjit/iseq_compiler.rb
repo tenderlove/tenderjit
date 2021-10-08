@@ -1921,44 +1921,60 @@ class TenderJIT
       concat_cfunc_addr = Fiddle::Handle::DEFAULT["rb_ary_concat"]
 
       with_runtime do |rt|
-        rt.push_reg REG_BP
+        # Flush the PC and SP to the current frame.  The functions we call
+        # below can cause the GC to execute, can possibly call back out to
+        # Ruby, and can also possibly raise an exception.  We need the CFP to
+        # have an up-to-date PC and SP so that a) the GC can find any
+        # references it needs to keep alive, b) if something raises an
+        # exception the stack trace is correct, and c) any calls back in to
+        # Ruby will not clobber our stack.
+        if @temp_stack.size == 0
+          rt.flush_pc_and_sp next_pc, REG_BP
+        else
+          rt.flush_pc_and_sp next_pc, @temp_stack.peek(0).length
+        end
 
         # Allocate and set tmp1 #####################################
 
-        tmp1_loc = @temp_stack.push :unknown
+        rt.temp_var do |tmp1_loc| # Allocate a temp variable
+          rt.push_reg REG_BP # Alignment push
 
-        tmp1_val = rt.call_cfunc_without_alignment check_cfunc_addr, [ary1_loc]
+          tmp1_val = rt.call_cfunc_without_alignment check_cfunc_addr, [ary1_loc]
 
-        rt.if_eq(tmp1_val, Fisk::Imm64.new(Qnil)) {
-          tmp1_val = rt.call_cfunc_without_alignment newarray_cfunc_addr, [Fisk::Imm64.new(1), ary1_loc]
-        }.else {}
+          rt.if_eq(tmp1_val.to_register, Fisk::Imm64.new(Qnil)) {
+            tmp1_val = rt.call_cfunc_without_alignment newarray_cfunc_addr, [Fisk::Imm64.new(1), ary1_loc]
+          }.else {}
 
-        rt.write tmp1_loc, tmp1_val
+          rt.pop_reg REG_BP # Alignment pop
 
-        # Allocate and set tmp1 #####################################
+          # tmp1_val is the RAX register.  We need to save its value in a temp
+          # register before we can call another function (as the next function
+          # will clobber the value in the RAX register)
+          tmp1_loc.write tmp1_val
 
-        tmp2_loc = @temp_stack.push :unknown
+          # Allocate and set tmp2 #####################################
 
-        tmp2_val = rt.call_cfunc_without_alignment check_cfunc_addr, [ary2_loc]
+          rt.temp_var do |tmp2_loc|
+            rt.push_reg tmp1_loc # Push for alignment, but also save the tmp
 
-        rt.if_eq(tmp2_val, Fisk::Imm64.new(Qnil)) {
-          tmp2_val = rt.call_cfunc_without_alignment newarray_cfunc_addr, [Fisk::Imm64.new(1), ary2_loc]
-        }.else {}
+            tmp2_val = rt.call_cfunc_without_alignment check_cfunc_addr, [ary2_loc]
 
-        rt.write tmp2_loc, tmp2_val
+            rt.if_eq(tmp2_val, Fisk::Imm64.new(Qnil)) {
+              tmp2_val = rt.call_cfunc_without_alignment newarray_cfunc_addr, [Fisk::Imm64.new(1), ary2_loc]
+            }.else {}
 
-        # Compute the result, and cleanup ###########################
+            rt.pop_reg tmp1_loc # Pop for alignment, but restore the tmp
 
-        result_val = rt.call_cfunc_without_alignment concat_cfunc_addr, [tmp1_loc, tmp2_loc]
+            # Same deal here. Calling the C function will clobber RAX
+            tmp2_loc.write tmp2_val
 
-        # Can save a push/pop by recycling tmp1_loc.
-        @temp_stack.pop
-        @temp_stack.pop
+            # Compute the result, and cleanup ###########################
 
-        result_loc = @temp_stack.push :array
-        rt.write result_loc, result_val
-
-        rt.pop_reg REG_BP
+            result_val = rt.call_cfunc_without_alignment concat_cfunc_addr, [tmp1_loc, tmp2_loc]
+            result_loc = @temp_stack.push :array
+            rt.write result_loc, result_val
+          end
+        end
       end
     end
 
