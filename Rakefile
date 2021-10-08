@@ -4,14 +4,6 @@ require "rake/clean"
 
 require_relative "lib/tenderjit/ruby_interpreter_metadata_helper"
 
-file 'lib/tendertools/dwarf/constants.rb' => ['lib/tendertools/dwarf/constants.yml', 'lib/tendertools/dwarf/constants.erb'] do |t|
-  require 'psych'
-  require 'erb'
-  constants = Psych.load_file t.prereqs.first
-  erb = ERB.new File.read(t.prereqs[1]), trim_mode: '-'
-  File.write t.name, erb.result(binding)
-end
-
 test_files = RubyVM::INSTRUCTION_NAMES.grep_v(/^trace_/).map do |name|
   test_file = "test/instructions/#{name}_test.rb"
   file test_file do |t|
