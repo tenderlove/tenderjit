@@ -1690,6 +1690,60 @@ class TenderJIT
       :stop
     end
 
+    def handle_concatarray
+      ary2_loc = @temp_stack.pop
+      ary1_loc = @temp_stack.pop
+
+      vm_concat_array ary1_loc, ary2_loc
+    end
+
+    def vm_concat_array ary1_loc, ary2_loc
+      check_cfunc_addr = Fiddle::Handle::DEFAULT["rb_check_to_array"]
+      newarray_cfunc_addr = Fiddle::Handle::DEFAULT["rb_ary_new_from_args"]
+      concat_cfunc_addr = Fiddle::Handle::DEFAULT["rb_ary_concat"]
+
+      with_runtime do |rt|
+        rt.push_reg REG_BP
+
+        # Allocate and set tmp1 #####################################
+
+        tmp1_loc = @temp_stack.push :unknown
+
+        tmp1_val = rt.call_cfunc_without_alignment check_cfunc_addr, [ary1_loc]
+
+        rt.if_eq(tmp1_val, Fisk::Imm64.new(Qnil)) {
+          tmp1_val = rt.call_cfunc_without_alignment newarray_cfunc_addr, [Fisk::Imm64.new(1), ary1_loc]
+        }.else {}
+
+        rt.write tmp1_loc, tmp1_val
+
+        # Allocate and set tmp1 #####################################
+
+        tmp2_loc = @temp_stack.push :unknown
+
+        tmp2_val = rt.call_cfunc_without_alignment check_cfunc_addr, [ary2_loc]
+
+        rt.if_eq(tmp2_val, Fisk::Imm64.new(Qnil)) {
+          tmp2_val = rt.call_cfunc_without_alignment newarray_cfunc_addr, [Fisk::Imm64.new(1), ary2_loc]
+        }.else {}
+
+        rt.write tmp2_loc, tmp2_val
+
+        # Compute the result, and cleanup ###########################
+
+        result_val = rt.call_cfunc_without_alignment concat_cfunc_addr, [tmp1_loc, tmp2_loc]
+
+        # Can save a push/pop by recycling tmp1_loc.
+        @temp_stack.pop
+        @temp_stack.pop
+
+        result_loc = @temp_stack.push :array
+        rt.write result_loc, result_val
+
+        rt.pop_reg REG_BP
+      end
+    end
+
     def handle_splatarray flag
       raise NotImplementedError unless flag == 0
 
