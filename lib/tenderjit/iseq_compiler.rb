@@ -1766,17 +1766,19 @@ class TenderJIT
       vm_splat_array pop_loc, push_loc
     end
 
+    # WATCH OUT! This is a sketch, and needs to be verified (the implementation
+    # is gated by a flag; see #handle_splatarray).
     def vm_splat_array read_loc, store_loc
-      call_cfunc rb.symbol_address("rb_check_to_array"), [read_loc]
+      with_runtime do |rt|
+        rt.call_cfunc rb.symbol_address("rb_check_to_array"), [read_loc]
 
-      # If it returned nil, make a new array
-      __.cmp(__.rax, __.uimm(Qnil))
-        .jne(__.label(:continue))
+        # If it returned nil, make a new array
+        rt.if_eq(rt.return_value, Fisk::Imm64.new(Qnil)) {
+          rt.call_cfunc rb.symbol_address("rb_ary_new_from_args"), [Fisk::Imm64.new(1), rt.return_value]
+        }.else {}
 
-      call_cfunc rb.symbol_address("rb_ary_new_from_args"), [__.uimm(1), __.rax]
-
-      __.put_label(:continue)
-        .mov(store_loc, __.rax)
+        rt.write store_loc, rt.return_value
+      end
     end
 
     def handle_opt_aset call_data
