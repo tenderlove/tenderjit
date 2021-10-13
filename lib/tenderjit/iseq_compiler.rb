@@ -1645,13 +1645,10 @@ class TenderJIT
     end
 
     def handle_putself
-      loc = @temp_stack.push(:self)
-
-      reg_self = __.register "self"
-
-      # Get self from the CFP
-      __.mov(reg_self, __.m64(REG_CFP, RbControlFrameStruct.offsetof("self")))
-        .mov(loc, reg_self)
+      with_runtime do |rt|
+        # Get self from the CFP
+        rt.push Fisk::M64.new(REG_CFP, RbControlFrameStruct.offsetof("self")), name: "self"
+      end
     end
 
     def handle_putobject literal
