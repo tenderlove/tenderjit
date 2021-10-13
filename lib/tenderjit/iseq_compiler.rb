@@ -1630,8 +1630,9 @@ class TenderJIT
     end
 
     def handle_putnil
-      loc = @temp_stack.push(:nil, type: T_NIL)
-      __.mov loc, __.uimm(Qnil)
+      with_runtime do |rt|
+        rt.push Fisk::Imm64.new(Qnil), name: T_NIL
+      end
     end
 
     def handle_pop
