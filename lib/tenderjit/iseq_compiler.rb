@@ -1385,6 +1385,18 @@ class TenderJIT
       end
     end
 
+    def handle_tostring
+      rb_obj_as_string_result = Fiddle::Handle::DEFAULT["rb_obj_as_string_result"]
+
+      str = @temp_stack.pop
+      val = @temp_stack.pop
+
+      with_runtime do |rt|
+        rt.call_cfunc rb_obj_as_string_result, [str, val]
+        rt.push rt.return_value, name: RUBY_T_STRING
+      end
+    end
+
     class BranchUnless < Struct.new(:jump_idx, :jump_type, :temp_stack)
     end
 
