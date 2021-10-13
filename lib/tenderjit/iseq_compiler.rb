@@ -1920,19 +1920,19 @@ class TenderJIT
     end
 
     def handle_putobject literal
-      loc = if rb.RB_FIXNUM_P(literal)
-              @temp_stack.push(:literal, type: T_FIXNUM)
+      object_name = if rb.RB_FIXNUM_P(literal)
+              T_FIXNUM
             elsif literal == Qtrue
-              @temp_stack.push(:literal, type: true)
+              true
             elsif literal == Qfalse
-              @temp_stack.push(:literal, type: false)
+              false
             else
-              @temp_stack.push(:literal)
+              :unknown
             end
 
-      reg = __.register
-      __.mov reg, __.uimm(literal)
-      __.mov loc, reg
+      with_runtime do |rt|
+        rt.push Fisk::Imm64.new(literal), name: object_name
+      end
     end
 
     # `leave` instruction
