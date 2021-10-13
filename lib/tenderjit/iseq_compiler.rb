@@ -1669,18 +1669,23 @@ class TenderJIT
 
     # `leave` instruction
     def handle_leave
-      loc = @temp_stack.pop
-
       # FIXME: We need to check interrupts and exit
-      # Copy top value from the stack in to rax
-      __.mov __.rax, loc
 
-      # Pop the frame from the stack
-      __.add(REG_CFP, __.uimm(RbControlFrameStruct.byte_size))
+      stack_top = @temp_stack.pop
 
-      # Write the frame pointer back to the ec
-      __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
-      __.ret
+      with_runtime do |rt|
+        # Copy top value from the stack in to rax
+        rt.write Fisk::Registers::RAX, stack_top
+
+        # Pop the frame from the stack
+        rt.add REG_CFP, Fisk::Imm32.new(RbControlFrameStruct.byte_size)
+
+        # Write the frame pointer back to the ec
+        rt.write Fisk::M64.new(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
+
+        rt.return
+      end
+
       :stop
     end
 
