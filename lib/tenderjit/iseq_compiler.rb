@@ -1337,23 +1337,17 @@ class TenderJIT
     end
 
     def handle_duparray ary
-      write_loc = @temp_stack.push(:object, type: T_ARRAY)
-
-      __.push REG_BP
-      call_cfunc rb.symbol_address("rb_ary_resurrect"), [__.uimm(ary)]
-      __.pop REG_BP
-
-      __.mov write_loc, __.rax
+      with_runtime do |rt|
+        rt.call_cfunc rb.symbol_address("rb_ary_resurrect"), [Fisk::Imm64.new(ary)]
+        rt.push rt.return_value, name: RUBY_T_ARRAY
+      end
     end
 
     def handle_duphash hash
-      write_loc = @temp_stack.push(:object, type: RUBY_T_HASH)
-
-      __.push REG_BP
-      call_cfunc rb.symbol_address("rb_hash_resurrect"), [__.uimm(hash)]
-      __.pop REG_BP
-
-      __.mov write_loc, __.rax
+      with_runtime do |rt|
+        rt.call_cfunc rb.symbol_address("rb_hash_resurrect"), [Fisk::Imm64.new(hash)]
+        rt.push rt.return_value, name: RUBY_T_HASH
+      end
     end
 
     class BranchUnless < Struct.new(:jump_idx, :jump_type, :temp_stack)
@@ -1615,8 +1609,9 @@ class TenderJIT
     end
 
     def handle_putnil
-      loc = @temp_stack.push(:nil, type: T_NIL)
-      __.mov loc, __.uimm(Qnil)
+      with_runtime do |rt|
+        rt.push Fisk::Imm64.new(Qnil), name: T_NIL
+      end
     end
 
     def handle_pop
@@ -1771,13 +1766,15 @@ class TenderJIT
     end
 
     def handle_putobject_INT2FIX_1_
-      loc = @temp_stack.push(:literal, type: T_FIXNUM)
-      __.mov loc, __.uimm(0x3)
+      with_runtime do |rt|
+        rt.push Fisk::Imm64.new(0x3), name: T_FIXNUM
+      end
     end
 
     def handle_putobject_INT2FIX_0_
-      loc = @temp_stack.push(:literal, type: T_FIXNUM)
-      __.mov loc, __.uimm(0x1)
+      with_runtime do |rt|
+        rt.push Fisk::Imm64.new(0x1), name: T_FIXNUM
+      end
     end
 
     def handle_setlocal_WC_0 idx
@@ -1885,6 +1882,76 @@ class TenderJIT
       __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
       __.ret
       :stop
+    end
+
+    def handle_concatarray
+      ary2_loc = @temp_stack.pop
+      ary1_loc = @temp_stack.pop
+
+      vm_concat_array ary1_loc, ary2_loc
+    end
+
+    def vm_concat_array ary1_loc, ary2_loc
+      check_cfunc_addr = Fiddle::Handle::DEFAULT["rb_check_to_array"]
+      newarray_cfunc_addr = Fiddle::Handle::DEFAULT["rb_ary_new_from_args"]
+      concat_cfunc_addr = Fiddle::Handle::DEFAULT["rb_ary_concat"]
+
+      with_runtime do |rt|
+        # Flush the PC and SP to the current frame.  The functions we call
+        # below can cause the GC to execute, can possibly call back out to
+        # Ruby, and can also possibly raise an exception.  We need the CFP to
+        # have an up-to-date PC and SP so that a) the GC can find any
+        # references it needs to keep alive, b) if something raises an
+        # exception the stack trace is correct, and c) any calls back in to
+        # Ruby will not clobber our stack.
+        if @temp_stack.size == 0
+          rt.flush_pc_and_sp next_pc, REG_BP
+        else
+          rt.flush_pc_and_sp next_pc, @temp_stack.peek(0).length
+        end
+
+        # Allocate and set tmp1 #####################################
+
+        rt.temp_var do |tmp1_loc| # Allocate a temp variable
+          rt.push_reg REG_BP # Alignment push
+
+          tmp1_val = rt.call_cfunc_without_alignment check_cfunc_addr, [ary1_loc]
+
+          rt.if_eq(tmp1_val.to_register, Fisk::Imm64.new(Qnil)) {
+            tmp1_val = rt.call_cfunc_without_alignment newarray_cfunc_addr, [Fisk::Imm64.new(1), ary1_loc]
+          }.else {}
+
+          rt.pop_reg REG_BP # Alignment pop
+
+          # tmp1_val is the RAX register.  We need to save its value in a temp
+          # register before we can call another function (as the next function
+          # will clobber the value in the RAX register)
+          tmp1_loc.write tmp1_val
+
+          # Allocate and set tmp2 #####################################
+
+          rt.temp_var do |tmp2_loc|
+            rt.push_reg tmp1_loc # Push for alignment, but also save the tmp
+
+            tmp2_val = rt.call_cfunc_without_alignment check_cfunc_addr, [ary2_loc]
+
+            rt.if_eq(tmp2_val, Fisk::Imm64.new(Qnil)) {
+              tmp2_val = rt.call_cfunc_without_alignment newarray_cfunc_addr, [Fisk::Imm64.new(1), ary2_loc]
+            }.else {}
+
+            rt.pop_reg tmp1_loc # Pop for alignment, but restore the tmp
+
+            # Same deal here. Calling the C function will clobber RAX
+            tmp2_loc.write tmp2_val
+
+            # Compute the result, and cleanup ###########################
+
+            result_val = rt.call_cfunc_without_alignment concat_cfunc_addr, [tmp1_loc, tmp2_loc]
+            result_loc = @temp_stack.push :array
+            rt.write result_loc, result_val
+          end
+        end
+      end
     end
 
     def handle_splatarray flag

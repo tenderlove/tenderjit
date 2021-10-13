@@ -2,13 +2,9 @@ require "digest/md5"
 require "rake/testtask"
 require "rake/clean"
 
-file 'lib/tendertools/dwarf/constants.rb' => ['lib/tendertools/dwarf/constants.yml', 'lib/tendertools/dwarf/constants.erb'] do |t|
-  require 'psych'
-  require 'erb'
-  constants = Psych.load_file t.prereqs.first
-  erb = ERB.new File.read(t.prereqs[1]), trim_mode: '-'
-  File.write t.name, erb.result(binding)
-end
+require_relative "lib/tenderjit/ruby_interpreter_metadata_helper"
+
+TEST_SUITE_DEFAULT_PREFIX='*'
 
 test_files = RubyVM::INSTRUCTION_NAMES.grep_v(/^trace_/).map do |name|
   test_file = "test/instructions/#{name}_test.rb"
@@ -32,7 +28,7 @@ end
   test_file
 end
 
-folder = Digest::MD5.hexdigest(RUBY_DESCRIPTION)[0, 5]
+folder = TenderJIT::RubyInterpreterMetadataHelper.fingerprint
 
 gen_files = %w{ constants structs symbols }.map { |name|
   "lib/tenderjit/ruby/#{folder}/#{name}.rb"
@@ -45,14 +41,37 @@ end
 
 task :compile => gen_files.first
 
-Rake::TestTask.new do |t|
-  t.libs << "test"
-  t.test_files = FileList['test/**/*_test.rb']
-  t.verbose = true
-  t.warning = true
-end
-
 task :default => 'lib/tendertools/dwarf/constants.rb'
-task :test => test_files + [:compile]
+
+# Run the test suites.
+#
+# Test suites are assumed to be under any subdirectory level of `test`, and with
+# a filename ending with `_test.rb`.
+#
+# Arguments:
+#
+# - :test_suite_prefix: test suite prefix, in glob format; can include slashes.
+#   defaults to TEST_SUITE_DEFAULT_PREFIX.
+#   example: `foo/bar` will match `test/**/foo/bar_test.rb`
+# - :test_bare_name: test name (without prefix); if nil, all the UTs are run.
+#   defaults to run all the UTs.
+#   example: `empty_array` will run `test_empty_array`
+#
+task :test, [:test_suite_prefix, :test_bare_name] => test_files + [:compile] do |_, args|
+  Rake::TestTask.new do |t|
+    test_suite_prefix = args.test_suite_prefix || TEST_SUITE_DEFAULT_PREFIX
+
+    t.libs << "test"
+    t.test_files = FileList["test/**/#{test_suite_prefix}_test.rb"]
+
+    # This is somewhat hacky, but TestTask doesn't leave many... options 😬
+    # See source (`rake-$version/lib/rake/testtask.rb`).
+    #
+    t.options = "-ntest_#{args.test_bare_name}" if args.test_bare_name
+
+    t.verbose = true
+    t.warning = true
+  end
+end
 
 CLEAN.include "lib/tenderjit/ruby"
