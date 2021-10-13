@@ -1787,13 +1787,15 @@ class TenderJIT
     end
 
     def handle_putobject_INT2FIX_1_
-      loc = @temp_stack.push(:literal, type: T_FIXNUM)
-      __.mov loc, __.uimm(0x3)
+      with_runtime do |rt|
+        rt.push Fisk::Imm64.new(0x3), name: T_FIXNUM
+      end
     end
 
     def handle_putobject_INT2FIX_0_
-      loc = @temp_stack.push(:literal, type: T_FIXNUM)
-      __.mov loc, __.uimm(0x1)
+      with_runtime do |rt|
+        rt.push Fisk::Imm64.new(0x1), name: T_FIXNUM
+      end
     end
 
     def handle_setlocal_WC_0 idx
