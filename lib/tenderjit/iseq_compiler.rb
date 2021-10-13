@@ -1140,23 +1140,17 @@ class TenderJIT
     end
 
     def handle_duparray ary
-      write_loc = @temp_stack.push(:object, type: T_ARRAY)
-
-      __.push REG_BP
-      call_cfunc rb.symbol_address("rb_ary_resurrect"), [__.uimm(ary)]
-      __.pop REG_BP
-
-      __.mov write_loc, __.rax
+      with_runtime do |rt|
+        rt.call_cfunc rb.symbol_address("rb_ary_resurrect"), [Fisk::Imm64.new(ary)]
+        rt.push rt.return_value, name: RUBY_T_ARRAY
+      end
     end
 
     def handle_duphash hash
-      write_loc = @temp_stack.push(:object, type: RUBY_T_HASH)
-
-      __.push REG_BP
-      call_cfunc rb.symbol_address("rb_hash_resurrect"), [__.uimm(hash)]
-      __.pop REG_BP
-
-      __.mov write_loc, __.rax
+      with_runtime do |rt|
+        rt.call_cfunc rb.symbol_address("rb_hash_resurrect"), [Fisk::Imm64.new(hash)]
+        rt.push rt.return_value, name: RUBY_T_HASH
+      end
     end
 
     class BranchUnless < Struct.new(:jump_idx, :jump_type, :temp_stack)
@@ -1418,8 +1412,9 @@ class TenderJIT
     end
 
     def handle_putnil
-      loc = @temp_stack.push(:nil, type: T_NIL)
-      __.mov loc, __.uimm(Qnil)
+      with_runtime do |rt|
+        rt.push Fisk::Imm64.new(Qnil), name: T_NIL
+      end
     end
 
     def handle_pop
@@ -1574,13 +1569,15 @@ class TenderJIT
     end
 
     def handle_putobject_INT2FIX_1_
-      loc = @temp_stack.push(:literal, type: T_FIXNUM)
-      __.mov loc, __.uimm(0x3)
+      with_runtime do |rt|
+        rt.push Fisk::Imm64.new(0x3), name: T_FIXNUM
+      end
     end
 
     def handle_putobject_INT2FIX_0_
-      loc = @temp_stack.push(:literal, type: T_FIXNUM)
-      __.mov loc, __.uimm(0x1)
+      with_runtime do |rt|
+        rt.push Fisk::Imm64.new(0x1), name: T_FIXNUM
+      end
     end
 
     def handle_setlocal_WC_0 idx
