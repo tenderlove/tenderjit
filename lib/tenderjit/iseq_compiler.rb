@@ -1358,13 +1358,10 @@ class TenderJIT
     end
 
     def handle_duparray ary
-      write_loc = @temp_stack.push(:object, type: T_ARRAY)
-
-      __.push REG_BP
-      call_cfunc rb.symbol_address("rb_ary_resurrect"), [__.uimm(ary)]
-      __.pop REG_BP
-
-      __.mov write_loc, __.rax
+      with_runtime do |rt|
+        rt.call_cfunc rb.symbol_address("rb_ary_resurrect"), [Fisk::Imm64.new(ary)]
+        rt.push rt.return_value, name: RUBY_T_ARRAY
+      end
     end
 
     def handle_duphash hash
