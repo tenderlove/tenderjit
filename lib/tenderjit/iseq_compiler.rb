@@ -1062,7 +1062,7 @@ class TenderJIT
       end
     end
 
-    def compile_call_cfunc iseq, compile_request, argc, iseq_ptr, recv, cme, return_loc
+    def compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, return_loc
       cfunc = RbMethodDefinitionStruct.new(cme.def).body.cfunc
       param_size = if cfunc.argc == -1
                      argc
@@ -1072,13 +1072,13 @@ class TenderJIT
                      cfunc.argc
                    end
 
-      temp_stack = compile_request.temp_stack
+      temp_stack = req.temp_stack
 
-      overflow_exit = compile_request.make_exit(exits)
+      overflow_exit = req.make_exit(exits)
 
       ## Pop params and self from the stack
       with_runtime do |rt|
-        rt.flush_pc_and_sp compile_request.next_pc, temp_stack[argc]
+        rt.flush_pc_and_sp req.next_pc, temp_stack[argc]
 
         rt.check_vm_stack_overflow temp_stack, overflow_exit, 0, 0
       end
@@ -1087,10 +1087,17 @@ class TenderJIT
       next_sp = temp_stack[argc - param_size - 1]
 
       with_runtime do |rt|
-        Frames::CFunc.new(temp_stack.peek(argc).loc,
-                          SpecVals::NULL,
-                          cme,
-                          next_sp).push(rt)
+        if req.has_block?
+          Frames::CFunc.new(temp_stack.peek(argc).loc,
+                            SpecVals::CapturedBlock.new(rb, req.blockiseq),
+                            cme,
+                            next_sp).push(rt)
+        else
+          Frames::CFunc.new(temp_stack.peek(argc).loc,
+                            SpecVals::NULL,
+                            cme,
+                            next_sp).push(rt)
+        end
 
         rt.with_ref(temp_stack[argc - 1]) do |sp|
           rt.call_cfunc cfunc.invoker.to_i, [recv_loc, argc, sp, cfunc.func.to_i]
@@ -1215,13 +1222,17 @@ class TenderJIT
         @jit.compile_iseq_t iseq_ptr
       end
 
+      if req.has_block?
+        @jit.compile_iseq_t req.blockiseq
+      end
+
       # Bail on any method calls that aren't "simple".  Not handling *args,
       # kwargs, etc right now
       #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
       # If we're compiling a send that has a block, the "simple" ones are tagged
       # with VM_CALL_FCALL, otherwise we have to look for ARGS_SIMPLE
       flags = req.has_block? ? VM_CALL_FCALL : VM_CALL_ARGS_SIMPLE
-      unless ((ci.vm_ci_flag & flags) == flags)
+      unless ci.vm_ci_flag == 0 || ((ci.vm_ci_flag & flags) == flags)
         side_exit = req.make_exit(exits, "complex_method")
         patch_source_jump jit_buffer, at: patch_loc, to: side_exit
         return side_exit
@@ -1831,6 +1842,27 @@ class TenderJIT
 
           # push it on the stack
           rt.push temp, name: :local
+        end
+
+        rt.flush
+      end
+    end
+
+    def handle_setlocal_WC_1 idx
+      with_runtime do |rt|
+        cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+        rt.temp_var do |temp|
+
+          # Get the current EP
+          temp.write cfp_ptr.ep
+
+          # Get the previous EP (WC_1 == "1 previous")
+          temp.write temp[VM_ENV_DATA_INDEX_SPECVAL]
+
+          temp.and(~0x3)
+
+          # Write the local
+          temp[-idx] = @temp_stack.pop
         end
 
         rt.flush
