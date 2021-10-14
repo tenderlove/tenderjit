@@ -27,15 +27,11 @@ class TenderJIT
 
           sp_ptr = rt.pointer sp
 
-          # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
-          cfp_ptr.sub # like -- in C
-          cfp_ptr.self = _self
-          _self.release! if _self.is_a?(Runtime::TemporaryVariable)
-
-          local_size.times do |i|
-            sp_ptr[i] = Qnil
-          end
-
+          # Set up the stack values for the callee frame.  It's important we
+          # set these values before pushing the new CFP.  Captured blocks need
+          # to set the block code on the *caller* frame before we push a new
+          # frame.
+          #
           # /* setup ep with managing data */
           # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
           # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
@@ -43,6 +39,15 @@ class TenderJIT
           sp_ptr[local_size + 0] = cref_or_me
           write_specval rt, sp_ptr
           sp_ptr[local_size + 2] = type
+
+          local_size.times do |i|
+            sp_ptr[i] = Qnil
+          end
+
+          # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
+          cfp_ptr.sub # like -- in C
+          cfp_ptr.self = _self
+          _self.release! if _self.is_a?(Runtime::TemporaryVariable)
 
           temp.write_address_of temp[3 + local_size]
           new_sp = temp
@@ -65,7 +70,7 @@ class TenderJIT
           cfp_ptr.ep     = new_sp
 
           cfp_ptr.iseq = iseq
-          write_block_code rt, cfp_ptr
+          cfp_ptr.block_code = 0
 
           # ec->cfp = cfp;
           ec_ptr.cfp = cfp_ptr
@@ -73,13 +78,9 @@ class TenderJIT
         end
 
         def write_specval rt, sp_ptr
-          specval.write(rt) do |val|
+          specval.write_specval(rt) do |val|
             sp_ptr[local_size + 1] = val
           end
-        end
-
-        def write_block_code rt, cfp_ptr
-          specval.write_block_code rt, cfp_ptr
         end
       end
 
@@ -118,12 +119,8 @@ class TenderJIT
 
     module SpecVals
       class Null
-        def write rt
+        def write_specval rt
           yield 0
-        end
-
-        def write_block_code rt, cfp_ptr
-          cfp_ptr.block_code = 0
         end
       end
 
@@ -134,12 +131,8 @@ class TenderJIT
           @ep = ep.to_i
         end
 
-        def write rt
+        def write_specval rt
           yield VM_GUARDED_PREV_EP(@ep)
-        end
-
-        def write_block_code rt, cfp_ptr
-          cfp_ptr.block_code = 0
         end
 
         private
@@ -155,16 +148,16 @@ class TenderJIT
           @blockiseq = blockiseq
         end
 
-        def write rt
+        # It's important that this gets called before the frame is pushed.
+        # We need to write the block code reference to the *current* frame,
+        # and the specval needs to be added to the stack of the *callee* frame
+        def write_specval rt
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+          cfp_ptr.block_code = @blockiseq
           rt.with_ref(cfp_ptr.self) do |self_ref|
             VM_BH_FROM_ISEQ_BLOCK(rt, self_ref)
             yield self_ref
           end
-        end
-
-        def write_block_code rt, cfp_ptr
-          cfp_ptr.block_code = @blockiseq
         end
 
         private
