@@ -1663,7 +1663,7 @@ class TenderJIT
             end
 
       with_runtime do |rt|
-        rt.push Fisk::Imm64.new(literal), name: object_name
+        rt.push literal, name: object_name
       end
     end
 
@@ -1678,7 +1678,7 @@ class TenderJIT
         rt.write Fisk::Registers::RAX, stack_top
 
         # Pop the frame from the stack
-        rt.add REG_CFP, Fisk::Imm32.new(RbControlFrameStruct.byte_size)
+        rt.add REG_CFP, RbControlFrameStruct.byte_size
 
         # Write the frame pointer back to the ec
         rt.write Fisk::M64.new(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
@@ -1776,7 +1776,7 @@ class TenderJIT
 
         # If it returned nil, make a new array
         rt.if_eq(rt.return_value, Fisk::Imm64.new(Qnil)) {
-          rt.call_cfunc rb.symbol_address("rb_ary_new_from_args"), [Fisk::Imm64.new(1), rt.return_value]
+          rt.call_cfunc rb.symbol_address("rb_ary_new_from_args"), [1, rt.return_value]
         }.else {}
 
         rt.write store_loc, rt.return_value
