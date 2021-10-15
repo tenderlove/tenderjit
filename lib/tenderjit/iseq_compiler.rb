@@ -1657,45 +1657,47 @@ class TenderJIT
     end
 
     def handle_putself
-      loc = @temp_stack.push(:self)
-
-      reg_self = __.register "self"
-
-      # Get self from the CFP
-      __.mov(reg_self, __.m64(REG_CFP, RbControlFrameStruct.offsetof("self")))
-        .mov(loc, reg_self)
+      with_runtime do |rt|
+        # Get self from the CFP
+        rt.push Fisk::M64.new(REG_CFP, RbControlFrameStruct.offsetof("self")), name: "self"
+      end
     end
 
     def handle_putobject literal
-      loc = if rb.RB_FIXNUM_P(literal)
-              @temp_stack.push(:literal, type: T_FIXNUM)
+      object_name = if rb.RB_FIXNUM_P(literal)
+              T_FIXNUM
             elsif literal == Qtrue
-              @temp_stack.push(:literal, type: true)
+              true
             elsif literal == Qfalse
-              @temp_stack.push(:literal, type: false)
+              false
             else
-              @temp_stack.push(:literal)
+              :unknown
             end
 
-      reg = __.register
-      __.mov reg, __.uimm(literal)
-      __.mov loc, reg
+      with_runtime do |rt|
+        rt.push literal, name: object_name
+      end
     end
 
     # `leave` instruction
     def handle_leave
-      loc = @temp_stack.pop
-
       # FIXME: We need to check interrupts and exit
-      # Copy top value from the stack in to rax
-      __.mov __.rax, loc
 
-      # Pop the frame from the stack
-      __.add(REG_CFP, __.uimm(RbControlFrameStruct.byte_size))
+      stack_top = @temp_stack.pop
 
-      # Write the frame pointer back to the ec
-      __.mov __.m64(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
-      __.ret
+      with_runtime do |rt|
+        # Copy top value from the stack in to rax
+        rt.write Fisk::Registers::RAX, stack_top
+
+        # Pop the frame from the stack
+        rt.add REG_CFP, RbControlFrameStruct.byte_size
+
+        # Write the frame pointer back to the ec
+        rt.write Fisk::M64.new(REG_EC, RbExecutionContextT.offsetof("cfp")), REG_CFP
+
+        rt.return
+      end
+
       :stop
     end
 
@@ -1778,17 +1780,19 @@ class TenderJIT
       vm_splat_array pop_loc, push_loc
     end
 
+    # WATCH OUT! This is a sketch, and needs to be verified (the implementation
+    # is gated by a flag; see #handle_splatarray).
     def vm_splat_array read_loc, store_loc
-      call_cfunc rb.symbol_address("rb_check_to_array"), [read_loc]
+      with_runtime do |rt|
+        rt.call_cfunc rb.symbol_address("rb_check_to_array"), [read_loc]
 
-      # If it returned nil, make a new array
-      __.cmp(__.rax, __.uimm(Qnil))
-        .jne(__.label(:continue))
+        # If it returned nil, make a new array
+        rt.if_eq(rt.return_value, Fisk::Imm64.new(Qnil)) {
+          rt.call_cfunc rb.symbol_address("rb_ary_new_from_args"), [1, rt.return_value]
+        }.else {}
 
-      call_cfunc rb.symbol_address("rb_ary_new_from_args"), [__.uimm(1), __.rax]
-
-      __.put_label(:continue)
-        .mov(store_loc, __.rax)
+        rt.write store_loc, rt.return_value
+      end
     end
 
     def handle_opt_aset call_data
