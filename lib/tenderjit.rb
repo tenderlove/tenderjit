@@ -90,8 +90,12 @@ class TenderJIT
 
   # Global Variables
 
-  MJIT_CALL_P = Fiddle::Pointer.new(Internals.symbol_address("mjit_call_p"))
-  MJIT_OPTIONS = Internals.struct("mjit_options").new(Internals.symbol_address("mjit_opts"))
+  MJIT_CALL_P = Fiddle::Pointer.new(Fiddle::Handle::DEFAULT["mjit_call_p"])
+
+  ## FIXME: These addresses are sometimes different.  Why???
+  # p Fiddle::Handle::DEFAULT["mjit_opts"].to_s(16)
+  # p Internals.symbol_address("mjit_opts").to_s(16)
+  MJIT_OPTIONS = Internals.struct("mjit_options").new(Fiddle::Handle::DEFAULT["mjit_opts"])
 
   MJIT_OPTIONS.min_calls = 5
   MJIT_OPTIONS.wait = 0

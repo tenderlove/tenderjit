@@ -93,7 +93,7 @@ module Fiddle
         end
 
         def write base, val
-          data = [val].pack("l!")
+          data = [val].pack(unpack)
           Fiddle::Pointer.new(base)[offset, byte_size] = data
           nil
         end
