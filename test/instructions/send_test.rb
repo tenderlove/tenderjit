@@ -4,10 +4,6 @@ require "helper"
 
 class TenderJIT
   class SendTest < JITTest
-    def test_send
-      skip "Please implement send!"
-    end
-
     def bar
       5
     end
@@ -44,6 +40,51 @@ class TenderJIT
       assert_equal 3, jit.compiled_methods
       assert_equal 0, jit.exits
       assert_equal 5, v
+    end
+
+    def gimme
+      yield(15)
+      :hello
+    end
+
+    def return_gimme
+      x = 0
+      gimme { |m| x += m }
+      x
+    end
+
+    def test_block_params_work
+      jit.compile(method(:gimme))
+      jit.compile(method(:return_gimme))
+
+      expected = return_gimme
+      jit.enable!
+      v = return_gimme
+      jit.disable!
+
+      assert_equal 3, jit.compiled_methods
+      assert_equal 0, jit.exits
+      assert_equal expected, v
+    end
+
+    def only_gimme
+      gimme { |x| }
+    end
+
+    # Test that the block will be called and we return the original value
+    # of the `gimme` method
+    def test_only_gimme
+      jit.compile(method(:gimme))
+      jit.compile(method(:only_gimme))
+
+      expected = return_gimme
+      jit.enable!
+      v = return_gimme
+      jit.disable!
+
+      assert_equal 3, jit.compiled_methods
+      assert_equal 0, jit.exits
+      assert_equal expected, v
     end
 
     def run_each x
