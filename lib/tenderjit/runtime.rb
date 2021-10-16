@@ -389,6 +389,7 @@ class TenderJIT
       @fisk.push REG_BP.to_register # alignment
       call_cfunc_without_alignment func_loc, params
       @fisk.pop REG_BP.to_register  # alignment
+      @fisk.rax
     end
 
     def call_cfunc_without_alignment func_loc, params
