@@ -196,6 +196,8 @@ class TenderJIT
   VM_ENV_DATA_INDEX_FLAGS      =  0 # /* ep[ 0] */
   VM_ENV_DATA_INDEX_ENV        =  1 # /* ep[ 1] */
 
+  VM_BLOCK_HANDLER_NONE        =  0
+
   extend Fiddle::Importer
 
   Stats = struct [

@@ -19,6 +19,17 @@ class TenderJIT
       end
     end
 
+    def load_address_in dest, src
+      if src.memory?
+        offset = src.displacement
+        reg = src.register
+      else
+        raise NotImplementedError
+      end
+
+      @fisk.lea(dest, @fisk.m(reg, offset))
+    end
+
     def check_vm_stack_overflow temp_stack, exit_location, local_size, stack_max
       margin = ((local_size + stack_max) * Fiddle::SIZEOF_VOIDP) + RbControlFrameStruct.byte_size
 
@@ -224,7 +235,7 @@ class TenderJIT
       @fisk.test lhs, rhs
       @fisk.jz push_label  # else label
       finish_label = push_label
-      yield
+      yield if block_given?
       @fisk.jmp finish_label # finish label
       self
     end
@@ -336,8 +347,8 @@ class TenderJIT
     end
 
     # Create a temporary variable
-    def temp_var
-      tv = TemporaryVariable.new @fisk.register, Fiddle::TYPE_VOIDP, Fiddle::SIZEOF_VOIDP, 0, self
+    def temp_var name = "temp_var"
+      tv = TemporaryVariable.new @fisk.register(name), Fiddle::TYPE_VOIDP, Fiddle::SIZEOF_VOIDP, 0, self
 
       if block_given?
         yield tv
@@ -596,6 +607,10 @@ class TenderJIT
         end
       end
 
+      def write_address_of arg
+        @ec.load_address_in reg, arg
+      end
+
       def and num
         @ec.and(reg, num)
       end
@@ -620,6 +635,8 @@ class TenderJIT
 
       def memory?; false; end
       def immediate?; false; end
+      def register?; true; end
+      def temp_register?; true; end
 
       # Release the temporary variable (say you are done using its value)
       def release!
