@@ -635,6 +635,8 @@ class TenderJIT
 
       def memory?; false; end
       def immediate?; false; end
+      def register?; true; end
+      def temp_register?; true; end
 
       # Release the temporary variable (say you are done using its value)
       def release!

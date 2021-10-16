@@ -21,7 +21,22 @@ class TenderJIT
           ec_ptr = rt.pointer REG_EC, type: RbExecutionContextT
           cfp_ptr = rt.pointer REG_CFP, type: RbControlFrameStruct
 
-          temp = rt.temp_var
+          temp =  if _self.temp_register?
+                    _self
+                  else
+                    new_self = rt.temp_var("self")
+                    new_self.write self._self
+                    new_self
+                  end
+
+          # Write `self` to the next frame.  Frames grow down, so we subtract
+          # the size of the frame from the offset of "self" then set self to
+          # that value
+          next_frame_loc = -RbControlFrameStruct.byte_size
+          self_offset = RbControlFrameStruct.offsetof("self")
+
+          rt.write_register(REG_CFP, next_frame_loc + self_offset, temp.to_register)
+
           temp.write_address_of argv
           sp = temp
 
@@ -46,8 +61,6 @@ class TenderJIT
 
           # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
           cfp_ptr.sub # like -- in C
-          cfp_ptr.self = _self
-          _self.release! if _self.is_a?(Runtime::TemporaryVariable)
 
           temp.write_address_of temp[3 + local_size]
           new_sp = temp
