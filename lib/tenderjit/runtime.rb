@@ -347,8 +347,8 @@ class TenderJIT
     end
 
     # Create a temporary variable
-    def temp_var
-      tv = TemporaryVariable.new @fisk.register, Fiddle::TYPE_VOIDP, Fiddle::SIZEOF_VOIDP, 0, self
+    def temp_var name = "temp_var"
+      tv = TemporaryVariable.new @fisk.register(name), Fiddle::TYPE_VOIDP, Fiddle::SIZEOF_VOIDP, 0, self
 
       if block_given?
         yield tv
