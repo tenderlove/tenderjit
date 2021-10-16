@@ -1222,7 +1222,10 @@ class TenderJIT
         @jit.compile_iseq_t iseq_ptr
       end
 
-      if req.has_block?
+      # Only eagerly compile the blockiseq if the method type is a cfunc.
+      # We can't lazily compile the block iseq because we don't know whether
+      # or not the cfunc will call the block
+      if req.has_block? && method_definition.type == VM_METHOD_TYPE_CFUNC
         @jit.compile_iseq_t req.blockiseq
       end
 
