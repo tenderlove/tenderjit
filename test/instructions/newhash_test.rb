@@ -24,8 +24,6 @@ class TenderJIT
     end
 
     def test_filled_hash
-      skip "Please implement filled_hash!"
-
       assert_has_insn method(:filled_hash), insn: :newhash
       jit.compile(method(:filled_hash))
       jit.enable!

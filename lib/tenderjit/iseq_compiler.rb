@@ -1324,23 +1324,36 @@ class TenderJIT
     def handle_nop; end
 
     def handle_newhash num
-      address = Fiddle::Handle::DEFAULT["rb_hash_new_with_size"]
-
       with_runtime do |rt|
-        rt.push_reg REG_BP
-
-        values_loc = if num > 0
-          @temp_stack.peek(num - 1).loc
-        else
-          Fisk::Imm64.new(0)
-        end
-
-        rt.with_ref(values_loc) do |ref|
-          ret = rt.call_cfunc_without_alignment(address, [num / 2])
+        if num == 0
+          address = Fiddle::Handle::DEFAULT["rb_hash_new"]
+          ret = rt.call_cfunc(address, [])
           rt.push ret, name: "hash"
-        end
+        else
+          rt.flush_pc_and_sp next_pc, @temp_stack.first.loc
 
-        rt.pop_reg REG_BP # magic
+          # Allocate the hash
+          address = Fiddle::Handle::DEFAULT["rb_hash_new_with_size"]
+          ret = rt.call_cfunc(address, [num / 2])
+
+          # Write the hash reference to a temporary register.
+          rt.temp_var do |hash|
+            hash.write ret
+
+            values_loc = @temp_stack.peek(num - 1).loc
+
+            rt.with_ref(values_loc) do |ref|
+              num.times { @temp_stack.pop }
+
+              # Fill the hash
+              address = Fiddle::Handle::DEFAULT["rb_hash_bulk_insert"]
+              rt.push_reg hash
+              rt.call_cfunc_without_alignment(address, [num, ref, hash])
+              rt.pop_reg hash
+              rt.push hash, name: "hash"
+            end
+          end
+        end
       end
     end
 
