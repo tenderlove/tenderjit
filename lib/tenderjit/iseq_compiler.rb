@@ -551,7 +551,7 @@ class TenderJIT
     end
 
     def handle_concatstrings num
-      loc = @temp_stack[num + 1]
+      loc = @temp_stack[num - 1]
       num.times { @temp_stack.pop }
       addr = Fiddle::Handle::DEFAULT["rb_str_concat_literals"]
       with_runtime do |rt|

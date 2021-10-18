@@ -32,5 +32,24 @@ class TenderJIT
       assert_equal 0, jit.exits
       assert_equal "a", v
     end
+
+    def complex_tostring
+      "#{1234}#{5678}"
+    end
+
+    def test_complex_tostring
+      meth = method(:complex_tostring)
+
+      assert_has_insn meth, insn: :tostring
+
+      jit.compile(meth)
+      jit.enable!
+      v = meth.call
+      jit.disable!
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.exits
+      assert_equal "12345678", v
+    end
   end
 end
