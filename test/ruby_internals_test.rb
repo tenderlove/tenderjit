@@ -10,6 +10,13 @@ class TenderJIT
       @rb = Ruby::INSTANCE
     end
 
+    def test_RB_FIXNUM_P
+      assert rb.RB_FIXNUM_P(3)
+      assert rb.RB_FIXNUM_P(5)
+      assert rb.RB_FIXNUM_P(7)
+      assert rb.RB_FIXNUM_P(43)
+    end
+
     def test_RUBY_T_
       assert_equal 0,  rb.c("T_NONE")
       assert_equal 1,  rb.c("T_OBJECT")
