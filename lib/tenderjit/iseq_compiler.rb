@@ -1760,7 +1760,7 @@ class TenderJIT
       # Generate runtime checks if we need them
       2.times do |i|
         if ts.peek(i).type != T_FIXNUM
-          raise NotImplementedError
+          return handle_opt_send_without_block(call_data)
         end
       end
 
