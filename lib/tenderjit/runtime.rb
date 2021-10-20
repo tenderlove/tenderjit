@@ -43,9 +43,15 @@ class TenderJIT
       end
     end
 
-    # Converts the Ruby Numer stored in +val+ to an int
+    # Converts the Ruby Number stored in +val+ to an int
     def NUM2INT val
-      @fisk.shr(val, @fisk.lit(1))
+      @fisk.shr(cast_to_fisk(val), @fisk.lit(1))
+    end
+
+    # Converts an int to a Ruby Number
+    def INT2NUM val
+      @fisk.shl(cast_to_fisk(val), @fisk.lit(1))
+      @fisk.inc(cast_to_fisk(val))
     end
 
     def return_value
@@ -155,6 +161,29 @@ class TenderJIT
 
     def add reg, val
       @fisk.add reg.to_register, cast_to_fisk(val)
+    end
+
+    def mult val1, val2
+      raise NotImplementedError unless val1.memory?
+      raise NotImplementedError unless val2.memory?
+
+      # Put val in to RAX
+      # mult should end up in r9, but is in rax
+      @fisk.mov @fisk.rax, cast_to_fisk(val1)
+      temp_var do |temp_1|
+        @fisk.mov cast_to_fisk(temp_1), cast_to_fisk(val2)
+
+        self.NUM2INT(temp_1)
+        self.NUM2INT(@fisk.rax)
+
+        # val1 should be in the rax register
+        # and val2 should be in temp_1
+        # Mulitply reg by the value in RAX
+        @fisk.mul cast_to_fisk(temp_1)
+      end
+
+      self.INT2NUM(@fisk.rax)
+      @fisk.rax
     end
 
     def write_memory reg, offset, val
@@ -535,6 +564,10 @@ class TenderJIT
       # C's `++` operator
       def add num = 1
         @ec.add reg, size * num
+      end
+
+      def mult num
+        @ec.mult reg, num
       end
 
       def with_ref offset

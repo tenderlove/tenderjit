@@ -1752,6 +1752,27 @@ class TenderJIT
       __.put_label(:done)
     end
 
+    def handle_opt_mult call_data
+      ts = @temp_stack
+
+      exit_addr = exits.make_exit("opt_mult", current_pc, @temp_stack.size)
+
+      # Generate runtime checks if we need them
+      2.times do |i|
+        if ts.peek(i).type != T_FIXNUM
+          return handle_opt_send_without_block(call_data)
+        end
+      end
+
+      rhs_loc = ts.pop
+      lhs_loc = ts.pop
+
+      with_runtime do |rt|
+        val = rt.mult(rhs_loc, lhs_loc)
+        rt.push(val, name: T_FIXNUM)
+      end
+    end
+
     # Guard stack types. They need to be in "stack" order (backwards)
     def guard_two_fixnum
       ts = @temp_stack
@@ -1941,7 +1962,7 @@ class TenderJIT
             end
 
       with_runtime do |rt|
-        rt.push literal, name: object_name
+        rt.push literal, name: object_name, type: object_name
       end
     end
 
