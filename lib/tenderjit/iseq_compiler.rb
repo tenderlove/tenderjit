@@ -737,16 +737,18 @@ class TenderJIT
       __.mov(write_loc, __.rax)
     end
 
-    def compile_opt_aref stack, req, patch_loc
+    def compile_opt_aref cfp, req, patch_loc
+      stack = RbControlFrameStruct.sp(cfp)
+
       ci = req.call_info
       peek_recv = topn(stack, ci.vm_ci_argc).to_i
 
       if rb.RB_SPECIAL_CONST_P(peek_recv)
-        raise NotImplementedError, "no aref reads on non-heap objects"
+        return compile_send cfp, req, patch_loc
       end
 
       ## Compile the target method
-      klass = RBasic.new(peek_recv).klass # FIXME: this only works on heap allocated objects
+      klass = RBasic.new(peek_recv).klass
 
       entry_location = jit_buffer.address
 
@@ -848,7 +850,13 @@ class TenderJIT
       entry_location
     end
 
-    CompileOptAref = Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
+    class CompileOptAref < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
+      def has_block?; false; end
+
+      def make_exit exits, name = "opt_aref"
+        exits.make_exit(name, current_pc, temp_stack.size)
+      end
+    end
 
     def handle_opt_aref call_data
       cd = RbCallData.new call_data
@@ -872,7 +880,7 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.rb_funcall self, :compile_opt_aref, [cfp_ptr.sp, req, ctx.fisk.rax]
+          rt.rb_funcall self, :compile_opt_aref, [REG_CFP, req, ctx.fisk.rax]
 
           rt.NUM2INT(rt.return_value)
 

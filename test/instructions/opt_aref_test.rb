@@ -94,6 +94,26 @@ class TenderJIT
       jit.enable!
     end
 
+    def numeric_aref a, b
+      a[b]
+    end
+
+    def test_opt_aref_numeric
+      expected = numeric_aref(1, 0)
+
+      jit.compile method(:numeric_aref)
+
+      jit.enable!
+      numeric_aref(1, 0)
+      v = numeric_aref(1, 0)
+      jit.disable!
+
+      assert_equal expected, v
+      assert_equal 1, jit.compiled_methods
+      assert_equal 2, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
     private
 
     def add_mappings(peek)
