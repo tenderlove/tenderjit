@@ -737,16 +737,18 @@ class TenderJIT
       __.mov(write_loc, __.rax)
     end
 
-    def compile_opt_aref stack, req, patch_loc
+    def compile_opt_aref cfp, req, patch_loc
+      stack = RbControlFrameStruct.sp(cfp)
+
       ci = req.call_info
       peek_recv = topn(stack, ci.vm_ci_argc).to_i
 
       if rb.RB_SPECIAL_CONST_P(peek_recv)
-        raise NotImplementedError, "no aref reads on non-heap objects"
+        return compile_send cfp, req, patch_loc
       end
 
       ## Compile the target method
-      klass = RBasic.new(peek_recv).klass # FIXME: this only works on heap allocated objects
+      klass = RBasic.new(peek_recv).klass
 
       entry_location = jit_buffer.address
 
@@ -754,33 +756,36 @@ class TenderJIT
 
       jit_buffer.patch_jump at: patch_loc, to: entry_location
 
-      param = req.temp_stack.peek(0).loc # param
-      recv  = req.temp_stack.peek(1).loc # recv
+      param = req.temp_stack[0] # param
+      recv  = req.temp_stack[1] # recv
 
       with_runtime do |rt|
-        rt.set_c_param(0, recv)
-        rt.set_c_param(1, param)
-        _self = rt.pointer(rt.c_param(0), type: RObject)
+        rt.temp_var do |tmp|
+          tmp.write recv
+          _self = rt.pointer(tmp, type: RObject)
 
-        rt.if_eq(_self.basic.klass, klass) {
-          klass = Fiddle.dlunwrap(klass)
+          rt.if_eq(_self.basic.klass, klass) {
+            klass = Fiddle.dlunwrap(klass)
 
-          rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
+            rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
 
-          # We know it's an array at compile time
-          if klass == ::Array
-            rt.call_cfunc(rb.symbol_address("rb_ary_aref1"), [recv, param])
+            rt.push_reg REG_BP # Callee will pop this
 
-            # We know it's a hash at compile time
-          elsif klass == ::Hash
-            rt.call_cfunc(rb.symbol_address("rb_hash_aref"), [recv, param])
+            # We know it's an array at compile time
+            if klass == ::Array
+              rt.call_cfunc_without_alignment(rb.symbol_address("rb_ary_aref1"), [recv, param])
 
-          else
-            raise NotImplementedError
-          end
-        }.else {
-          rt.patchable_jump req.deferred_entry
-        }
+              # We know it's a hash at compile time
+            elsif klass == ::Hash
+              rt.call_cfunc_without_alignment(rb.symbol_address("rb_hash_aref"), [recv, param])
+
+            else
+              raise NotImplementedError
+            end
+          }.else {
+            rt.patchable_jump req.deferred_entry
+          }
+        end
 
         # patched a jmp and it is 5 bytes
         rt.jump jit_buffer.memory.to_i + patch_loc + 5
@@ -845,7 +850,13 @@ class TenderJIT
       entry_location
     end
 
-    CompileOptAref = Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
+    class CompileOptAref < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
+      def has_block?; false; end
+
+      def make_exit exits, name = "opt_aref"
+        exits.make_exit(name, current_pc, temp_stack.size)
+      end
+    end
 
     def handle_opt_aref call_data
       cd = RbCallData.new call_data
@@ -869,7 +880,7 @@ class TenderJIT
         ctx.with_runtime do |rt|
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-          rt.rb_funcall self, :compile_opt_aref, [cfp_ptr.sp, req, ctx.fisk.rax]
+          rt.rb_funcall self, :compile_opt_aref, [REG_CFP, req, ctx.fisk.rax]
 
           rt.NUM2INT(rt.return_value)
 
@@ -889,6 +900,7 @@ class TenderJIT
 
       # The call will return here, and its return value will be in RAX
       loc = @temp_stack.push(:unknown)
+      __.pop(REG_BP)
       __.mov(loc, __.rax)
     end
 
