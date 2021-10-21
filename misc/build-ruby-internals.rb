@@ -210,7 +210,7 @@ module Layout
     end
 
     def emit_node node, indent
-      if node.autoref?
+      if node.autoref? && node.ref_name
         "Fiddle::Layout::AutoRef.new(#{emit_type node.type, indent}, -> { STRUCTS[#{node.ref_name.dump}] })"
       else
         if node.bitfield?
@@ -326,7 +326,11 @@ module Layout
           pointer_type = find_type_die(type_die, all_dies)
           if pointer_type && (pointer_type.tag.structure_type? || pointer_type.tag.union_type?)
             ref_name = pointer_type.name(strs)
-            AutoRefMember.new(member_name, ref_name, child.data_member_location || 0, member_type)
+            if ref_name
+              AutoRefMember.new(member_name, ref_name, child.data_member_location || 0, member_type)
+            else
+              Member.new(member_name, child.data_member_location || 0, member_type)
+            end
           else
             Member.new(member_name, child.data_member_location || 0, member_type)
           end
