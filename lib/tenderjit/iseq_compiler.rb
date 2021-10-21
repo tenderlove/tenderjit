@@ -767,13 +767,15 @@ class TenderJIT
 
             rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
 
+            rt.push_reg REG_BP # Callee will pop this
+
             # We know it's an array at compile time
             if klass == ::Array
-              rt.call_cfunc(rb.symbol_address("rb_ary_aref1"), [recv, param])
+              rt.call_cfunc_without_alignment(rb.symbol_address("rb_ary_aref1"), [recv, param])
 
               # We know it's a hash at compile time
             elsif klass == ::Hash
-              rt.call_cfunc(rb.symbol_address("rb_hash_aref"), [recv, param])
+              rt.call_cfunc_without_alignment(rb.symbol_address("rb_hash_aref"), [recv, param])
 
             else
               raise NotImplementedError
@@ -890,6 +892,7 @@ class TenderJIT
 
       # The call will return here, and its return value will be in RAX
       loc = @temp_stack.push(:unknown)
+      __.pop(REG_BP)
       __.mov(loc, __.rax)
     end
 
