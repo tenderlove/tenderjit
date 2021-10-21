@@ -754,33 +754,34 @@ class TenderJIT
 
       jit_buffer.patch_jump at: patch_loc, to: entry_location
 
-      param = req.temp_stack.peek(0).loc # param
-      recv  = req.temp_stack.peek(1).loc # recv
+      param = req.temp_stack[0] # param
+      recv  = req.temp_stack[1] # recv
 
       with_runtime do |rt|
-        rt.set_c_param(0, recv)
-        rt.set_c_param(1, param)
-        _self = rt.pointer(rt.c_param(0), type: RObject)
+        rt.temp_var do |tmp|
+          tmp.write recv
+          _self = rt.pointer(tmp, type: RObject)
 
-        rt.if_eq(_self.basic.klass, klass) {
-          klass = Fiddle.dlunwrap(klass)
+          rt.if_eq(_self.basic.klass, klass) {
+            klass = Fiddle.dlunwrap(klass)
 
-          rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
+            rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
 
-          # We know it's an array at compile time
-          if klass == ::Array
-            rt.call_cfunc(rb.symbol_address("rb_ary_aref1"), [recv, param])
+            # We know it's an array at compile time
+            if klass == ::Array
+              rt.call_cfunc(rb.symbol_address("rb_ary_aref1"), [recv, param])
 
-            # We know it's a hash at compile time
-          elsif klass == ::Hash
-            rt.call_cfunc(rb.symbol_address("rb_hash_aref"), [recv, param])
+              # We know it's a hash at compile time
+            elsif klass == ::Hash
+              rt.call_cfunc(rb.symbol_address("rb_hash_aref"), [recv, param])
 
-          else
-            raise NotImplementedError
-          end
-        }.else {
-          rt.patchable_jump req.deferred_entry
-        }
+            else
+              raise NotImplementedError
+            end
+          }.else {
+            rt.patchable_jump req.deferred_entry
+          }
+        end
 
         # patched a jmp and it is 5 bytes
         rt.jump jit_buffer.memory.to_i + patch_loc + 5
