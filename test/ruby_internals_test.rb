@@ -166,7 +166,11 @@ class TenderJIT
 
     def test_constant_body_size
       rb_iseq_constant_body = rb.struct("rb_iseq_constant_body")
-      assert_equal 288, rb_iseq_constant_body.byte_size
+      if Object.const_defined?(:YJIT)
+        assert_equal 296, rb_iseq_constant_body.byte_size
+      else
+        assert_equal 288, rb_iseq_constant_body.byte_size
+      end
     end
 
     def omg2; end
@@ -205,7 +209,11 @@ class TenderJIT
       rb_iseq_constant_body = rb.struct("rb_iseq_constant_body")
       rb_execution_context_t = rb.struct("rb_execution_context_struct")
       rb_control_frame_struct = rb.struct("rb_control_frame_struct")
-      assert_equal 56, rb_control_frame_struct.byte_size
+      if Object.const_defined?(:YJIT)
+        assert_equal 64, rb_control_frame_struct.byte_size
+      else
+        assert_equal 56, rb_control_frame_struct.byte_size
+      end
 
       # Get the iseq pointer by extracting it from the Ruby object
       rb_iseq = RubyVM::InstructionSequence.of(method(:omg2))
