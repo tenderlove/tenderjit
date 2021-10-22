@@ -39,10 +39,6 @@ class TenderJIT
     end
 
     def test_opt_aset_hash
-      # This also requires any hash creation instruction to be implemented.
-      #
-      skip "Please implement opt_aset for hashes!"
-
       jit.compile method(:opt_aset_hash)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -62,8 +58,6 @@ class TenderJIT
     # project, so only exit/error-free execution is tested.
     #
     def test_opt_aset_array
-      skip "Please implement opt_aset for arrays!"
-
       jit.compile method(:opt_aset_array)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods

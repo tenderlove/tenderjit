@@ -45,7 +45,12 @@ class TenderJIT
 
     # Converts the Ruby Number stored in +val+ to an int
     def NUM2INT val
-      @fisk.shr(cast_to_fisk(val), @fisk.lit(1))
+      @fisk.sar(cast_to_fisk(val), @fisk.lit(1))
+    end
+
+    # Converts the Ruby Number stored in +val+ to an int
+    def FIX2LONG val
+      @fisk.sar(cast_to_fisk(val), @fisk.lit(1))
     end
 
     # Converts an int to a Ruby Number
