@@ -167,7 +167,7 @@ class TenderJIT
     def test_constant_body_size
       rb_iseq_constant_body = rb.struct("rb_iseq_constant_body")
       if Object.const_defined?(:YJIT)
-        assert_equal 296, rb_iseq_constant_body.byte_size
+        assert_equal 304, rb_iseq_constant_body.byte_size
       else
         assert_equal 288, rb_iseq_constant_body.byte_size
       end

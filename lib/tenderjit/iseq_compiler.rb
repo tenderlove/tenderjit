@@ -794,7 +794,9 @@ class TenderJIT
       entry_location
     end
 
-    def compile_opt_aset stack, req, patch_loc
+    def compile_opt_aset cfp, req, patch_loc
+      stack = RbControlFrameStruct.sp(cfp)
+
       ci = req.call_info
       peek_recv = topn(stack, ci.vm_ci_argc).to_i
 
@@ -828,17 +830,23 @@ class TenderJIT
 
           # We know it's an array at compile time
           if klass == ::Array
-            raise
-            rt.call_cfunc(rb.symbol_address("rb_ary_store"), [recv, param])
+            rt.temp_var do |x|
+              x.write param1
+              rt.FIX2LONG(x)
+              rt.call_cfunc(rb.symbol_address("rb_ary_store"), [recv, x, param2])
+            end
+            rt.return_value = param2
 
             # We know it's a hash at compile time
           elsif klass == ::Hash
             rt.call_cfunc(rb.symbol_address("rb_hash_aset"), [recv, param1, param2])
+            rt.return_value = param2
 
           else
             raise NotImplementedError
           end
         }.else {
+          rt.break
           rt.patchable_jump req.deferred_entry
         }
         temp.release!
@@ -2114,9 +2122,7 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
-
-          rt.rb_funcall self, :compile_opt_aset, [cfp_ptr.sp, req, rt.return_value]
+          rt.rb_funcall self, :compile_opt_aset, [REG_CFP, req, rt.return_value]
 
           rt.NUM2INT(rt.return_value)
 
