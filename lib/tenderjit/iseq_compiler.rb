@@ -1404,6 +1404,20 @@ class TenderJIT
       end
     end
 
+    # params:
+    # - `flag`: end exclusion; see `range.c#range_init()`.
+    def handle_newrange flag
+      rb_range_new = Fiddle::Handle::DEFAULT["rb_range_new"]
+
+      high = @temp_stack.pop
+      low = @temp_stack.pop
+
+      with_runtime do |rt|
+        rt.call_cfunc rb_range_new, [low, high, flag]
+        rt.push rt.return_value, name: :range
+      end
+    end
+
     def handle_duparray ary
       with_runtime do |rt|
         rt.call_cfunc rb.symbol_address("rb_ary_resurrect"), [Fisk::Imm64.new(ary)]
