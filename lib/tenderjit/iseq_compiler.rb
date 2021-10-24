@@ -1430,6 +1430,46 @@ class TenderJIT
       end
     end
 
+    # params:
+    # - `opt`: used to interpolate the string(s) - see `rb_reg_initialize_str()`
+    # - `cnt`: number of values; they're at least 2 - when only one expression is
+    #          interpolated (e.g. `/#{foo/`), an empty string is pushed first to
+    #          the stack.
+    def handle_toregexp opt, cnt
+      rb_ary_tmp_new_from_values = Fiddle::Handle::DEFAULT["rb_ary_tmp_new_from_values"]
+      rb_reg_new_ary = Fiddle::Handle::DEFAULT["rb_reg_new_ary"]
+      rb_ary_clear = Fiddle::Handle::DEFAULT["rb_ary_clear"]
+
+      with_runtime do |rt|
+        rt.with_ref(@temp_stack.peek(cnt - 1).loc) do |stack_addr_from_top|
+          # This instruction can raise RegexpError, so we need the CFP to have
+          # up-to-date PC/SP
+          if @temp_stack.size == 0
+            rt.flush_pc_and_sp next_pc, REG_BP
+          else
+            rt.flush_pc_and_sp next_pc, @temp_stack.peek(0).loc
+          end
+
+          result = @temp_stack.push :regexp
+
+          rt.temp_var do |ary|
+            rt.call_cfunc rb_ary_tmp_new_from_values, [0, cnt, stack_addr_from_top]
+            ary.write rt.return_value
+
+            # Store and use for alignment.
+            rt.push_reg ary
+
+            rt.call_cfunc_without_alignment rb_reg_new_ary, [ary, opt]
+            rt.write result, rt.return_value
+
+            rt.pop_reg ary
+
+            rt.call_cfunc rb_ary_clear, [ary]
+          end
+        end
+      end
+    end
+
     class BranchUnless < Struct.new(:jump_idx, :jump_type, :temp_stack)
     end
 
