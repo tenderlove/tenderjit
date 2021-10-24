@@ -2127,11 +2127,15 @@ class TenderJIT
 
     def vm_splat_array read_loc, store_loc, flag
       with_runtime do |rt|
-        rt.call_cfunc rb.symbol_address("rb_check_to_array"), [read_loc]
+        rb_check_to_array = rb.symbol_address("rb_check_to_array")
+        rb_ary_new_from_args = rb.symbol_address("rb_ary_new_from_args")
+        rb_ary_dup = rb.symbol_address("rb_ary_dup")
+
+        rt.call_cfunc rb_check_to_array, [read_loc]
 
         # If it returned nil, make a new array
         rt.if_eq(rt.return_value, Fisk::Imm64.new(Qnil)) {
-          rt.call_cfunc rb.symbol_address("rb_ary_new_from_args"), [1, rt.return_value]
+          rt.call_cfunc rb_ary_new_from_args, [1, rt.return_value]
         }.else {
           rt.temp_var do |truthy_flag|
             # RTEST (truthy test): (value & !Qnil)
@@ -2141,7 +2145,7 @@ class TenderJIT
             rt.if(truthy_flag.to_register) {
               # The input value is still in RAX, since the logical operations are
               # performend on other registers.
-              rt.call_cfunc rb.symbol_address("rb_ary_dup"), [rt.return_value]
+              rt.call_cfunc rb_ary_dup, [rt.return_value]
             }.else {}
           end
         }
