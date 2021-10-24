@@ -21,14 +21,12 @@ class TenderJIT
     end
 
     def test_splatarray
-      skip "Please implement splatarray!"
-
       jit.compile(method(:splat_empty_array))
       jit.enable!
       v = splat_empty_array
       jit.disable!
 
-      assert_equal 2, jit.compiled_methods
+      assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.exits
       assert_equal [], v
     end
