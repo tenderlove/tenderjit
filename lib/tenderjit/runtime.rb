@@ -172,6 +172,10 @@ class TenderJIT
       @fisk.add reg.to_register, cast_to_fisk(val)
     end
 
+    def inc reg
+      @fisk.inc reg
+    end
+
     def mult val1, val2
       raise NotImplementedError unless val1.memory?
       raise NotImplementedError unless val2.memory?
