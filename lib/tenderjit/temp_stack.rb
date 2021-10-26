@@ -25,13 +25,16 @@ class TenderJIT
     # Returns the info stored for stack location +idx+.  0 is the TOP of the
     # stack, or the last thing pushed.
     def peek idx
-      @stack.fetch(@stack.length - idx - 1)
+      idx = @stack.length - idx - 1
+      raise IndexError if idx < 0
+      @stack.fetch(idx)
     end
 
     # Returns the stack location +idx+.  0 is the TOP of the stack, or the last
     # thing that was pushed.
     def [] idx
       idx = @stack.length - idx - 1
+      raise IndexError if idx < 0
       @stack.fetch(idx) {
         return Fisk::M64.new(REG_BP, idx * @sizeof_sp)
       }.loc
