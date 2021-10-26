@@ -1847,6 +1847,24 @@ class TenderJIT
       end
     end
 
+    def handle_opt_div call_data
+      exit_addr = exits.make_exit "opt_div", current_pc, @temp_stack.size
+
+      2.times do |i|
+        if @temp_stack.peek(i).type != T_FIXNUM
+          return handle_opt_send_without_block call_data
+        end
+      end
+
+      divisor = @temp_stack.pop
+      dividend = @temp_stack.pop
+
+      with_runtime do |rt|
+        rt.div dividend, divisor
+        rt.push rt.return_value, name: T_FIXNUM
+      end
+    end
+
     # Guard stack types. They need to be in "stack" order (backwards)
     def guard_two_fixnum
       ts = @temp_stack
