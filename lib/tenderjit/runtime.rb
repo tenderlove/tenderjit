@@ -191,6 +191,32 @@ class TenderJIT
       @fisk.rax
     end
 
+    # Performs a 64-bit division.
+    # The reminder is in RDX, but in this context, it's irrelevant.
+    #
+    # Reference: https://www.cs.uaf.edu/2006/fall/cs301/support/x86_64.
+    #
+    def div dividend_val, divisor_val
+      raise NotImplementedError unless dividend_val.memory?
+      raise NotImplementedError unless divisor_val.memory?
+
+      @fisk.mov @fisk.rdx, cast_to_fisk(0)            # x64 quirk; see reference
+      @fisk.mov @fisk.rax, cast_to_fisk(dividend_val)
+
+      temp_var do |divisor|
+        @fisk.mov cast_to_fisk(divisor), cast_to_fisk(divisor_val)
+
+        self.NUM2INT(@fisk.rax)
+        self.NUM2INT(divisor)
+
+        @fisk.div cast_to_fisk(divisor)
+      end
+
+      self.INT2NUM(@fisk.rax)
+
+      @fisk.rax
+    end
+
     def write_memory reg, offset, val
       @fisk.with_register do |tmp|
         @fisk.mov(tmp, val)
