@@ -150,10 +150,14 @@ class TenderJIT
       @fisk = Fisk.new
     end
 
+    # Writes to the buffer, and freezes the instance.
+    # Returns the buffer, for convenience.
+    #
     def write!
       @fisk.assign_registers(TenderJIT::ISEQCompiler::SCRATCH_REGISTERS, local: true)
       @fisk.write_to(@jit_buffer)
       @fisk.freeze
+      @jit_buffer
     end
 
     def pointer reg, type: Fiddle::TYPE_VOIDP, offset: 0
@@ -166,6 +170,10 @@ class TenderJIT
 
     def add reg, val
       @fisk.add reg.to_register, cast_to_fisk(val)
+    end
+
+    def inc reg
+      @fisk.inc reg
     end
 
     def mult val1, val2

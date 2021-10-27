@@ -1938,6 +1938,32 @@ class TenderJIT
       compare_fixnum { |reg0, reg1| __.cmovle(reg0, reg1) }
     end
 
+    def handle_opt_succ call_data
+      value = @temp_stack.peek(0).loc
+
+      _exit_addr = exits.make_exit("opt_succ", current_pc, @temp_stack.size)
+
+      if value.type != T_FIXNUM
+        return handle_opt_send_without_block(call_data)
+      end
+
+      with_runtime do |rt|
+        # Note that it's possible also to operate directly on the memory, without
+        # moving to a register (which is also simpler), although, in principle,
+        # it's slower.
+        #
+        rt.temp_var do |value_reg|
+          value_reg.write value
+
+          rt.NUM2INT value_reg
+          rt.inc value_reg.to_register
+          rt.INT2NUM value_reg
+
+          rt.write value, value_reg
+        end
+      end
+    end
+
     def handle_putobject_INT2FIX_1_
       with_runtime do |rt|
         rt.push Fisk::Imm64.new(0x3), name: T_FIXNUM

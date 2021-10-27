@@ -10,10 +10,10 @@ class TenderJIT
       super
 
       fisk = Fisk.new
-      jit_buffer = Fisk::Helpers::JITBuffer.new(Fisk::Helpers.mmap_jit(4096), 4096)
+      buffer = StringIO.new
       temp_stack = TempStack.new
 
-      @rt = Runtime::new(fisk, jit_buffer, temp_stack)
+      @rt = Runtime::new(fisk, buffer, temp_stack)
     end
 
     # Smoke test.
@@ -39,6 +39,13 @@ class TenderJIT
     #
     def test_if_eq_imm_not_imm
       skip "Optimize the if_eq invocations"
+    end
+
+    def test_inc
+      @rt.inc Fisk::Registers::RAX
+      buffer = @rt.write!
+
+      assert_equal buffer.string, "H\xFF\xC0"
     end
   end # class RuntimeTest
 end
