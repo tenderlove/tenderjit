@@ -886,8 +886,6 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
-
           rt.rb_funcall self, :compile_opt_aref, [REG_CFP, req, ctx.fisk.rax]
 
           rt.NUM2INT(rt.return_value)
@@ -1829,7 +1827,7 @@ class TenderJIT
     def handle_opt_mult call_data
       ts = @temp_stack
 
-      exit_addr = exits.make_exit("opt_mult", current_pc, @temp_stack.size)
+      _exit_addr = exits.make_exit("opt_mult", current_pc, @temp_stack.size)
 
       # Generate runtime checks if we need them
       2.times do |i|
@@ -1848,7 +1846,7 @@ class TenderJIT
     end
 
     def handle_opt_div call_data
-      exit_addr = exits.make_exit "opt_div", current_pc, @temp_stack.size
+      _exit_addr = exits.make_exit "opt_div", current_pc, @temp_stack.size
 
       2.times do |i|
         if @temp_stack.peek(i).type != T_FIXNUM
