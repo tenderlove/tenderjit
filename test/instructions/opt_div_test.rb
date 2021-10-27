@@ -27,7 +27,7 @@ class TenderJIT
       assert_equal 32, result
     end
 
-    def test_divide_fixnums
+    def test_divide_non_fixnums
       meth = method(:divide_non_fixnums)
 
       assert_has_insn meth, insn: :opt_div

@@ -5,6 +5,7 @@ require "tenderjit"
 require "rbconfig"
 require "fisk"
 require "fisk/helpers"
+require "make_warnings_errors"
 
 class TenderJIT
   class Test < Minitest::Test
