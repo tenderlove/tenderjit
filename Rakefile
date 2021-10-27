@@ -8,6 +8,10 @@ TEST_SUITE_DEFAULT_PREFIX='*'
 DEBUG_LIBRARIES = %w[fiddle fisk worf odinflex]
 
 test_files = RubyVM::INSTRUCTION_NAMES.grep_v(/^trace_/).each_with_object([]) do |name, files|
+  # Since this instruction has been removed in 3.1, ignore it entirely.
+  # This can be removed once/if the support for versions <= 3.0 is discontinued.
+  next if name == 'reverse'
+
   test_file = "test/instructions/#{name}_test.rb"
   file test_file do |t|
     File.open(test_file, "w") do |f|
