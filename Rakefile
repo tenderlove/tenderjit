@@ -5,6 +5,7 @@ require "rake/clean"
 require_relative "lib/tenderjit/ruby_interpreter_metadata_helper"
 
 TEST_SUITE_DEFAULT_PREFIX='*'
+DEBUG_LIBRARIES = %w[fiddle fisk worf odinflex]
 
 test_files = RubyVM::INSTRUCTION_NAMES.grep_v(/^trace_/).map do |name|
   test_file = "test/instructions/#{name}_test.rb"
@@ -71,6 +72,51 @@ task :test, [:test_suite_prefix, :test_bare_name] => test_files + [:compile] do 
 
     t.verbose = true
     t.warning = true
+  end
+end
+
+# Launch an LLDB debug session.
+#
+# Don't forget to put an `rt.break`!
+#
+# - :test_suite_file: test suite file (mandatory)
+#   if no `/` is in the param, then the file is searched as "test/**/#{test_suite_prefix}_test.rb";
+#   in this case, only one file must be found.
+#
+task :debug, [:test_suite_file] => test_files + [:compile] do |_, args|
+  test_suite_file =
+    case args.test_suite_file
+    when %r{/}
+      args.test_suite_file
+    else
+      files = FileList["test/**/#{args.test_suite_file}_test.rb"]
+      raise "Only one file must be found (found: #{files}" if files.size != 1
+      files.first
+    end
+
+  library_dirs = %w[lib test] + DEBUG_LIBRARIES.map do |lib|
+    "#{Gem::Specification.find_by_name(lib).gem_dir}/lib"
+  end
+
+  # WATCH OUT!!! lldb must be run outside a Bundler context, otherwise will be issues
+  # with Bundler; in this case, the following errors will be printed (extract):
+  #
+  #   Process 314869 stopped and restarted: thread 1 received signal: SIGCHLD
+  #   Exception `Bundler::GitError' at /path/to/bundler-2.2.30/lib/bundler/source/git/git_proxy.rb:221 - The git source https://github.com/tenderlove/fisk.git is not yet checked out. Please run `bundle install` before trying to start your application
+  #   Exception `Bundler::GitError' at /path/to/bundler-2.2.30/lib/bundler/source/git/git_proxy.rb:221 - The git source https://github.com/tenderlove/worf.git is not yet checked out. Please run `bundle install` before trying to start your application
+  #   (similar errors)
+  #
+  # lldb options:
+  # -o: run given command on start
+  #
+  # Ruby options:
+  # -d: debug
+  # -v: verbose mode
+  # -I: load paths
+  #
+  Bundler.with_unbundled_env do
+    command = "lldb -o run ruby -- -d -v -I #{library_dirs.join(":")} #{test_suite_file}"
+    system command
   end
 end
 
