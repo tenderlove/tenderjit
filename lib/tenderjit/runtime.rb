@@ -200,7 +200,7 @@ class TenderJIT
     end
 
     # Performs a 64-bit division.
-    # The reminder is in RDX, but in this context, it's irrelevant.
+    # Returns [RAX (result), RDX (remainder)].
     #
     # Reference: https://www.cs.uaf.edu/2006/fall/cs301/support/x86_64.
     #
@@ -220,9 +220,13 @@ class TenderJIT
         @fisk.div cast_to_fisk(divisor)
       end
 
+      # Even more optimized™ versions would separate the instructions to avoid
+      # conversions, but it's [currently] not worth.
+      #
       self.INT2NUM(@fisk.rax)
+      self.INT2NUM(@fisk.rdx)
 
-      @fisk.rax
+      [@fisk.rax, @fisk.rdx]
     end
 
     def write_memory reg, offset, val
