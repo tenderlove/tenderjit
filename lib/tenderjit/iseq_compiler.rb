@@ -1846,6 +1846,29 @@ class TenderJIT
     end
 
     def handle_opt_div call_data
+      perform_division(call_data) do |rt|
+        rt.push Fisk::Registers::RAX, name: T_FIXNUM
+      end
+    end
+
+    def handle_opt_mod call_data
+      perform_division(call_data) do |rt|
+        rt.push Fisk::Registers::RDX, name: T_FIXNUM
+      end
+    end
+
+    # Perform a division.
+    #
+    # Yields the runtime, with:
+    # - result in RAX
+    # - remainder in RDX
+    # - temp stack popped
+    #
+    # Exits if the two values are not FIXNUMs.
+    #
+    # Used by `opt_div` and `opt_mod`.
+    #
+    def perform_division(call_data, &block)
       _exit_addr = exits.make_exit "opt_div", current_pc, @temp_stack.size
 
       2.times do |i|
@@ -1859,9 +1882,10 @@ class TenderJIT
 
       with_runtime do |rt|
         rt.div dividend, divisor
-        rt.push rt.return_value, name: T_FIXNUM
+        yield rt
       end
     end
+    private :perform_division
 
     # Guard stack types. They need to be in "stack" order (backwards)
     def guard_two_fixnum
