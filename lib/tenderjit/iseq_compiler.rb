@@ -1851,6 +1851,12 @@ class TenderJIT
       end
     end
 
+    def handle_opt_mod call_data
+      perform_division(call_data) do |rt|
+        rt.push Fisk::Registers::RDX, name: T_FIXNUM
+      end
+    end
+
     # Perform a division.
     #
     # Yields the runtime, with:
