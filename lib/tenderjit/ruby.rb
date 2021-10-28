@@ -132,6 +132,47 @@ class TenderJIT
       ep
     end
 
+    # https://github.com/ruby/ruby/blob/1038c4864f6f2e88d78e3dfd6b6fb94d7173aaa2/vm_core.h#L1263
+    def VM_ENV_FLAGS ep, flag
+      flags = Fiddle.read_ptr(ep, VM_ENV_DATA_INDEX_FLAGS * Fiddle::SIZEOF_VOIDP)
+      flags & flag != 0
+    end
+
+    IMEMO_MASK = 0x0f # internal/imemo.h
+
+    def imemo_type imemo
+      (RBasic.flags(imemo) >> RUBY_FL_USHIFT) & IMEMO_MASK
+    end
+
+    # https://github.com/ruby/ruby/blob/844588f9157b364244a7d34ee0fcc70ccc2a7dd9/vm_insnhelper.c#L707
+    def check_cref cref
+      return if cref == Qfalse
+      raise "cref should be IMEMO!" unless RB_BUILTIN_TYPE(cref) == T_IMEMO
+
+      case imemo_type(cref)
+      when c("imemo_ment")
+        RbCallableMethodEntryT.new(cref).def.body.iseq.cref
+      when c("imemo_cref")
+        raise NotImplementedError
+      when c("imemo_svar")
+        raise NotImplementedError
+      else
+        raise "Unknown imemo type for cref"
+      end
+    end
+
+    def vm_env_cref ep
+      while !VM_ENV_LOCAL_P(ep)
+        raise
+      end
+      check_cref Fiddle.read_ptr(ep, VM_ENV_DATA_INDEX_ME_CREF * Fiddle::SIZEOF_VOIDP)
+    end
+
+    def vm_get_ep ep, lv
+      lv.times { ep = GET_PREV_EP(ep) }
+      ep
+    end
+
     def VM_ENV_BLOCK_HANDLER ep
       Fiddle.read_ptr(ep, VM_ENV_DATA_INDEX_SPECVAL * Fiddle::SIZEOF_VOIDP)
     end
@@ -149,12 +190,26 @@ class TenderJIT
     end
     alias :fixnum? :RB_FIXNUM_P
 
+    def NIL_P obj_addr
+      obj_addr == Qnil
+    end
+
+    def RB_SYMBOL_P obj_addr
+      RB_STATIC_SYM_P(obj_addr) || RB_DYNAMIC_SYM_P(obj_addr)
+    end
+
     UINTPTR_MAX = 0xFFFFFFFFFFFFFFFF # on macos anyway
     RBIMPL_VALUE_FULL = UINTPTR_MAX
 
     def RB_STATIC_SYM_P obj_addr
       mask = ~(RBIMPL_VALUE_FULL << RUBY_SPECIAL_SHIFT)
       (obj_addr & mask) == RUBY_SYMBOL_FLAG
+    end
+
+    def RB_DYNAMIC_SYM_P obj_addr
+      return false if RB_SPECIAL_CONST_P(obj_addr)
+
+      RB_BUILTIN_TYPE(obj_addr) == T_SYMBOL
     end
 
     def RB_FLONUM_P obj_addr

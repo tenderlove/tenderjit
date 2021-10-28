@@ -312,6 +312,28 @@ class TenderJIT
       self
     end
 
+    # Test if a flag has been set on the ep.
+    def VM_ENV_FLAG_SET_P ep_loc, flag
+      ->(fisk) {
+        temp_var { |tv|
+          ep = pointer(ep_loc)
+          tv.write ep[VM_ENV_DATA_INDEX_FLAGS]
+          tv.and(flag)
+          fisk.test(tv.to_register, tv.to_register)
+        }
+      }
+    end
+
+    # Set the flag +flag+ on the ep
+    def VM_ENV_FLAGS_SET ep_loc, flag
+      temp_var { |tv|
+        ep = pointer(ep_loc)
+        tv.write ep[VM_ENV_DATA_INDEX_FLAGS]
+        tv.or(flag)
+        ep[VM_ENV_DATA_INDEX_FLAGS] = tv.to_register
+      }
+    end
+
     def RB_FIXNUM_P obj
       ->(fisk) { fisk.test(obj, fisk.uimm(RUBY_FIXNUM_FLAG)) }
     end
@@ -454,6 +476,15 @@ class TenderJIT
         write loc, val
       else
         write loc, val.to_register
+      end
+    end
+
+    def vm_get_ep ep_loc, level
+      reg = ep_loc.to_register
+
+      level.times do
+        @fisk.mov(reg, @fisk.m64(reg, VM_ENV_DATA_INDEX_SPECVAL * Fiddle::SIZEOF_VOIDP))
+        @fisk.and(reg, @fisk.imm(~0x03))
       end
     end
 
