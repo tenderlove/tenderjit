@@ -15,12 +15,20 @@ class TempStackTest < TenderJIT::Test
     assert_raises IndexError do
       stack[1]
     end
+
+    assert_raises IndexError do
+      stack[-1]
+    end
   end
 
   def test_negative_index_raise_index_error_with_peek
     stack = TenderJIT::TempStack.new
     assert_raises IndexError do
       stack.peek(1)
+    end
+
+    assert_raises IndexError do
+      stack.peek(-1)
     end
   end
 
