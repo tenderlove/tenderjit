@@ -10,6 +10,11 @@ class TenderJIT
       @rb = Ruby::INSTANCE
     end
 
+    def test_RB_SYMBOL_P
+      assert rb.RB_SYMBOL_P(Fiddle.dlwrap(:foo))
+      assert rb.RB_SYMBOL_P(Fiddle.dlwrap(:"foo#{1234}"))
+    end
+
     def test_RB_FIXNUM_P
       assert rb.RB_FIXNUM_P(3)
       assert rb.RB_FIXNUM_P(5)

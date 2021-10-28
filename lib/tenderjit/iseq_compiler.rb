@@ -2097,6 +2097,8 @@ class TenderJIT
               true
             elsif literal == Qfalse
               false
+            elsif rb.RB_SYMBOL_P(literal)
+              T_SYMBOL
             else
               :unknown
             end
@@ -2295,6 +2297,41 @@ class TenderJIT
 
     def handle_adjuststack n
       n.times { @temp_stack.pop }
+    end
+
+    def handle_getblockparam idx, level
+      exit_addr = exits.make_exit("getblockparam", current_pc, @temp_stack.size)
+      push_loc = @temp_stack.push("proc", type: T_DATA)
+
+      with_runtime do |rt|
+        cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+        rt.temp_var do |ep|
+          ep.write cfp_ptr.ep
+          rt.vm_get_ep(ep, level)
+
+          rt.if(rt.VM_ENV_FLAG_SET_P(ep, VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM)) {
+            # It's already been modified, so use the modified value
+            ep_ptr = rt.pointer(ep)
+            rt.write push_loc, ep_ptr[-idx]
+          }.else {
+            rt.if(rt.VM_ENV_FLAG_SET_P(ep, VM_ENV_FLAG_WB_REQUIRED)) {
+              # We need to execute a write barrier, so lets exit back to
+              # the interpreter
+              rt.jump exit_addr
+            }.else {
+              # Convert the block handler to a proc
+              ep_ptr = rt.pointer(ep)
+              func_addr = rb.symbol_address("rb_vm_bh_to_procval")
+              rt.call_cfunc func_addr, [REG_EC, ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]]
+
+              # Set the block handler in EP
+              ep_ptr[-idx] = rt.return_value
+              rt.write push_loc, rt.return_value
+              rt.VM_ENV_FLAGS_SET(ep, VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM)
+            }
+          }
+        end
+      end
     end
 
     # Call a C function at `func_loc` with `params`. Return value will be in RAX
