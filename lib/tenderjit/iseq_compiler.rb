@@ -2234,6 +2234,18 @@ class TenderJIT
       end
     end
 
+    def handle_swap
+      with_runtime do |rt|
+        temp = rt.temp_var
+        temp.write @temp_stack[0]
+
+        rt.write @temp_stack[0], @temp_stack[1]
+        rt.write @temp_stack[1], temp
+
+        temp.release!
+      end
+    end
+
     def handle_opt_aset call_data
       cd = RbCallData.new call_data
       ci = RbCallInfo.new cd.ci
