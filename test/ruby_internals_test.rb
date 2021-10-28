@@ -166,7 +166,7 @@ class TenderJIT
 
     def test_constant_body_size
       rb_iseq_constant_body = rb.struct("rb_iseq_constant_body")
-      if Object.const_defined?(:YJIT)
+      if RubyVM.const_defined?(:YJIT)
         assert_equal 304, rb_iseq_constant_body.byte_size
       else
         assert_equal 288, rb_iseq_constant_body.byte_size
@@ -209,7 +209,7 @@ class TenderJIT
       rb_iseq_constant_body = rb.struct("rb_iseq_constant_body")
       rb_execution_context_t = rb.struct("rb_execution_context_struct")
       rb_control_frame_struct = rb.struct("rb_control_frame_struct")
-      if Object.const_defined?(:YJIT)
+      if RubyVM.const_defined?(:YJIT)
         assert_equal 64, rb_control_frame_struct.byte_size
       else
         assert_equal 56, rb_control_frame_struct.byte_size
