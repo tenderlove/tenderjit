@@ -2097,6 +2097,8 @@ class TenderJIT
               true
             elsif literal == Qfalse
               false
+            elsif rb.RB_SYMBOL_P(literal)
+              T_SYMBOL
             else
               :unknown
             end

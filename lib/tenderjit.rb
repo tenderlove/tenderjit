@@ -115,7 +115,9 @@ class TenderJIT
   T_ARRAY  = Internals.c "T_ARRAY"
   T_NIL    = Internals.c "T_NIL"
   T_CLASS  = Internals.c "T_CLASS"
-  T_OBJECT  = Internals.c "T_OBJECT"
+  T_OBJECT = Internals.c "T_OBJECT"
+  T_SYMBOL = Internals.c "T_SYMBOL"
+  T_DATA   = Internals.c "T_DATA"
   ROBJECT_EMBED = Internals.c("ROBJECT_EMBED")
 
   Internals.constants.each do |x|
