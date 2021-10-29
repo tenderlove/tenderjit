@@ -24,8 +24,7 @@ class TenderJIT
       jit.disable!
 
       assert_equal 2, jit.compiled_methods
-      assert_equal 2, jit.exits
-      refute_includes jit.exit_stats.find_all { |x,y| y > 0 }.map(&:first), :getblockparam
+      assert_equal 0, jit.exits
       assert_equal expected, actual
     end
   end

@@ -522,6 +522,8 @@ class TenderJIT
           @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
         when TemporaryVariable
           @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param.to_register)
+        when Proc
+          param.call Fisk::Registers::CALLER_SAVED[i]
         else
           raise NotImplementedError
         end

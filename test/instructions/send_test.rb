@@ -105,5 +105,27 @@ class TenderJIT
       assert_equal 0, jit.exits
       assert_equal expected, actual
     end
+    def block_takes_iseq_block &blk
+      m = nil
+      [1, 1].each do
+        m = blk.call(2) { "neat" }
+      end
+      m
+    end
+
+    def test_block_takes_block
+      expected = block_takes_iseq_block { |_, &blk| blk.call }
+
+      jit.compile(method(:block_takes_iseq_block))
+
+      jit.enable!
+      actual = block_takes_iseq_block { |_, &blk| blk.call }
+      jit.disable!
+
+      assert_equal 2, jit.compiled_methods
+      assert_equal 0, jit.exits
+      assert_equal expected, actual
+    end
+
   end
 end

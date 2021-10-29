@@ -1134,6 +1134,56 @@ class TenderJIT
       end
     end
 
+    def compile_call_optimized iseq, req, argc, iseq_ptr, recv, cme, return_loc
+      case RbMethodDefinitionStruct.new(cme.def).body.optimize_type
+      when rb.c("OPTIMIZED_METHOD_TYPE_SEND")
+        req.make_exit(exits, "unknown_method_type")
+      when rb.c("OPTIMIZED_METHOD_TYPE_CALL")
+        # https://github.com/ruby/ruby/blob/cbf2078a25c3efb12f45b643a636ff7bb4d402b6/vm_eval.c#L270
+        with_runtime do |rt|
+          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+          func_addr = Fiddle::Handle::DEFAULT["rb_vm_invoke_proc"]
+          recv_loc = req.temp_stack.peek(argc).loc
+
+          if req.has_block?
+            cfp_ptr.block_code = req.blockiseq
+          end
+
+          rt.push_reg REG_BP # Caller expects to pop REG_BP
+          rt.temp_var do |tv|
+            tv.write recv_loc
+
+            rt.temp_var do |argv|
+              argv.write_address_of req.temp_stack[argc - 1]
+
+              # Unwrap the proc object
+              data_ptr = rt.pointer(tv, type: RData)
+
+              rt.call_cfunc_without_alignment func_addr, [
+                REG_EC,
+                data_ptr.data,
+                argc,
+                argv,
+                Fisk::Imm64.new(0),
+                ->(dst) {
+                  if req.has_block?
+                    rt.load_address_in(dst, cfp_ptr.self)
+                    rt.or dst, 0x01
+                  else
+                    rt.write(dst, Fisk::Imm64.new(0))
+                  end
+                }
+              ]
+            end
+          end
+          rt.jump jit_buffer.memory.to_i + return_loc
+        end
+      else
+        raise NotImplementedError, "not supported optimized type"
+      end
+    end
+
     def compile_call_bmethod iseq, compile_request, argc, iseq_ptr, recv, cme, return_loc
       opt_pc     = 0 # we don't handle optional parameters rn
       proc_obj = RbMethodDefinitionStruct.new(cme.def).body.bmethod.proc
@@ -1328,6 +1378,8 @@ class TenderJIT
         compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, return_loc
       when VM_METHOD_TYPE_BMETHOD
         compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, return_loc
+      when VM_METHOD_TYPE_OPTIMIZED
+        compile_call_optimized iseq, req, argc, iseq_ptr, recv, cme, return_loc
       else
         side_exit = req.make_exit(exits, "unknown_method_type")
         patch_source_jump jit_buffer, at: patch_loc, to: side_exit
@@ -2331,7 +2383,12 @@ class TenderJIT
               # Convert the block handler to a proc
               ep_ptr = rt.pointer(ep)
               func_addr = rb.symbol_address("rb_vm_bh_to_procval")
-              rt.call_cfunc func_addr, [REG_EC, ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]]
+
+              # Push EP because calling the cfunc will clobber our register.
+              # FIXME: See #83
+              rt.push_reg ep
+              rt.call_cfunc_without_alignment func_addr, [REG_EC, ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]]
+              rt.pop_reg ep
 
               # Set the block handler in EP
               ep_ptr[-idx] = rt.return_value
