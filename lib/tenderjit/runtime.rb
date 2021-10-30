@@ -327,6 +327,34 @@ class TenderJIT
       self
     end
 
+    UINTPTR_MAX = 0xFFFFFFFFFFFFFFFF # on macos anyway
+    RBIMPL_VALUE_FULL = UINTPTR_MAX
+
+    class Conditional # :nodoc:
+      def initialize lhs, jmp
+        @lhs = lhs
+        @jmp = jmp
+      end
+
+      def call fisk; @lhs.call(fisk); end
+      def jump fisk, label; @jmp.call(fisk, label); end
+    end
+
+    def RB_STATIC_SYM_P sym_loc
+      mask = 0xFF
+      lhs = ->(fisk) {
+        temp_var { |tv|
+          tv.write sym_loc
+          tv.and mask
+          fisk.xor tv.to_register, fisk.imm(RUBY_SYMBOL_FLAG)
+        }
+      }
+
+      jmp = ->(fisk, label) { fisk.jnz(label) }
+
+      Conditional.new(lhs, jmp)
+    end
+
     # Test if a flag has been set on the ep.
     def VM_ENV_FLAG_SET_P ep_loc, flag
       ->(fisk) {
@@ -374,7 +402,11 @@ class TenderJIT
         else
           @fisk.test lhs, lhs
         end
-        @fisk.jz else_label # else label
+        if lhs.respond_to?(:jump)
+          lhs.jump @fisk, else_label # else label
+        else
+          @fisk.jz else_label # else label
+        end
       end
       yield if block_given?
       @fisk.jmp finish_label # finish label
@@ -407,6 +439,13 @@ class TenderJIT
       else_label = pop_label
       @fisk.put_label else_label
       yield
+      @fisk.put_label finish_label
+    end
+
+    def endif
+      finish_label = pop_label
+      else_label = pop_label
+      @fisk.put_label else_label
       @fisk.put_label finish_label
     end
 

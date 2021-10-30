@@ -1137,7 +1137,9 @@ class TenderJIT
     def compile_call_optimized iseq, req, argc, iseq_ptr, recv, cme, return_loc
       case RbMethodDefinitionStruct.new(cme.def).body.optimize_type
       when rb.c("OPTIMIZED_METHOD_TYPE_SEND")
-        req.make_exit(exits, "unknown_method_type")
+        with_runtime do |rt|
+          rt.jump req.make_exit(exits, "unknown_method_type")
+        end
       when rb.c("OPTIMIZED_METHOD_TYPE_CALL")
         # https://github.com/ruby/ruby/blob/cbf2078a25c3efb12f45b643a636ff7bb4d402b6/vm_eval.c#L270
         with_runtime do |rt|
@@ -1179,7 +1181,12 @@ class TenderJIT
           end
           rt.jump jit_buffer.memory.to_i + return_loc
         end
+      when rb.c("OPTIMIZED_METHOD_TYPE_BLOCK_CALL")
+        with_runtime do |rt|
+          rt.jump req.make_exit(exits, "unknown_method_type")
+        end
       else
+        puts RbMethodDefinitionStruct.new(cme.def).body.optimize_type
         raise NotImplementedError, "not supported optimized type"
       end
     end
@@ -2358,6 +2365,119 @@ class TenderJIT
 
     def handle_adjuststack n
       n.times { @temp_stack.pop }
+    end
+
+    class GetBlockParamProxy < Struct.new(:idx, :level, :temp_stack, :deferred_entry, :exit_addr)
+    end
+
+    def compile_getblockparamproxy cfp, req, loc
+      peek_ep = RbControlFrameStruct.ep(cfp)
+
+      patch_loc  = loc - jit_buffer.memory.to_i
+      return_loc = patch_loc + JMP_BYTES
+      entry_loc  = jit_buffer.address
+
+      peek_ep = rb.vm_get_ep peek_ep, req.level
+      raise "EP is wrong!" unless rb.VM_ENV_LOCAL_P(peek_ep)
+      if !rb.VM_ENV_FLAGS(peek_ep, VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM)
+        push_loc = req.temp_stack.dup.push("proc", type: T_DATA)
+
+        with_runtime do |rt|
+          rt.temp_var do |ep|
+            rt.pop_reg ep
+
+            ep_ptr = rt.pointer(ep)
+
+            block_handler = rb.VM_ENV_BLOCK_HANDLER(peek_ep)
+
+            case rb.vm_block_handler_type(block_handler)
+            when rb.c("block_handler_type_iseq"), rb.c("block_handler_type_ifunc")
+              proxy = Fiddle.read_ptr(Fiddle::Handle::DEFAULT["rb_block_param_proxy"], 0)
+              rt.write push_loc, proxy
+            when rb.c("block_handler_type_symbol")
+              rt.if(rt.VM_ENV_FLAG_SET_P(ep, VM_ENV_FLAG_WB_REQUIRED)) {
+                # We need to execute a write barrier, so lets exit back to
+                # the interpreter
+                rt.jump req.exit_addr
+              }.endif
+
+              if rb.RB_STATIC_SYM_P(block_handler)
+                rt.if(rt.RB_STATIC_SYM_P(ep_ptr[VM_ENV_DATA_INDEX_SPECVAL])) {
+                  addr = rb.symbol_address("rb_sym_to_proc")
+                  rt.call_cfunc(addr, [ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]])
+                  # Set the block handler in EP
+                  ep_ptr[-req.idx] = rt.return_value
+                  rt.write push_loc, rt.return_value
+                }.else {
+                  rt.push_reg ep
+                  rt.patchable_jump req.deferred_entry
+                }
+              else
+                rt.if(rt.RB_STATIC_SYM_P(ep_ptr[VM_ENV_DATA_INDEX_SPECVAL])) {
+                  rt.push_reg ep
+                  rt.patchable_jump req.deferred_entry
+                }.else {
+                  addr = rb.symbol_address("rb_sym_to_proc")
+                  rt.call_cfunc(addr, [ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]])
+                  # Set the block handler in EP
+                  ep_ptr[-req.idx] = rt.return_value
+                  rt.write push_loc, rt.return_value
+                }
+              end
+            when rb.c("block_handler_type_proc")
+              # I'm not sure how to make this one happen
+              raise NotImplementedError
+            end
+          end
+
+          rt.jump jit_buffer.memory.to_i + return_loc
+        end
+      else
+        raise "Unreachable"
+      end
+
+      patch_source_jump jit_buffer, at: patch_loc, to: entry_loc
+
+      entry_loc
+    end
+
+    def handle_getblockparamproxy idx, level
+      with_runtime do |rt|
+        cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
+
+        rt.temp_var("EP") do |ep|
+          req = GetBlockParamProxy.new idx, level, @temp_stack.dup.freeze
+          req.exit_addr = exits.make_exit("getblockparamproxy", current_pc, @temp_stack.size)
+
+          push_loc = @temp_stack.push("proc", type: T_DATA)
+
+          ep.write cfp_ptr.ep
+          rt.vm_get_ep(ep, level)
+
+          rt.if(rt.VM_ENV_FLAG_SET_P(ep, VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM)) {
+            # It's already been modified, so use the modified value
+            ep_ptr = rt.pointer(ep)
+            rt.write push_loc, ep_ptr[-idx]
+          }.else {
+            deferred = @jit.deferred_call(@temp_stack) do |ctx|
+              ctx.with_runtime do |rt|
+                # We pushed before calling the patchable jump,
+                # so this function call should already be aligned
+                rt.rb_funcall_without_alignment self, :compile_getblockparamproxy, [REG_CFP, req, rt.return_value]
+                rt.NUM2INT(rt.return_value)
+
+                rt.jump rt.return_value
+              end
+            end
+
+            req.deferred_entry = deferred.entry.to_i
+            deferred.call
+
+            rt.push_reg ep
+            rt.patchable_jump deferred.entry
+          }
+        end
+      end
     end
 
     def handle_getblockparam idx, level
