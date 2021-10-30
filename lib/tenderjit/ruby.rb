@@ -177,6 +177,26 @@ class TenderJIT
       Fiddle.read_ptr(ep, VM_ENV_DATA_INDEX_SPECVAL * Fiddle::SIZEOF_VOIDP)
     end
 
+    def vm_block_handler_type bh_ptr
+      # https://github.com/ruby/ruby/blob/cbf2078a25c3efb12f45b643a636ff7bb4d402b6/vm_core.h#L1511-L1512
+
+      # 0b...01 # ISeq block handler
+      # 0b...11 # IFunc block handler
+      if VM_BH_ISEQ_BLOCK_P(bh_ptr)
+        c("block_handler_type_iseq")
+      elsif VM_BH_IFUNC_P(bh_ptr)
+        c("block_handler_type_ifunc")
+      elsif RB_SYMBOL_P(bh_ptr)
+        c("block_handler_type_symbol")
+      else
+        c("block_handler_type_proc")
+      end
+    end
+
+    def VM_BH_IFUNC_P bh
+      bh & 0x03 == 0x03
+    end
+
     def VM_BH_ISEQ_BLOCK_P bh
       bh & 0x03 == 0x01
     end
