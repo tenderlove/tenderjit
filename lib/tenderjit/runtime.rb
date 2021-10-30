@@ -200,11 +200,29 @@ class TenderJIT
     end
 
     # Performs a 64-bit division.
-    # Returns [RAX (result), RDX (remainder)].
+    # Returns RAX, with the result.
+    #
+    def div dividend_val, divisor_val
+      perform_division dividend_val, divisor_val, @fisk.rax
+    end
+
+    # Performs a 64-bit modulo.
+    # Returns RDX, with the result.
+    #
+    def mod dividend_val, divisor_val
+      perform_division dividend_val, divisor_val, @fisk.rdx
+    end
+
+    # Performs a division (used by div/mod).
+    #
+    # Returns the register passed.
+    #
+    # params:
+    # - :register: The register returned; must be RAX (for div) or RDX (for mod).
     #
     # Reference: https://www.cs.uaf.edu/2006/fall/cs301/support/x86_64.
     #
-    def div dividend_val, divisor_val
+    def perform_division dividend_val, divisor_val, register
       raise NotImplementedError unless dividend_val.memory?
       raise NotImplementedError unless divisor_val.memory?
 
@@ -220,14 +238,11 @@ class TenderJIT
         @fisk.div cast_to_fisk(divisor)
       end
 
-      # Even more optimized™ versions would separate the instructions to avoid
-      # conversions, but it's [currently] not worth.
-      #
-      self.INT2NUM(@fisk.rax)
-      self.INT2NUM(@fisk.rdx)
+      self.INT2NUM register
 
-      [@fisk.rax, @fisk.rdx]
+      register
     end
+    private :perform_division
 
     def write_memory reg, offset, val
       @fisk.with_register do |tmp|

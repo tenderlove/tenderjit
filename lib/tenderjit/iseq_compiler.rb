@@ -1846,23 +1846,19 @@ class TenderJIT
     end
 
     def handle_opt_div call_data
-      perform_division(call_data) do |rt|
-        rt.push Fisk::Registers::RAX, name: T_FIXNUM
+      perform_division(call_data) do |rt, dividend, divisor|
+        rt.div dividend, divisor
       end
     end
 
     def handle_opt_mod call_data
-      perform_division(call_data) do |rt|
-        rt.push Fisk::Registers::RDX, name: T_FIXNUM
+      perform_division(call_data) do |rt, dividend, divisor|
+        rt.mod dividend, divisor
       end
     end
 
-    # Perform a division.
-    #
-    # Yields the runtime, with:
-    # - result in RAX
-    # - remainder in RDX
-    # - temp stack popped
+    # Performs a division operation (div/mod); the actual operation needs to be
+    # invoked inside the yielded block.
     #
     # Exits if the two values are not FIXNUMs.
     #
@@ -1881,8 +1877,9 @@ class TenderJIT
       dividend = @temp_stack.pop
 
       with_runtime do |rt|
-        rt.div dividend, divisor
-        yield rt
+        result_reg = yield rt, dividend, divisor
+
+        rt.push result_reg, name: T_FIXNUM
       end
     end
     private :perform_division
