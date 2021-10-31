@@ -1541,6 +1541,17 @@ class TenderJIT
       end
     end
 
+    def handle_intern
+      rb_str_intern = Fiddle::Handle::DEFAULT["rb_str_intern"]
+
+      str = @temp_stack.pop
+
+      with_runtime do |rt|
+        rt.call_cfunc rb_str_intern, [str]
+        rt.push rt.return_value, name: RUBY_T_SYMBOL
+      end
+    end
+
     class BranchUnless < Struct.new(:jump_idx, :jump_type, :temp_stack)
     end
 
