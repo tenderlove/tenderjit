@@ -2,17 +2,17 @@ class TenderJIT
   class ISEQCompiler
     module Frames
       class Virtual
-        attr_reader :iseq, :type, :_self, :specval, :cref_or_me, :pc, :argv, :local_size
+        attr_reader :iseq, :type, :_self, :specval, :cref_or_me, :pc, :local_size, :temp_stack
 
-        def initialize iseq, type, _self, specval, cref_or_me, pc, argv, local_size
+        def initialize iseq, type, _self, specval, cref_or_me, pc, local_size, temp_stack
           @iseq       = iseq
           @type       = type
           @_self      = _self
           @specval    = specval
           @cref_or_me = cref_or_me
           @pc         = pc
-          @argv       = argv
           @local_size = local_size
+          @temp_stack = temp_stack
         end
 
         def push rt
@@ -37,10 +37,10 @@ class TenderJIT
 
           rt.write_register(REG_CFP, next_frame_loc + self_offset, temp.to_register)
 
-          temp.write_address_of argv
-          sp = temp
-
-          sp_ptr = rt.pointer sp
+          # Fill in the local table
+          local_size.times do
+            rt.write temp_stack.push(:local), Qnil
+          end
 
           # Set up the stack values for the callee frame.  It's important we
           # set these values before pushing the new CFP.  Captured blocks need
@@ -51,18 +51,14 @@ class TenderJIT
           # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
           # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
           # *sp++ = type;       /* ep[-0] / ENV_FLAGS */
-          sp_ptr[local_size + 0] = cref_or_me
-          write_specval rt, sp_ptr
-          sp_ptr[local_size + 2] = type
-
-          local_size.times do |i|
-            sp_ptr[i] = Qnil
-          end
+          rt.write temp_stack.push(:cref), cref_or_me
+          write_specval rt, temp_stack.push(:specval)
+          rt.write temp_stack.push(:env_flags), type
 
           # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
           cfp_ptr.sub # like -- in C
 
-          temp.write_address_of temp[3 + local_size]
+          temp.write_address_of(temp_stack + 0)
           new_sp = temp
 
           # /* setup new frame */
@@ -90,42 +86,42 @@ class TenderJIT
           temp.release!
         end
 
-        def write_specval rt, sp_ptr
+        def write_specval rt, stack_loc
           specval.write_specval(rt) do |val|
-            sp_ptr[local_size + 1] = val
+            rt.write stack_loc, val
           end
         end
       end
 
       class Block < Virtual
-        def initialize iseq, _self, specval, cref_or_me, pc, argv, local_size
+        def initialize iseq, _self, specval, cref_or_me, pc, local_size, ts
           type = VM_FRAME_MAGIC_BLOCK
-          super(iseq, type, _self, specval, cref_or_me, pc, argv, local_size)
+          super(iseq, type, _self, specval, cref_or_me, pc, local_size, ts)
         end
       end
 
       class ISeq < Virtual
-        def initialize iseq, _self, specval, cref_or_me, pc, argv, local_size
+        def initialize iseq, _self, specval, cref_or_me, pc, local_size, temp_stack
           type = VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL
-          super(iseq, type, _self, specval, cref_or_me, pc, argv, local_size)
+          super(iseq, type, _self, specval, cref_or_me, pc, local_size, temp_stack)
         end
       end
 
       class CFunc < Virtual
-        def initialize _self, specval, cref_or_me, argv
+        def initialize _self, specval, cref_or_me, ts
           iseq       = 0
           type       = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL
           pc         = 0
           local_size = 0
-          super(iseq, type, _self, specval, cref_or_me, pc, argv, local_size)
+          super(iseq, type, _self, specval, cref_or_me, pc, local_size, ts)
         end
       end
 
       class BMethod < Virtual
-        def initialize iseq, _self, specval, cref_or_me, pc, argv, local_size
+        def initialize iseq, _self, specval, cref_or_me, pc, local_size, ts
           type = VM_FRAME_MAGIC_BLOCK | VM_FRAME_FLAG_BMETHOD,
 
-          super(iseq, type, _self, specval, cref_or_me, pc, argv, local_size)
+          super(iseq, type, _self, specval, cref_or_me, pc, local_size, ts)
         end
       end
     end

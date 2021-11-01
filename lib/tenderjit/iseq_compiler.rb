@@ -389,8 +389,6 @@ class TenderJIT
       opt_pc     = 0 # we don't handle optional parameters rn
       argc       = ci.vm_ci_argc
 
-      next_sp = temp_stack[argc - param_size - 1]
-
       method_entry_addr = jit_buffer.address
 
       with_runtime do |rt|
@@ -428,14 +426,15 @@ class TenderJIT
         captured_ptr = rt.pointer(temp, type: rb.struct("rb_captured_block"))
         temp.write captured_ptr.self
 
+        ts = temp_stack.dup
+
         Frames::Block.new(
           iseq_ptr,
           temp,
           SpecVals::PreviousEP.new(captured.ep),
           0,
           iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-          next_sp,
-          local_size - param_size).push(rt)
+          local_size - param_size, ts).push(rt)
 
         # Save the base pointer
         rt.push_reg REG_BP
@@ -1028,7 +1027,7 @@ class TenderJIT
         rt.flush_pc_and_sp req.next_pc, recv_loc
         rt.check_vm_stack_overflow req.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
 
-        next_sp = temp_stack[argc - param_size - 1]
+        ts = temp_stack.dup
 
         if req.has_block?
           Frames::ISeq.new(
@@ -1037,8 +1036,7 @@ class TenderJIT
             SpecVals::CapturedBlock.new(rb, req.blockiseq),
             cme,
             iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-            next_sp,
-            local_size - param_size).push(rt)
+            local_size - param_size, ts).push(rt)
         else
           # `vm_push_frame`
           Frames::ISeq.new(
@@ -1047,8 +1045,7 @@ class TenderJIT
             SpecVals::NULL,
             cme,
             iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-            next_sp,
-            local_size - param_size).push rt
+            local_size - param_size, ts).push rt
         end
       end
 
@@ -1102,19 +1099,19 @@ class TenderJIT
       end
 
       recv_loc = temp_stack.peek(argc).loc
-      next_sp = temp_stack[argc - param_size - 1]
+      ts = temp_stack.dup
 
       with_runtime do |rt|
         if req.has_block?
           Frames::CFunc.new(temp_stack.peek(argc).loc,
                             SpecVals::CapturedBlock.new(rb, req.blockiseq),
                             cme,
-                            next_sp).push(rt)
+                            ts).push(rt)
         else
           Frames::CFunc.new(temp_stack.peek(argc).loc,
                             SpecVals::NULL,
                             cme,
-                            next_sp).push(rt)
+                            ts).push(rt)
         end
 
         rt.with_ref(temp_stack[argc - 1]) do |sp|
@@ -1215,7 +1212,7 @@ class TenderJIT
         rt.check_vm_stack_overflow compile_request.temp_stack, overflow_exit, local_size, iseq.body.stack_max
       end
 
-      next_sp = temp_stack[argc - param_size - 1]
+      ts = temp_stack.dup
 
       with_runtime do |rt|
         Frames::BMethod.new(
@@ -1224,8 +1221,7 @@ class TenderJIT
           SpecVals::PreviousEP.new(captured.ep),
           cme,
           iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-          next_sp,
-          iseq.body.local_table_size - param_size).push(rt)
+          iseq.body.local_table_size - param_size, ts).push(rt)
 
         rt.push_reg REG_BP
 
