@@ -387,7 +387,6 @@ class TenderJIT
       param_size = iseq.body.param.size
       local_size = iseq.body.local_table_size
       opt_pc     = 0 # we don't handle optional parameters rn
-      argc       = ci.vm_ci_argc
 
       method_entry_addr = jit_buffer.address
 
@@ -1079,13 +1078,6 @@ class TenderJIT
 
     def compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, return_loc
       cfunc = RbMethodDefinitionStruct.new(cme.def).body.cfunc
-      param_size = if cfunc.argc == -1
-                     argc
-                   elsif cfunc.argc < 0
-                     raise NotImplementedError
-                   else
-                     cfunc.argc
-                   end
 
       temp_stack = req.temp_stack
 

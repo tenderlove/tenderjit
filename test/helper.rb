@@ -1,11 +1,11 @@
 ENV["MT_NO_PLUGINS"] = "1"
 
 require "minitest/autorun"
+require "make_warnings_errors"
 require "tenderjit"
 require "rbconfig"
 require "fisk"
 require "fisk/helpers"
-require "make_warnings_errors"
 
 class TenderJIT
   class Test < Minitest::Test
