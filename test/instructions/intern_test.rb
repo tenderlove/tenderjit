@@ -32,8 +32,6 @@ class TenderJIT
     end
 
     def test_new_symbol
-      skip "Please implement intern!"
-
       jit.compile method(:new_symbol)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
@@ -50,8 +48,6 @@ class TenderJIT
     end
 
     def test_existing_symbol
-      skip "Please implement intern!"
-
       jit.compile method(:existing_symbol)
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
