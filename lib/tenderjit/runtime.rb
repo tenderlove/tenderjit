@@ -547,10 +547,6 @@ class TenderJIT
       end
     end
 
-    def call_cfunc_without_alignment func_loc, params
-      call_cfunc func_loc, params, auto_align: false
-    end
-
     def call_cfunc func_loc, params, auto_align: true
       raise NotImplementedError, "too many parameters" if params.length > 6
       raise "No function location" unless func_loc > 0
