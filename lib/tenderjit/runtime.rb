@@ -6,6 +6,7 @@ class TenderJIT
       @label_count = 0
       @jit_buffer = jit_buffer
       @temp_stack = temp_stack
+      @cfunc_call_stack_depth = 0 # Used for automatic alignment
 
       yield self if block_given?
     end
@@ -509,11 +510,13 @@ class TenderJIT
     # Push a register on the machine stack
     def push_reg reg
       @fisk.push reg.to_register
+      @cfunc_call_stack_depth += reg.size
     end
 
     # Pop a register on the machine stack
     def pop_reg reg
       @fisk.pop reg.to_register
+      @cfunc_call_stack_depth -= reg.size
     end
 
     def return
@@ -525,6 +528,8 @@ class TenderJIT
       loc = @temp_stack.push name, type: type
 
       val = cast_to_fisk val
+
+      @cfunc_call_stack_depth += val.size / 8
 
       if val.memory? || val.immediate?
         write loc, val
@@ -542,34 +547,60 @@ class TenderJIT
       end
     end
 
-    def call_cfunc func_loc, params
-      @fisk.push REG_BP.to_register # alignment
-      call_cfunc_without_alignment func_loc, params
-      @fisk.pop REG_BP.to_register  # alignment
-      @fisk.rax
+    def call_cfunc_without_alignment func_loc, params
+      call_cfunc func_loc, params, auto_align: false
     end
 
-    def call_cfunc_without_alignment func_loc, params
+    def call_cfunc func_loc, params, auto_align: true
       raise NotImplementedError, "too many parameters" if params.length > 6
       raise "No function location" unless func_loc > 0
 
-      params.each_with_index do |param, i|
-        case param
-        when Integer
-          @fisk.mov(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(param))
-        when Fisk::Operand
-          @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
-        when TemporaryVariable
-          @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param.to_register)
-        when Proc
-          param.call Fisk::Registers::CALLER_SAVED[i]
-        else
-          raise NotImplementedError
+      align_cfunc_call(auto_align) do
+        params.each_with_index do |param, i|
+          case param
+          when Integer
+            @fisk.mov(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(param))
+          when Fisk::Operand
+            @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
+          when TemporaryVariable
+            @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param.to_register)
+          when Proc
+            param.call Fisk::Registers::CALLER_SAVED[i]
+          else
+            raise NotImplementedError
+          end
         end
+        @fisk.mov(@fisk.rax, @fisk.uimm(func_loc))
+          .call(@fisk.rax)
+        @fisk.rax
       end
-      @fisk.mov(@fisk.rax, @fisk.uimm(func_loc))
-        .call(@fisk.rax)
-      @fisk.rax
+    end
+
+    # Align the stack, if needed.
+    # Can be used to perform one alignment for multiple `cfunc` invocations, if
+    # they don't misalign the stack.
+    #
+    # arguments:
+    # - auto_align: true/false
+    def align_cfunc_call auto_align, &block
+      if @cfunc_call_stack_depth % 8 != 0
+        message = "Auto alignment is supported only for a stack depth multiple of 8 (current: #{@cfunc_call_stack_depth})"
+        raise NotImplementedError, message
+      end
+
+      # Watch out :) Must consider that 8 bytes are already pushed (RIP).
+      #
+      if auto_align && @cfunc_call_stack_depth % 16 == 0
+        @fisk.push REG_BP.to_register
+
+        result = yield
+
+        @fisk.pop REG_BP.to_register
+
+        result
+      else
+        yield
+      end
     end
 
     def release_temp temp
