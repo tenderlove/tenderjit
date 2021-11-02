@@ -771,11 +771,11 @@ class TenderJIT
 
             # We know it's an array at compile time
             if klass == ::Array
-              rt.call_cfunc_without_alignment(rb.symbol_address("rb_ary_aref1"), [recv, param])
+              rt.call_cfunc rb.symbol_address("rb_ary_aref1"), [recv, param], auto_align: false
 
               # We know it's a hash at compile time
             elsif klass == ::Hash
-              rt.call_cfunc_without_alignment(rb.symbol_address("rb_hash_aref"), [recv, param])
+              rt.call_cfunc rb.symbol_address("rb_hash_aref"), [recv, param], auto_align: false
 
             else
               raise NotImplementedError
@@ -1151,7 +1151,7 @@ class TenderJIT
               # Unwrap the proc object
               data_ptr = rt.pointer(tv, type: RData)
 
-              rt.call_cfunc_without_alignment func_addr, [
+              rt.call_cfunc func_addr, [
                 REG_EC,
                 data_ptr.data,
                 argc,
@@ -1165,7 +1165,7 @@ class TenderJIT
                     rt.write(dst, Fisk::Imm64.new(0))
                   end
                 }
-              ]
+              ], auto_align: false
             end
           end
           rt.jump jit_buffer.memory.to_i + return_loc
@@ -1413,7 +1413,7 @@ class TenderJIT
               # Fill the hash
               address = Fiddle::Handle::DEFAULT["rb_hash_bulk_insert"]
               rt.push_reg hash
-              rt.call_cfunc_without_alignment(address, [num, ref, hash])
+              rt.call_cfunc address, [num, ref, hash], auto_align: false
               rt.pop_reg hash
               rt.push hash, name: "hash"
             end
@@ -1441,7 +1441,7 @@ class TenderJIT
 
         rt.with_ref(values_loc) do |ref|
           num.times { @temp_stack.pop }
-          ret = rt.call_cfunc_without_alignment(address, [REG_EC, num, ref])
+          ret = rt.call_cfunc address, [REG_EC, num, ref], auto_align: false
           rt.push ret, name: "array"
         end
 
@@ -1518,7 +1518,7 @@ class TenderJIT
             # Store and use for alignment.
             rt.push_reg ary
 
-            rt.call_cfunc_without_alignment rb_reg_new_ary, [ary, opt]
+            rt.call_cfunc rb_reg_new_ary, [ary, opt], auto_align: false
             rt.write result, rt.return_value
 
             rt.pop_reg ary
@@ -2216,10 +2216,10 @@ class TenderJIT
         rt.temp_var do |tmp1_loc| # Allocate a temp variable
           rt.push_reg REG_BP # Alignment push
 
-          tmp1_val = rt.call_cfunc_without_alignment check_cfunc_addr, [ary1_loc]
+          tmp1_val = rt.call_cfunc check_cfunc_addr, [ary1_loc], auto_align: false
 
           rt.if_eq(tmp1_val.to_register, Fisk::Imm64.new(Qnil)) {
-            tmp1_val = rt.call_cfunc_without_alignment newarray_cfunc_addr, [Fisk::Imm64.new(1), ary1_loc]
+            tmp1_val = rt.call_cfunc newarray_cfunc_addr, [Fisk::Imm64.new(1), ary1_loc], auto_align: false
           }.else {}
 
           rt.pop_reg REG_BP # Alignment pop
@@ -2234,10 +2234,10 @@ class TenderJIT
           rt.temp_var do |tmp2_loc|
             rt.push_reg tmp1_loc # Push for alignment, but also save the tmp
 
-            tmp2_val = rt.call_cfunc_without_alignment check_cfunc_addr, [ary2_loc]
+            tmp2_val = rt.call_cfunc check_cfunc_addr, [ary2_loc], auto_align: false
 
             rt.if_eq(tmp2_val, Fisk::Imm64.new(Qnil)) {
-              tmp2_val = rt.call_cfunc_without_alignment newarray_cfunc_addr, [Fisk::Imm64.new(1), ary2_loc]
+              tmp2_val = rt.call_cfunc newarray_cfunc_addr, [Fisk::Imm64.new(1), ary2_loc], auto_align: false
             }.else {}
 
             rt.pop_reg tmp1_loc # Pop for alignment, but restore the tmp
@@ -2247,7 +2247,7 @@ class TenderJIT
 
             # Compute the result, and cleanup ###########################
 
-            result_val = rt.call_cfunc_without_alignment concat_cfunc_addr, [tmp1_loc, tmp2_loc]
+            result_val = rt.call_cfunc concat_cfunc_addr, [tmp1_loc, tmp2_loc], auto_align: false
             result_loc = @temp_stack.push :array
             rt.write result_loc, result_val
           end
@@ -2506,7 +2506,7 @@ class TenderJIT
               # Push EP because calling the cfunc will clobber our register.
               # FIXME: See #83
               rt.push_reg ep
-              rt.call_cfunc_without_alignment func_addr, [REG_EC, ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]]
+              rt.call_cfunc func_addr, [REG_EC, ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]], auto_align: false
               rt.pop_reg ep
 
               # Set the block handler in EP
