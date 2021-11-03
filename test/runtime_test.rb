@@ -19,13 +19,13 @@ class TenderJIT
     # Smoke test.
     #
     def test_if_eq_imm_imm64
-      @rt.if_eq(2 << 0, 2 << 32)
+      rt.if_eq(2 << 0, 2 << 32)
     end
 
     # Smoke test.
     #
     def test_if_eq_imm_immnot64
-      @rt.if_eq(2 << 0, 2 << 0)
+      rt.if_eq(2 << 0, 2 << 0)
     end
 
     # See https://github.com/tenderlove/tenderjit/issues/35#issuecomment-934872857
@@ -42,8 +42,8 @@ class TenderJIT
     end
 
     def test_inc
-      @rt.inc Fisk::Registers::RAX
-      buffer = @rt.write!
+      rt.inc Fisk::Registers::RAX
+      buffer = rt.write!
 
       assert_equal buffer.string, "H\xFF\xC0"
     end
