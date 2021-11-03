@@ -4,16 +4,18 @@ require "helper"
 
 class TenderJIT
   class RuntimeTest < Test
-    attr_reader :rt
+    include Fisk::Registers
+
+    attr_reader :rt, :saving_buffer
 
     def setup
       super
 
       fisk = Fisk.new
-      buffer = StringIO.new
+      @saving_buffer = RegistersSavingBuffer.new Fisk::Helpers.mmap_jit(4096), 4096
       temp_stack = TempStack.new
 
-      @rt = Runtime::new(fisk, buffer, temp_stack)
+      @rt = Runtime::new(fisk, @saving_buffer, temp_stack)
     end
 
     # Smoke test.
@@ -42,10 +44,14 @@ class TenderJIT
     end
 
     def test_inc
-      rt.inc Fisk::Registers::RAX
-      buffer = rt.write!
+      rt.xor RAX, RAX
+      rt.inc RAX
+      rt.return
 
-      assert_equal buffer.string, "H\xFF\xC0"
+      rt.write!
+      saving_buffer.to_function([], Fiddle::TYPE_VOID).call
+
+      assert_equal 1, saving_buffer.register_value(RAX)
     end
   end # class RuntimeTest
 end
