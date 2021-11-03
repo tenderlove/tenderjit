@@ -4,6 +4,7 @@ require "minitest/autorun"
 require "make_warnings_errors"
 require "tenderjit"
 require "rbconfig"
+require "registers_saving_buffer"
 require "fisk"
 require "fisk/helpers"
 
