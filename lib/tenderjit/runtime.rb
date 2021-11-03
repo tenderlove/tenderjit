@@ -146,6 +146,10 @@ class TenderJIT
       @fisk.or(reg, cast_to_fisk(num))
     end
 
+    def xor reg, num
+      @fisk.xor(reg, cast_to_fisk(num))
+    end
+
     def flush
       write!
       @fisk = Fisk.new
