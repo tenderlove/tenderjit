@@ -307,6 +307,10 @@ class TenderJIT
       end
     end
 
+    def movsd reg, source
+      @fisk.movsd reg, cast_to_fisk(source)
+    end
+
     def break
       @fisk.int(@fisk.lit(3))
     end
