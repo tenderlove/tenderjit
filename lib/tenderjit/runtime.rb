@@ -6,7 +6,10 @@ class TenderJIT
       @label_count = 0
       @jit_buffer = jit_buffer
       @temp_stack = temp_stack
-      @cfunc_call_stack_depth = 0 # Used for automatic alignment
+
+      # Used for automatic alignment; the stack starts unaligned.
+      #
+      @cfunc_call_stack_depth = 8
 
       yield self if block_given?
     end
@@ -596,9 +599,9 @@ class TenderJIT
         raise NotImplementedError, message
       end
 
-      # Watch out :) Must consider that 8 bytes are already pushed (RIP).
-      #
-      if auto_align && @cfunc_call_stack_depth % 16 == 0
+      if !auto_align || @cfunc_call_stack_depth % 16 == 0
+        yield
+      else
         @fisk.push REG_BP.to_register
 
         result = yield
@@ -606,8 +609,6 @@ class TenderJIT
         @fisk.pop REG_BP.to_register
 
         result
-      else
-        yield
       end
     end
 
