@@ -551,7 +551,10 @@ class TenderJIT
       end
     end
 
-    def call_cfunc func_loc, params, auto_align: true
+    # options:
+    # :call_rel32: Use rel32 addressing for the CALL, rather than r64 (RAX).
+    #
+    def call_cfunc func_loc, params, auto_align: true, call_rel32: false
       raise NotImplementedError, "too many parameters" if params.length > 6
       raise "No function location" unless func_loc > 0
 
@@ -570,8 +573,20 @@ class TenderJIT
             raise NotImplementedError
           end
         end
-        @fisk.mov(@fisk.rax, @fisk.uimm(func_loc))
-          .call(@fisk.rax)
+
+        # Possibly, the rel32 call may be the only needed; discussed at git.io/JX4a3.
+        #
+        # An (likely overkill with the current design) alternative is to use the
+        # CALL [imm64].
+        #
+        if call_rel32
+          cfunc_rel_addr = @fisk.absolute func_loc
+          @fisk.call cfunc_rel_addr
+        else
+          @fisk.mov(@fisk.rax, @fisk.uimm(func_loc))
+            .call(@fisk.rax)
+        end
+
         @fisk.rax
       end
     end
