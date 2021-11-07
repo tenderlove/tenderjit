@@ -18,6 +18,24 @@ class TenderJIT
       @rt = Runtime::new(fisk, @saving_buffer, temp_stack)
     end
 
+    # Allocate and set the data required to print a DP-float.
+    #
+    # Returns the addresses of the template and the float.
+    #
+    def prepare_printf_data
+      template = "%f\x00".bytes
+      fp_value = [0, 0, 0, 0, 0, 0, 0xF0, 0x3F] # Any valid double will do; this is 1.0
+
+      data_buffer = Fisk::Helpers.jitbuffer template.size + fp_value.size
+
+      template.each { |byte| data_buffer.putc byte }
+      fp_value.each { |byte| data_buffer.putc byte }
+
+      data_buffer.seek 0
+
+      [data_buffer.memory.to_i, data_buffer.memory.to_i + template.size]
+    end
+
     def test_if_eq_imm8_imm64_false_branch
       rt.if_eq(2 << 0, 2 << 32) {
         rt.write RAX, 1
@@ -71,6 +89,29 @@ class TenderJIT
       saving_buffer.to_function([], Fiddle::TYPE_VOID).call
 
       assert_equal 1, saving_buffer.register_value(RAX)
+    end
+
+    # The call_cfunc are meant to raise a segment violation if the alignment is
+    # not performed, and not raise anything otherwise.
+    # The following UTs do +not+ cover all the cases.
+    #
+    # Prints `1.000000%` to the stdout; not sure if this can be avoided trivially.
+    #
+    def test_call_cfunc_auto_alignment
+      printf = Fiddle::Handle::DEFAULT["printf"]
+
+      template_loc, float_loc = prepare_printf_data
+
+      rt.write R11, float_loc
+      rt.movsd Register.new("xmm", "xmm0", 0), Fisk::M64.new(R11, 0)
+      rt.write RAX, 1
+      rt.call_cfunc printf, [template_loc], auto_align: true, call_reg: R10
+
+      rt.return
+      rt.write!
+      saving_buffer.to_function([], Fiddle::TYPE_VOID).call
+
+      # If we get here, all is well!
     end
   end # class RuntimeTest
 end
