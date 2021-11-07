@@ -5,8 +5,8 @@ require "fisk/helpers"
 
 include Fisk::Registers
 
-# A transparent wrapper around a JIT buffer, that, after the JIT buffer is executed,
-# saves the registers content to a separate location, so that they can be tested.
+# A JIT buffer that, after execution, saves the registers content to a separate
+# location, so that they can be tested.
 #
 # In order to use:
 #
@@ -16,9 +16,11 @@ include Fisk::Registers
 #     saving_buffer.to_function([], Fiddle::TYPE_VOID).call
 #     assert_equal 1, saving_buffer.register_value(RAX)
 #
+# The design can easily be turned into a proxy around a JIT Buffer, if needed.
+#
 class RegistersSavingBuffer < Fisk::Helpers::JITBuffer
   # In push order, which is the reverse order of storage/read. RSP +must+ be the
-  # first, as it needs manual correction.
+  # first, in order to store the original value.
   #
   SAVED_REGISTERS = [RSP, R15, R14, R13, R12, R11, R10, R9, R8, RBP, RSI, RDI, RDX, RCX, RBX, RAX]
 
