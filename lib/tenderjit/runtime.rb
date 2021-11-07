@@ -533,8 +533,6 @@ class TenderJIT
 
       val = cast_to_fisk val
 
-      @cfunc_call_stack_depth += val.size / 8
-
       if val.memory? || val.immediate?
         write loc, val
       else
