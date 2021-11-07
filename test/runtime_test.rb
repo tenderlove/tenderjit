@@ -18,16 +18,35 @@ class TenderJIT
       @rt = Runtime::new(fisk, @saving_buffer, temp_stack)
     end
 
-    # Smoke test.
-    #
-    def test_if_eq_imm_imm64
-      rt.if_eq(2 << 0, 2 << 32)
+    def test_if_eq_imm8_imm64_false_branch
+      rt.if_eq(2 << 0, 2 << 32) {
+        rt.write RAX, 1
+      }.else {
+        rt.write RAX, 2
+      }
+
+      rt.return
+      rt.write!
+      saving_buffer.to_function([], Fiddle::TYPE_VOID).call
+
+      assert_equal 2, saving_buffer.register_value(RAX)
     end
 
-    # Smoke test.
+    # Originally design to verify comparing an imm8 with an immediate less than
+    # 64 bits wide (this UT therefore tests two things).
     #
-    def test_if_eq_imm_immnot64
-      rt.if_eq(2 << 0, 2 << 0)
+    def test_if_eq_imm8_imm8_true_branch
+      rt.if_eq(2 << 0, 2 << 0) {
+        rt.write RAX, 1
+      }.else {
+        rt.write RAX, 2
+      }
+
+      rt.return
+      rt.write!
+      saving_buffer.to_function([], Fiddle::TYPE_VOID).call
+
+      assert_equal 1, saving_buffer.register_value(RAX)
     end
 
     # See https://github.com/tenderlove/tenderjit/issues/35#issuecomment-934872857
@@ -46,8 +65,8 @@ class TenderJIT
     def test_inc
       rt.xor RAX, RAX
       rt.inc RAX
-      rt.return
 
+      rt.return
       rt.write!
       saving_buffer.to_function([], Fiddle::TYPE_VOID).call
 
