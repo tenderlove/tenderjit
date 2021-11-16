@@ -373,7 +373,7 @@ class TenderJIT
       method_entry_addr
     end
 
-    def compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, patch_loc, req
+    def compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, req, temp_stack
       temp_stack = req.temp_stack
 
       ci = req.call_info
@@ -458,8 +458,6 @@ class TenderJIT
         var.release!
       end
 
-      patch_source_jump jit_buffer, at: patch_loc, to: method_entry_addr
-
       method_entry_addr
     end
 
@@ -480,7 +478,9 @@ class TenderJIT
         iseq_ptr = captured.code.iseq
         @jit.compile_iseq_t iseq_ptr
 
-        compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, patch_loc, req
+        method_entry_addr = compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, req, req.temp_stack
+        patch_source_jump jit_buffer, at: patch_loc, to: method_entry_addr
+        method_entry_addr
       else
         raise NotImplementedError
         # TODO: need to implement vm_block_handler_type
