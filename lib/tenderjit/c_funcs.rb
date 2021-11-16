@@ -37,6 +37,7 @@ class TenderJIT
     make_function "rb_intern", [TYPE_CONST_STRING], TYPE_INT
     make_function "rb_id2sym", [TYPE_INT], TYPE_VOIDP
     make_function "rb_id2str", [TYPE_INT], TYPE_VOIDP
+    make_function "rb_sym2id", [TYPE_VOIDP], TYPE_INT
     make_function "memset", [TYPE_VOIDP, TYPE_INT, TYPE_SIZE_T], TYPE_VOID
     make_function "rb_st_lookup", [TYPE_VOIDP, TYPE_VOIDP, TYPE_VOIDP], TYPE_INT
     make_function "rb_ivar_set", [TYPE_VOIDP, TYPE_INT, TYPE_VOIDP], TYPE_VOIDP
@@ -44,5 +45,6 @@ class TenderJIT
     make_function "rb_iseq_path", [TYPE_VOIDP], TYPE_VOIDP
     make_function "rb_iseq_label", [TYPE_VOIDP], TYPE_VOIDP
     make_function "rb_obj_class", [TYPE_VOIDP], TYPE_VOIDP
+    make_function "rb_method_basic_definition_p", [TYPE_VOIDP, TYPE_INT], TYPE_INT
   end
 end
