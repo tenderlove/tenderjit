@@ -2,7 +2,15 @@
 
 class TenderJIT
   class TempStack
-    Item = Struct.new(:name, :type, :loc)
+    class Item < Struct.new(:name, :type, :loc)
+      def symbol?
+        type == Ruby::T_SYMBOL
+      end
+
+      def fixnum?
+        type == Ruby::T_FIXNUM
+      end
+    end
 
     def initialize
       @stack = []

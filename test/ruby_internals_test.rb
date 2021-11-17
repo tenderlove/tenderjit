@@ -10,6 +10,16 @@ class TenderJIT
       @rb = Ruby::INSTANCE
     end
 
+    def test_builtin_type
+      assert_equal Ruby::T_OBJECT, rb.rb_type(Fiddle.dlwrap(Object.new))
+      assert_equal Ruby::T_DATA, rb.rb_type(Fiddle.dlwrap(lambda {}))
+      assert_equal Ruby::T_FIXNUM, rb.rb_type(Fiddle.dlwrap(1))
+      assert_equal Ruby::T_TRUE, rb.rb_type(Fiddle.dlwrap(true))
+      assert_equal Ruby::T_FALSE, rb.rb_type(Fiddle.dlwrap(false))
+      assert_equal Ruby::T_NIL, rb.rb_type(Fiddle.dlwrap(nil))
+      assert_equal Ruby::T_SYMBOL, rb.rb_type(Fiddle.dlwrap(:foo))
+    end
+
     def test_RB_SYMBOL_P
       assert rb.RB_SYMBOL_P(Fiddle.dlwrap(:foo))
       assert rb.RB_SYMBOL_P(Fiddle.dlwrap(:"foo#{1234}"))
@@ -171,11 +181,8 @@ class TenderJIT
 
     def test_constant_body_size
       rb_iseq_constant_body = rb.struct("rb_iseq_constant_body")
-      if RubyVM.const_defined?(:YJIT)
-        assert_equal 304, rb_iseq_constant_body.byte_size
-      else
-        assert_equal 288, rb_iseq_constant_body.byte_size
-      end
+      # This seemed to get bigger after YJIT merged
+      assert_operator rb_iseq_constant_body.byte_size, :>=, 288
     end
 
     def omg2; end

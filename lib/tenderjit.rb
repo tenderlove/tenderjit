@@ -67,6 +67,47 @@ class TenderJIT
       end
     end
 
+    # Return a list of VM_CALL_* flags that are set on this call info object
+    def vm_call_flags
+      ci_flags = vm_ci_flag
+
+      [
+        :VM_CALL_ARGS_SPLAT,
+        :VM_CALL_ARGS_BLOCKARG,
+        :VM_CALL_FCALL,
+        :VM_CALL_VCALL,
+        :VM_CALL_ARGS_SIMPLE,
+        :VM_CALL_BLOCKISEQ,
+        :VM_CALL_KW_SPLAT,
+        :VM_CALL_TAILCALL,
+        :VM_CALL_SUPER,
+        :VM_CALL_ZSUPER,
+        :VM_CALL_OPT_SEND,
+        :VM_CALL_KW_SPLAT_MUT,
+        :VM_CALL_KWARG
+      ].find_all { |n| ci_flags & TenderJIT.const_get(n) == TenderJIT.const_get(n) }
+    end
+
+    # Can we support this type of call in the JIT?
+    def supported_call?
+      unhandled = [VM_CALL_ARGS_SPLAT,
+                   #VM_CALL_ARGS_BLOCKARG,
+                   #VM_CALL_FCALL,
+                   #VM_CALL_VCALL,
+                   #VM_CALL_ARGS_SIMPLE,
+                   #VM_CALL_BLOCKISEQ,
+                   VM_CALL_KW_SPLAT,
+                   VM_CALL_TAILCALL,
+                   VM_CALL_SUPER,
+                   VM_CALL_ZSUPER,
+                   #VM_CALL_OPT_SEND,
+                   VM_CALL_KW_SPLAT_MUT,
+                   VM_CALL_KWARG
+      ].inject(0) { |acc, bit| acc | bit }
+
+      vm_ci_flag & unhandled == 0
+    end
+
     def vm_ci_mid
       if vm_ci_packed?
         (to_i >> CI_EMBED_ID_SHFT) & CI_EMBED_ID_MASK

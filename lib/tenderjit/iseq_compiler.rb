@@ -274,8 +274,16 @@ class TenderJIT
         exits.make_exit(name, current_pc, temp_stack.size)
       end
 
-      def has_block?
+      def has_blockiseq?
         blockiseq != 0
+      end
+
+      def has_block?
+        has_blockiseq? || has_blockarg?
+      end
+
+      def has_blockarg?
+        call_info.vm_ci_flag & VM_CALL_ARGS_BLOCKARG == VM_CALL_ARGS_BLOCKARG
       end
     end
 
@@ -300,10 +308,6 @@ class TenderJIT
       cd = RbCallData.new call_data
       ci = RbCallInfo.new cd.ci
 
-      if ci.vm_ci_flag & VM_CALL_ARGS_BLOCKARG == VM_CALL_ARGS_BLOCKARG
-        raise NotImplementedError
-      end
-
       req = CompileSend.new(ci, @temp_stack.dup.freeze, current_pc, next_pc, blockiseq)
 
       @compile_requests << Fiddle::Pinned.new(req)
@@ -320,6 +324,12 @@ class TenderJIT
 
       req.deferred_entry = deferred.entry.to_i
       deferred.call
+
+      if req.has_blockarg?
+        # blockargs aren't counted in argc, so we need to pop them manually
+        # IOW argc for `foo(&:x)` will be 0, but :x will be on the stack
+        @temp_stack.pop
+      end
 
       (ci.vm_ci_argc + 1).times { @temp_stack.pop }
 
@@ -373,12 +383,10 @@ class TenderJIT
       method_entry_addr
     end
 
-    def compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, patch_loc, req
-      temp_stack = req.temp_stack
-
+    def compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, req, temp_stack
       ci = req.call_info
 
-      unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+      unless ci.supported_call?
         # TODO: can this happen?
         raise NotImplementedError
       end
@@ -392,6 +400,7 @@ class TenderJIT
 
       with_runtime do |rt|
         rt.flush_pc_and_sp req.next_pc, REG_BP
+
         # TODO: We need an overflow check here, I think
         #rt.check_vm_stack_overflow req.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
@@ -446,6 +455,27 @@ class TenderJIT
         # stack and jump to it
         rt.push_reg var
 
+        # If the iseq hasn't been compiled yet, put in a stub that will compile
+        # it and jump back.
+        if iseq.body.jit_func == 0
+          comp_req = CompileISeqBlock.new(iseq_ptr, temp_stack.dup.freeze)
+          @compile_requests << Fiddle::Pinned.new(comp_req)
+
+          deferred = @jit.deferred_call(temp_stack) do |ctx|
+            ctx.with_runtime do |rt|
+              rt.rb_funcall self, :compile_iseq, [REG_CFP, comp_req, rt.return_value]
+
+              rt.NUM2INT(rt.return_value)
+
+              rt.jump rt.return_value
+            end
+          end
+
+          deferred.call
+
+          rt.patchable_jump deferred.entry
+        end
+
         # Dereference the JIT function address, skipping the REG_* assigments
         # and jump to it
         var.write iseq.body.to_i
@@ -457,8 +487,6 @@ class TenderJIT
 
         var.release!
       end
-
-      patch_source_jump jit_buffer, at: patch_loc, to: method_entry_addr
 
       method_entry_addr
     end
@@ -480,7 +508,9 @@ class TenderJIT
         iseq_ptr = captured.code.iseq
         @jit.compile_iseq_t iseq_ptr
 
-        compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, patch_loc, req
+        method_entry_addr = compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, req, req.temp_stack
+        patch_source_jump jit_buffer, at: patch_loc, to: method_entry_addr
+        method_entry_addr
       else
         raise NotImplementedError
         # TODO: need to implement vm_block_handler_type
@@ -516,6 +546,14 @@ class TenderJIT
       __.jmp(__.absolute(deferred.entry))
       __.pop(REG_BP)
       __.mov(loc, __.rax)
+    end
+
+    def compile_iseq cfp, req, loc
+      @jit.compile_iseq_t req.iseq_ptr
+
+      patch_loc = loc - jit_buffer.memory.to_i
+      patch_source_jump jit_buffer, at: patch_loc, to: loc + JMP_BYTES
+      loc + JMP_BYTES
     end
 
     def handle_getglobal gid
@@ -858,6 +896,7 @@ class TenderJIT
 
     class CompileOptAref < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
       def has_block?; false; end
+      def has_blockarg?; false; end
 
       def make_exit exits, name = "opt_aref"
         exits.make_exit(name, current_pc, temp_stack.size)
@@ -1123,7 +1162,10 @@ class TenderJIT
       end
     end
 
-    def compile_call_optimized iseq, req, argc, iseq_ptr, recv, cme, return_loc
+    class CompileISeqBlock < Struct.new(:iseq_ptr, :temp_stack)
+    end
+
+    def compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
       case RbMethodDefinitionStruct.new(cme.def).body.optimize_type
       when rb.c("OPTIMIZED_METHOD_TYPE_SEND")
         with_runtime do |rt|
@@ -1171,8 +1213,51 @@ class TenderJIT
           rt.jump jit_buffer.memory.to_i + return_loc
         end
       when rb.c("OPTIMIZED_METHOD_TYPE_BLOCK_CALL")
+        # FIXME: We're assuming the BOP isn't redefined
+        peek_ep = rb.VM_EP_LEP(RbControlFrameStruct.ep(cfp))
+        block_handler = rb.VM_ENV_BLOCK_HANDLER(peek_ep)
+
+        temp_stack = req.temp_stack
+
         with_runtime do |rt|
-          rt.jump req.make_exit(exits, "unknown_method_type")
+          # Adjust the stack for the block arg
+          if req.has_blockarg?
+            temp_stack = temp_stack.dup
+            if temp_stack.peek(0).symbol?
+              rt.call_cfunc Fiddle::Handle::DEFAULT["rb_sym_to_proc"], [temp_stack.pop]
+              loc = temp_stack.push :proc
+              rt.write loc, rt.return_value
+            else
+              raise NotImplementedError
+            end
+            temp_stack.freeze
+          end
+
+          argc.times do |i|
+            raise NotImplementedError, "we need a test for this"
+            rt.write temp_stack[i + 1], temp_stack[i]
+          end
+
+          case rb.vm_block_handler_type(block_handler)
+          when rb.c("block_handler_type_iseq")
+            # https://github.com/ruby/ruby/blob/cbf2078a25c3efb12f45b643a636ff7bb4d402b6/vm_insnhelper.c#L3307-L3309
+            captured_block = rb.VM_BH_TO_ISEQ_BLOCK(block_handler)
+            captured = rb.struct("rb_captured_block").new(captured_block)
+            iseq_ptr = captured.code.iseq
+
+            rt.flush
+
+            compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, req, temp_stack
+          when rb.c("block_handler_type_ifunc")
+            raise
+          when rb.c("block_handler_type_symbol")
+            raise
+          when rb.c("block_handler_type_proc")
+            raise
+          else
+            raise "Unknown block handler type"
+          end
+          #rt.jump req.make_exit(exits, "unknown_method_type")
         end
       else
         puts RbMethodDefinitionStruct.new(cme.def).body.optimize_type
@@ -1239,7 +1324,36 @@ class TenderJIT
       ci = req.call_info
       mid = ci.vm_ci_mid
       argc = ci.vm_ci_argc
+      temp_stack = req.temp_stack
+
       recv = topn(stack, argc).to_i
+
+      if req.has_blockarg?
+        block_code = Fiddle::Pointer.new(stack - Fiddle::SIZEOF_VOIDP).ptr.to_i
+
+        # https://github.com/ruby/ruby/blob/844588f9157b364244a7d34ee0fcc70ccc2a7dd9/vm_args.c#L889
+        if rb.RB_SYMBOL_P(block_code) &&
+            CFuncs.rb_method_basic_definition_p(rb.rb_class_of(block_code),
+                                                CFuncs.rb_sym2id(Fiddle.dlwrap(:to_proc))) != 0
+          cref = rb.vm_env_cref(RbControlFrameStruct.ep(cfp))
+          if cref && !rb.NIL_P(rb.struct("rb_cref_t").refinements(cref))
+            # We need to make this side-exit.  I don't want to support refinements
+            raise NotImplementedError
+          end
+        else
+          #proxy = Fiddle.read_ptr(Fiddle::Handle::DEFAULT["rb_block_param_proxy"], 0)
+          #p rb.RB_SYMBOL_P(block_code)
+          #puts proxy
+          #puts block_code
+          raise NotImplementedError
+        end
+
+        # adjust the stack.  The blockarg needs to be popped so argc lines up
+        recv = topn(stack - Fiddle::SIZEOF_VOIDP, argc).to_i
+        temp_stack = req.temp_stack.dup
+        temp_stack.pop
+        temp_stack.freeze
+      end
 
       patch_loc = loc - jit_buffer.memory.to_i
 
@@ -1289,16 +1403,30 @@ class TenderJIT
       # We can't lazily compile the block iseq because we don't know whether
       # or not the cfunc will call the block
       if req.has_block? && method_definition.type == VM_METHOD_TYPE_CFUNC
+        if req.has_blockarg?
+          # TODO: C function that takes a blockarg
+          raise NotImplementedError
+        end
         @jit.compile_iseq_t req.blockiseq
+      end
+
+      # If the call site has a block arg, and it's an iseq, lets compile it
+      if req.has_blockarg?
+        peek_ep = rb.VM_EP_LEP(RbControlFrameStruct.ep(cfp))
+        block_handler = rb.VM_ENV_BLOCK_HANDLER(peek_ep)
+        if rb.vm_block_handler_type(block_handler) == rb.c("block_handler_type_iseq")
+          captured = rb.VM_BH_TO_ISEQ_BLOCK(block_handler)
+          blockiseq = rb.struct("rb_captured_block").new(captured).code.iseq
+
+          @jit.compile_iseq_t blockiseq
+        end
       end
 
       # Bail on any method calls that aren't "simple".  Not handling *args,
       # kwargs, etc right now
-      #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
       # If we're compiling a send that has a block, the "simple" ones are tagged
       # with VM_CALL_FCALL, otherwise we have to look for ARGS_SIMPLE
-      flags = req.has_block? ? VM_CALL_FCALL : VM_CALL_ARGS_SIMPLE
-      unless ci.vm_ci_flag == 0 || ((ci.vm_ci_flag & flags) == flags)
+      unless ci.supported_call?
         side_exit = req.make_exit(exits, "complex_method")
         patch_source_jump jit_buffer, at: patch_loc, to: side_exit
         return side_exit
@@ -1313,7 +1441,6 @@ class TenderJIT
       rb_recv = Fiddle.dlunwrap recv
 
       with_runtime do |rt|
-        temp_stack = req.temp_stack
         recv_loc = temp_stack.peek(argc).loc
 
         # If the compile time receiver is a special constant, we need to check
@@ -1374,7 +1501,7 @@ class TenderJIT
       when VM_METHOD_TYPE_BMETHOD
         compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, return_loc
       when VM_METHOD_TYPE_OPTIMIZED
-        compile_call_optimized iseq, req, argc, iseq_ptr, recv, cme, return_loc
+        compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
       else
         side_exit = req.make_exit(exits, "unknown_method_type")
         patch_source_jump jit_buffer, at: patch_loc, to: side_exit
@@ -2043,13 +2170,13 @@ class TenderJIT
 
     def handle_putobject_INT2FIX_1_
       with_runtime do |rt|
-        rt.push Fisk::Imm64.new(0x3), name: T_FIXNUM
+        rt.push Fisk::Imm64.new(0x3), name: 1, type: T_FIXNUM
       end
     end
 
     def handle_putobject_INT2FIX_0_
       with_runtime do |rt|
-        rt.push Fisk::Imm64.new(0x1), name: T_FIXNUM
+        rt.push Fisk::Imm64.new(0x1), name: 0, type: T_FIXNUM
       end
     end
 
@@ -2146,20 +2273,10 @@ class TenderJIT
     end
 
     def handle_putobject literal
-      object_name = if rb.RB_FIXNUM_P(literal)
-              T_FIXNUM
-            elsif literal == Qtrue
-              true
-            elsif literal == Qfalse
-              false
-            elsif rb.RB_SYMBOL_P(literal)
-              T_SYMBOL
-            else
-              :unknown
-            end
+      object_type = rb.rb_type literal
 
       with_runtime do |rt|
-        rt.push literal, name: object_name, type: object_name
+        rt.push literal, name: :literal, type: object_type
       end
     end
 
