@@ -242,6 +242,29 @@ class TenderJIT
       RBasic.flags(obj_addr) & RUBY_T_MASK
     end
 
+    # Basically the same as RB_BUILTIN_TYPE but handles special consts.
+    def rb_type obj_addr
+      if RB_SPECIAL_CONST_P(obj_addr)
+        case obj_addr
+        when Qfalse then Ruby::T_FALSE
+        when Qnil   then Ruby::T_NIL
+        when Qtrue  then Ruby::T_TRUE
+        else
+          if self.RB_FIXNUM_P obj_addr
+            Ruby::T_FIXNUM
+          elsif self.RB_STATIC_SYM_P obj_addr
+            Ruby::T_SYMBOL
+          elsif self.RB_FLONUM_P obj_addr
+            Ruby::T_FLOAT
+          else
+            raise "Unexpected type!"
+          end
+        end
+      else
+        RB_BUILTIN_TYPE(obj_addr)
+      end
+    end
+
     def rb_current_vm
       Fiddle.read_ptr Ruby::SYMBOLS["ruby_current_vm_ptr"], 0
     end

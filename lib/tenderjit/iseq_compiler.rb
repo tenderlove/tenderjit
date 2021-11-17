@@ -2043,13 +2043,13 @@ class TenderJIT
 
     def handle_putobject_INT2FIX_1_
       with_runtime do |rt|
-        rt.push Fisk::Imm64.new(0x3), name: T_FIXNUM
+        rt.push Fisk::Imm64.new(0x3), name: 1, type: T_FIXNUM
       end
     end
 
     def handle_putobject_INT2FIX_0_
       with_runtime do |rt|
-        rt.push Fisk::Imm64.new(0x1), name: T_FIXNUM
+        rt.push Fisk::Imm64.new(0x1), name: 0, type: T_FIXNUM
       end
     end
 
@@ -2146,20 +2146,10 @@ class TenderJIT
     end
 
     def handle_putobject literal
-      object_name = if rb.RB_FIXNUM_P(literal)
-              T_FIXNUM
-            elsif literal == Qtrue
-              true
-            elsif literal == Qfalse
-              false
-            elsif rb.RB_SYMBOL_P(literal)
-              T_SYMBOL
-            else
-              :unknown
-            end
+      object_type = rb.rb_type literal
 
       with_runtime do |rt|
-        rt.push literal, name: object_name, type: object_name
+        rt.push literal, name: :literal, type: object_type
       end
     end
 
