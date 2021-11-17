@@ -300,10 +300,6 @@ class TenderJIT
       cd = RbCallData.new call_data
       ci = RbCallInfo.new cd.ci
 
-      if ci.vm_ci_flag & VM_CALL_ARGS_BLOCKARG == VM_CALL_ARGS_BLOCKARG
-        raise NotImplementedError
-      end
-
       req = CompileSend.new(ci, @temp_stack.dup.freeze, current_pc, next_pc, blockiseq)
 
       @compile_requests << Fiddle::Pinned.new(req)
@@ -374,11 +370,9 @@ class TenderJIT
     end
 
     def compile_invokeblock_iseq_handler iseq_ptr, captured, return_loc, req, temp_stack
-      temp_stack = req.temp_stack
-
       ci = req.call_info
 
-      unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+      unless ci.supported_call?
         # TODO: can this happen?
         raise NotImplementedError
       end
@@ -1294,11 +1288,9 @@ class TenderJIT
 
       # Bail on any method calls that aren't "simple".  Not handling *args,
       # kwargs, etc right now
-      #if ci.vm_ci_flag & VM_CALL_ARGS_SPLAT > 0
       # If we're compiling a send that has a block, the "simple" ones are tagged
       # with VM_CALL_FCALL, otherwise we have to look for ARGS_SIMPLE
-      flags = req.has_block? ? VM_CALL_FCALL : VM_CALL_ARGS_SIMPLE
-      unless ci.vm_ci_flag == 0 || ((ci.vm_ci_flag & flags) == flags)
+      unless ci.supported_call?
         side_exit = req.make_exit(exits, "complex_method")
         patch_source_jump jit_buffer, at: patch_loc, to: side_exit
         return side_exit
