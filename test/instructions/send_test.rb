@@ -105,6 +105,7 @@ class TenderJIT
       assert_equal 0, jit.exits
       assert_equal expected, actual
     end
+
     def block_takes_iseq_block &blk
       m = nil
       [1, 1].each do
@@ -127,5 +128,22 @@ class TenderJIT
       assert_equal expected, actual
     end
 
+    def block_takes_sym_block &blk
+      blk.call(&:nil?)
+    end
+
+    def test_block_takes_sym_block
+      expected = block_takes_sym_block { |&blk| blk }
+
+      jit.compile(method(:block_takes_sym_block))
+
+      jit.enable!
+      actual = block_takes_sym_block { |&blk| blk }
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 2, jit.compiled_methods
+      assert_equal 0, jit.exits
+    end
   end
 end
