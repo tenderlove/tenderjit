@@ -52,7 +52,7 @@ class TenderJIT
 
       assert_equal 1, jit.compiled_methods
       assert_equal 1, jit.executed_methods
-      assert_equal 1, jit.exits
+      assert_equal 0, jit.exits
     end
 
     def call_bang
@@ -73,7 +73,7 @@ class TenderJIT
 
       assert_equal 1, jit.compiled_methods
       assert_equal 1, jit.executed_methods
-      assert_equal 1, jit.exits
+      assert_equal 0, jit.exits
     end
 
     def one
@@ -98,7 +98,7 @@ class TenderJIT
 
       assert_equal 2, jit.compiled_methods
       assert_equal 2, jit.executed_methods
-      assert_equal 1, jit.exits
+      assert_equal 0, jit.exits
     end
 
     def cfunc x
