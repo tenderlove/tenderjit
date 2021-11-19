@@ -285,7 +285,7 @@ class TenderJIT
     rb_iseq.body.variable.coverage = 0
   end
 
-  SIZE = 4096 * (4 * 3)
+  SIZE = (4096 * 10) * 3
 
   CACHE_BUSTERS = Fisk::Helpers.jitbuffer(4096)
 
