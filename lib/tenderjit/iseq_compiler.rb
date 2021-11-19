@@ -2154,6 +2154,10 @@ class TenderJIT
       compare_fixnum { |reg0, reg1| __.cmovle(reg0, reg1) }
     end
 
+    def handle_opt_eq call_data
+      handle_opt_send_without_block call_data
+    end
+
     def handle_opt_not call_data
       handle_opt_send_without_block call_data
     end
