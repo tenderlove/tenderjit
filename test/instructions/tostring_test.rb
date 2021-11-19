@@ -18,6 +18,11 @@ class TenderJIT
       "#{:a}"
     end
 
+    def setup
+      super
+      return skip unless RubyVM::INSTRUCTION_NAMES.include?("tostring")
+    end
+
     def test_tostring
       meth = method(:tostring)
 

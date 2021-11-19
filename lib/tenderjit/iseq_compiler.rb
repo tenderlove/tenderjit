@@ -1162,11 +1162,23 @@ class TenderJIT
       end
     end
 
+    def handle_anytostring
+      with_runtime do |rt|
+        rt.call_cfunc Fiddle::Handle::DEFAULT["rb_obj_as_string_result"],
+          [@temp_stack.pop, @temp_stack.pop]
+        rt.write @temp_stack.push(:string), rt.return_value
+      end
+    end
+
+    def handle_objtostring cd
+      handle_opt_send_without_block cd
+    end
+
     class CompileISeqBlock < Struct.new(:iseq_ptr, :temp_stack)
     end
 
     def compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
-      case RbMethodDefinitionStruct.new(cme.def).body.optimize_type
+      case optimized_method_type(cme.def)
       when rb.c("OPTIMIZED_METHOD_TYPE_SEND")
         with_runtime do |rt|
           rt.jump req.make_exit(exits, "unknown_method_type")
@@ -2689,6 +2701,16 @@ class TenderJIT
       rt = Runtime.new(Fisk.new, jit_buffer, @temp_stack)
       yield rt
       rt.write!
+    end
+
+    if RbMethodDefinitionStruct.member("body").type.member?("optimize_type")
+      def optimized_method_type mdef
+        RbMethodDefinitionStruct.new(mdef).body.optimize_type
+      end
+    else
+      def optimized_method_type mdef
+        RbMethodDefinitionStruct.new(mdef).body.optimized.type
+      end
     end
   end
 end
