@@ -15,6 +15,8 @@ class TenderJIT
     def test_checktype
       m = method(:interpolation)
       iseq = RubyVM::InstructionSequence.of(m)
+      return skip unless iseq.to_a.flatten.include?(:checktype)
+
       assert_includes iseq.to_a.flatten, :checktype
 
       jit.compile m
