@@ -2162,6 +2162,10 @@ class TenderJIT
       handle_opt_send_without_block call_data
     end
 
+    def handle_opt_length call_data
+      handle_opt_send_without_block call_data
+    end
+
     def handle_opt_succ call_data
       value = @temp_stack.peek(0).loc
 
