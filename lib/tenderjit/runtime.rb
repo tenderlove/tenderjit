@@ -6,7 +6,10 @@ class TenderJIT
       @label_count = 0
       @jit_buffer = jit_buffer
       @temp_stack = temp_stack
-      @cfunc_call_stack_depth = 0 # Used for automatic alignment
+
+      # Used for automatic alignment; the stack starts unaligned.
+      #
+      @cfunc_call_stack_depth = 8
 
       yield self if block_given?
     end
@@ -307,6 +310,10 @@ class TenderJIT
       end
     end
 
+    def movsd reg, source
+      @fisk.movsd reg, cast_to_fisk(source)
+    end
+
     def break
       @fisk.int(@fisk.lit(3))
     end
@@ -533,8 +540,6 @@ class TenderJIT
 
       val = cast_to_fisk val
 
-      @cfunc_call_stack_depth += val.size / 8
-
       if val.memory? || val.immediate?
         write loc, val
       else
@@ -551,7 +556,11 @@ class TenderJIT
       end
     end
 
-    def call_cfunc func_loc, params, auto_align: true
+    # options:
+    #  :call_reg: Specify an alternate register for the (long) function call; defaults
+    #             to RAX.
+    #
+    def call_cfunc func_loc, params, auto_align: true, call_reg: Fisk::Registers::RAX
       raise NotImplementedError, "too many parameters" if params.length > 6
       raise "No function location" unless func_loc > 0
 
@@ -570,8 +579,10 @@ class TenderJIT
             raise NotImplementedError
           end
         end
-        @fisk.mov(@fisk.rax, @fisk.uimm(func_loc))
-          .call(@fisk.rax)
+
+        @fisk.mov(call_reg, @fisk.uimm(func_loc))
+          .call(call_reg)
+
         @fisk.rax
       end
     end
@@ -588,9 +599,9 @@ class TenderJIT
         raise NotImplementedError, message
       end
 
-      # Watch out :) Must consider that 8 bytes are already pushed (RIP).
-      #
-      if auto_align && @cfunc_call_stack_depth % 16 == 0
+      if !auto_align || @cfunc_call_stack_depth % 16 == 0
+        yield
+      else
         @fisk.push REG_BP.to_register
 
         result = yield
@@ -598,8 +609,6 @@ class TenderJIT
         @fisk.pop REG_BP.to_register
 
         result
-      else
-        yield
       end
     end
 

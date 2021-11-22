@@ -5,8 +5,8 @@ require "fisk/helpers"
 
 include Fisk::Registers
 
-# A transparent wrapper around a JIT buffer, that, after the JIT buffer is executed,
-# saves the registers content to a separate location, so that they can be tested.
+# A JIT buffer that, after execution, saves the registers content to a separate
+# location, so that they can be tested.
 #
 # In order to use:
 #
@@ -16,16 +16,20 @@ include Fisk::Registers
 #     saving_buffer.to_function([], Fiddle::TYPE_VOID).call
 #     assert_equal 1, saving_buffer.register_value(RAX)
 #
+# The design can easily be turned into a proxy around a JIT Buffer, if needed.
+#
 class RegistersSavingBuffer < Fisk::Helpers::JITBuffer
   # In push order, which is the reverse order of storage/read. RSP +must+ be the
-  # first, as it needs manual correction.
+  # first, in order to store the original value.
   #
   SAVED_REGISTERS = [RSP, R15, R14, R13, R12, R11, R10, R9, R8, RBP, RSI, RDI, RDX, RCX, RBX, RAX]
 
   def initialize memory, size
     super
 
-    @data_buffer = Fisk::Helpers.jitbuffer(SAVED_REGISTERS.size * 8).memory
+    # The +8 bytes are used to store the caller return address.
+    #
+    @data_buffer = Fisk::Helpers.jitbuffer(SAVED_REGISTERS.size * 8 + 8).memory
   end
 
   # Run the wrapper buffer, which in turn, runs the JIT buffer.
@@ -54,6 +58,16 @@ class RegistersSavingBuffer < Fisk::Helpers::JITBuffer
     register_values.fetch reg.name
   end
 
+  # Convenience methods.
+  #
+  SAVED_REGISTERS.each do |reg|
+    class_eval <<~RUBY, __FILE__, __LINE__ + 1
+      def saved_#{reg.name}
+        register_values.fetch #{reg.name.inspect}
+      end
+    RUBY
+  end
+
   # List of "register_name: hex_value"
   #
   # arguments:
@@ -74,16 +88,47 @@ class RegistersSavingBuffer < Fisk::Helpers::JITBuffer
 
     wrapper_buffer = Fisk::Helpers.jitbuffer 4096
 
-    # -5: offset the call instruction itself.
+    # Must include the jmp length (5).
     #
-    jit_buffer_rel_addr = memory.to_i - wrapper_buffer.memory.to_i - 5
+    rel_return_in_wrapper_buffer = 0x2a
+
+    jit_buffer_rel_addr = memory.to_i - wrapper_buffer.memory.to_i - rel_return_in_wrapper_buffer
+
     data_buffer = @data_buffer
 
     fisk.asm(wrapper_buffer) do
-      # WATCH OUT! If instructions are added before the call, the jit_buffer_rel_addr
-      # needs to be adjusted.
+      ##########################################################################
+      # Save and patch the return address
+      ##########################################################################
 
-      call Fisk::Rel32.new(jit_buffer_rel_addr)
+      # We do this so that the jmp acts as a call; we can't use a call becuase it
+      # would modify the stack.
+      # Since we push two registers, we need to take them into account when finding
+      # the return address in the stack.
+      # When modifying this, update `rel_return_in_wrapper_buffer``.
+
+      push RAX
+      push RBX
+
+      mov RAX, m64(RSP, 2 * 8)
+      mov RBX, imm64(data_buffer.to_i + SAVED_REGISTERS.size * 8)
+      mov m64(RBX), RAX
+
+      mov RAX, imm64(wrapper_buffer.memory.to_i + rel_return_in_wrapper_buffer)
+      mov m64(RSP, 2 * 8), RAX
+
+      pop RBX
+      pop RAX
+
+      ##########################################################################
+      # Invoke the original function
+      ##########################################################################
+
+      jmp Fisk::Rel32.new(jit_buffer_rel_addr)
+
+      ##########################################################################
+      # Store register values
+      ##########################################################################
 
       # Technically, pushes move the SP first then store the value, so intuitively,
       # we'd need to recompute the saved SP; this is not the case though - the pre-push
@@ -114,6 +159,24 @@ class RegistersSavingBuffer < Fisk::Helpers::JITBuffer
       SAVED_REGISTERS.reverse.each do |reg|
         pop reg
       end
+
+      ##########################################################################
+      # Return to the caller
+      ##########################################################################
+
+      # Put the callee return address in the stack, and return.
+
+      push RAX # reserve space for the return address
+
+      push RAX
+      push RBX
+
+      mov RBX, imm64(data_buffer.to_i + SAVED_REGISTERS.size * 8)
+      mov RAX, m64(RBX)
+      mov m64(RSP, 2 * 8), RAX
+
+      pop RBX
+      pop RAX
 
       ret
     end
