@@ -551,7 +551,11 @@ class TenderJIT
       end
     end
 
-    def call_cfunc func_loc, params, auto_align: true
+    # options:
+    #  :call_reg: Specify an alternate register for the (long) function call; defaults
+    #             to RAX.
+    #
+    def call_cfunc func_loc, params, auto_align: true, call_reg: Fisk::Registers::RAX
       raise NotImplementedError, "too many parameters" if params.length > 6
       raise "No function location" unless func_loc > 0
 
@@ -570,8 +574,10 @@ class TenderJIT
             raise NotImplementedError
           end
         end
-        @fisk.mov(@fisk.rax, @fisk.uimm(func_loc))
-          .call(@fisk.rax)
+
+        @fisk.mov(call_reg, @fisk.uimm(func_loc))
+          .call(call_reg)
+
         @fisk.rax
       end
     end
