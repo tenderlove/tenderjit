@@ -58,6 +58,16 @@ class RegistersSavingBuffer < Fisk::Helpers::JITBuffer
     register_values.fetch reg.name
   end
 
+  # Convenience methods.
+  #
+  SAVED_REGISTERS.each do |reg|
+    class_eval <<~RUBY, __FILE__, __LINE__ + 1
+      def saved_#{reg.name}
+        register_values.fetch #{reg.name.inspect}
+      end
+    RUBY
+  end
+
   # List of "register_name: hex_value"
   #
   # arguments:
