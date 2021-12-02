@@ -39,7 +39,7 @@ class TenderJIT
 
       loc = temp_stack.first.loc + (margin / Fiddle::SIZEOF_VOIDP)
       with_ref(loc) do |reg|
-        self.if(reg, :>, REG_CFP) {
+        self.if(reg, :<, REG_CFP) {
           # do nothing
         }.else {
           jump(exit_location)
@@ -409,8 +409,8 @@ class TenderJIT
         end
 
         case op
-        when :>
-          @fisk.jg else_label # else label
+        when :<
+          @fisk.jge else_label # else label
         else
           raise NotImplementedError
         end
