@@ -407,7 +407,13 @@ class TenderJIT
             @fisk.cmp op1, op2
           end
         end
-        @fisk.jg else_label # else label
+
+        case op
+        when :>
+          @fisk.jg else_label # else label
+        else
+          raise NotImplementedError
+        end
       else
         if lhs.respond_to?(:call)
           lhs.call(@fisk)
