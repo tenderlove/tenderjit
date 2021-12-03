@@ -314,6 +314,10 @@ class TenderJIT
       @fisk.movsd reg, cast_to_fisk(source)
     end
 
+    def nop
+      @fisk.nop
+    end
+
     def break
       @fisk.int(@fisk.lit(3))
     end
@@ -399,19 +403,20 @@ class TenderJIT
       finish_label = push_label
 
       temp_var do |flags|
-        mask = RUBY_T_MASK & Ruby::RARRAY_EMBED_FLAG
+        flags.write loc
 
         # get the flags from the object
         # First write the Ruby object to the temp `flags` register
-        flags.write loc
+
+        @fisk.test(pointer(flags, type: RBasic).flags, @fisk.imm(Ruby::T_ARRAY))
+        @fisk.jz else_label
 
         # Then get the flags field from that temp register and write it out
         # to the same register (because we don't need the Ruby object)
-        flags.write pointer(flags, type: RBasic).flags
-        flags.and mask
-        @fisk.cmp flags.to_register, @fisk.imm(mask)
+        @fisk.test(pointer(flags, type: RBasic).flags, @fisk.imm(Ruby::RARRAY_EMBED_FLAG))
       end
-      @fisk.jne else_label
+
+      @fisk.jz else_label
       yield
       @fisk.jmp finish_label # finish label
       self
@@ -425,7 +430,7 @@ class TenderJIT
       @fisk.shr dst, @fisk.imm(Ruby::RARRAY_EMBED_LEN_SHIFT)
     end
 
-    def embedded_array_ref array, index, dst
+    def extended_array_length array, dst
       array_loc = array
 
       # If the array is in a register already, great.  If not, we need
@@ -435,7 +440,34 @@ class TenderJIT
         array_loc = dst
       end
 
-      write dst, pointer(array_loc, type: RArray).as.ary[index]
+      write dst, pointer(array_loc, type: RArray).as.heap.len
+    end
+
+    def extended_array_buffer array, dst
+      array_loc = array
+
+      # If the array is in a register already, great.  If not, we need
+      # to put it in a register so we can dereference the items
+      unless array_loc.register?
+        write dst, array_loc
+        array_loc = dst
+      end
+
+      write dst, pointer(array_loc, type: RArray).as.heap.ptr
+    end
+
+    def embedded_array_buffer array, dst
+      # Put the array in the destination register
+      write dst, array
+
+      # Add the offset of the "as" field
+      @fisk.add dst.to_register, @fisk.imm(RArray.offsetof("as"))
+    end
+
+    def buffer_ref tmp, i
+      raise "tmp must be a register" unless tmp.register?
+
+      @fisk.m64(tmp.to_register, i * Fiddle::SIZEOF_VOIDP)
     end
 
     def if lhs, op = nil, rhs = nil

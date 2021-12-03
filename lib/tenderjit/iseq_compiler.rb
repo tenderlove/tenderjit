@@ -2686,18 +2686,16 @@ class TenderJIT
 
             # Verify the compile time check
             rt.if_embedded_array?(stack_top) {
-              rt.temp_var do |len|
-                rt.embedded_array_length(stack_top, len)
-                rt.if(len, :>=, req.num) {
+              rt.temp_var do |tmp|
 
-                  rt.temp_var do |ary|
-                    # Save the array in a temporary register, otherwise
-                    # it could get overwritten
-                    rt.write ary, stack_top
-                    (req.num - 1).downto(0) do |i|
-                      rt.embedded_array_ref(ary, i, len)
-                      rt.push len, name: "array ref"
-                    end
+                rt.embedded_array_length(stack_top, tmp)
+
+                rt.if(tmp, :>=, req.num) {
+                  # Get the buffer for the embedded array
+                  rt.embedded_array_buffer(stack_top, tmp)
+
+                  (req.num - 1).downto(0) do |i|
+                    rt.push rt.buffer_ref(tmp, i), name: "array ref"
                   end
 
                   # great!
@@ -2711,7 +2709,30 @@ class TenderJIT
               rt.break
             }
           else
-            raise NotImplementedError
+            rt.if_embedded_array?(stack_top) {
+              # recompile
+              rt.break
+            }.else {
+              rt.temp_var do |tmp|
+                # Write the array length in to the `len` register
+                rt.extended_array_length(stack_top, tmp)
+
+                rt.if(tmp, :>=, req.num) {
+                  # Get the buffer for the extended array
+                  rt.extended_array_buffer(stack_top, tmp)
+
+                  (req.num - 1).downto(0) do |i|
+                    rt.push rt.buffer_ref(tmp, i), name: "array ref"
+                  end
+
+                  # great!
+                  rt.jump jit_buffer.memory.to_i + return_loc
+                }.else {
+                  # recompile
+                  rt.break
+                }
+              end
+            }
           end
         else
           raise NotImplementedError
