@@ -398,6 +398,30 @@ class TenderJIT
     end
     alias :fixnum? :RB_FIXNUM_P
 
+    def if_extended_array? loc
+      else_label = push_label # else label
+      finish_label = push_label
+
+      temp_var do |flags|
+        flags.write loc
+
+        # get the flags from the object
+        # First write the Ruby object to the temp `flags` register
+
+        @fisk.test(pointer(flags, type: RBasic).flags, @fisk.imm(Ruby::T_ARRAY))
+        @fisk.jz else_label
+
+        # Then get the flags field from that temp register and write it out
+        # to the same register (because we don't need the Ruby object)
+        @fisk.test(pointer(flags, type: RBasic).flags, @fisk.imm(Ruby::RARRAY_EMBED_FLAG))
+      end
+
+      @fisk.jnz else_label
+      yield
+      @fisk.jmp finish_label # finish label
+      self
+    end
+
     def if_embedded_array? loc
       else_label = push_label # else label
       finish_label = push_label

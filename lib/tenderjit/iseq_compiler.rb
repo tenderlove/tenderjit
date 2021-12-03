@@ -2715,10 +2715,7 @@ class TenderJIT
               rt.jump jit_buffer.memory.to_i + return_loc
             }
           else
-            rt.if_embedded_array?(stack_top) {
-              # recompile
-              rt.break
-            }.else {
+            rt.if_extended_array?(stack_top) {
               rt.temp_var do |tmp|
                 # Write the array length in to the `len` register
                 rt.extended_array_length(stack_top, tmp)
@@ -2738,6 +2735,11 @@ class TenderJIT
                   rt.break
                 }
               end
+            }.else {
+              # recompile
+              rt.patchable_jump req.deferred_entry
+              # FIXME: see above
+              rt.jump jit_buffer.memory.to_i + return_loc
             }
           end
         else
