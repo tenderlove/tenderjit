@@ -394,6 +394,50 @@ class TenderJIT
     end
     alias :fixnum? :RB_FIXNUM_P
 
+    def if_embedded_array? loc
+      else_label = push_label # else label
+      finish_label = push_label
+
+      temp_var do |flags|
+        mask = RUBY_T_MASK & Ruby::RARRAY_EMBED_FLAG
+
+        # get the flags from the object
+        # First write the Ruby object to the temp `flags` register
+        flags.write loc
+
+        # Then get the flags field from that temp register and write it out
+        # to the same register (because we don't need the Ruby object)
+        flags.write pointer(flags, type: RBasic).flags
+        flags.and mask
+        @fisk.cmp flags.to_register, @fisk.imm(mask)
+      end
+      @fisk.jne else_label
+      yield
+      @fisk.jmp finish_label # finish label
+      self
+    end
+
+    def embedded_array_length array, dst
+      dst = cast_to_fisk(dst)
+      write dst, array
+      write dst, pointer(dst, type: RBasic).flags
+      @fisk.and dst, @fisk.imm(Ruby::RARRAY_EMBED_LEN_MASK)
+      @fisk.shr dst, @fisk.imm(Ruby::RARRAY_EMBED_LEN_SHIFT)
+    end
+
+    def embedded_array_ref array, index, dst
+      array_loc = array
+
+      # If the array is in a register already, great.  If not, we need
+      # to put it in a register so we can dereference the items
+      unless array_loc.register?
+        write dst, array_loc
+        array_loc = dst
+      end
+
+      write dst, pointer(array_loc, type: RArray).as.ary[index]
+    end
+
     def if lhs, op = nil, rhs = nil
       else_label = push_label # else label
       finish_label = push_label
@@ -411,8 +455,10 @@ class TenderJIT
         case op
         when :<
           @fisk.jge else_label # else label
+        when :>=
+          @fisk.jl else_label # else label
         else
-          raise NotImplementedError
+          raise NotImplementedError, op.to_s
         end
       else
         if lhs.respond_to?(:call)

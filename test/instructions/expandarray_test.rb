@@ -4,8 +4,48 @@ require "helper"
 
 class TenderJIT
   class ExpandarrayTest < JITTest
-    def test_expandarray
-      skip "Please implement expandarray!"
+    def expandarray list
+      a, b = list
+      [a, b]
+    end
+
+    def test_expandarray_heap_embedded_long_enough
+      expected = expandarray([1, 2])
+
+      assert_has_insn method(:expandarray), insn: :expandarray
+
+      jit.compile method(:expandarray)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      actual = expandarray([1, 2])
+      jit.disable!
+      assert_equal expected, actual
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
+    def test_expandarray_special
+      skip "FIXME"
+      expected = expandarray({a: 1, b: 2})
+
+      assert_has_insn method(:expandarray), insn: :expandarray
+
+      jit.compile method(:expandarray)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      actual = expandarray(true)
+      jit.disable!
+      assert_equal expected, actual
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 0, jit.exits
     end
   end
 end

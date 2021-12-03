@@ -2660,6 +2660,104 @@ class TenderJIT
       end
     end
 
+    class CompileExpandArray < Struct.new(:num, :flag, :temp_stack, :deferred_entry)
+    end
+
+    def compile_expandarray cfp, req, loc
+      stack = RbControlFrameStruct.sp(cfp)
+
+      patch_loc = loc - jit_buffer.memory.to_i
+      return_loc = patch_loc + JMP_BYTES
+
+      # Get the top of the runtime stack
+      seen_ptr = Fiddle.read_ptr(stack, -Fiddle::SIZEOF_VOIDP)
+
+      temp_stack = req.temp_stack.dup
+
+      stack_top = temp_stack.pop
+
+      entry_loc  = jit_buffer.address
+
+      with_runtime(temp_stack) do |rt|
+        case rb.rb_type(seen_ptr)
+        when T_ARRAY
+          # Compile time check
+          if rb.embedded_array?(seen_ptr)
+
+            # Verify the compile time check
+            rt.if_embedded_array?(stack_top) {
+              rt.temp_var do |len|
+                rt.embedded_array_length(stack_top, len)
+                rt.if(len, :>=, req.num) {
+
+                  rt.temp_var do |ary|
+                    # Save the array in a temporary register, otherwise
+                    # it could get overwritten
+                    rt.write ary, stack_top
+                    (req.num - 1).downto(0) do |i|
+                      rt.embedded_array_ref(ary, i, len)
+                      rt.push len, name: "array ref"
+                    end
+                  end
+
+                  # great!
+                  rt.jump jit_buffer.memory.to_i + return_loc
+                }.else {
+                  rt.break
+                }
+              end
+            }.else {
+              # recompile
+              rt.break
+            }
+          else
+            raise NotImplementedError
+          end
+        else
+          raise NotImplementedError
+        end
+      end
+
+      patch_source_jump jit_buffer, at: patch_loc, to: entry_loc
+
+      entry_loc
+    end
+
+    # num is the number of elements we need to expand
+    # flag is special
+    def handle_expandarray num, flag
+      raise NotImplementedError if flag != 0
+
+      #sp_inc = num - 1 + (flag & 1 ? 1 : 0);
+
+      req = CompileExpandArray.new(num, flag, @temp_stack.dup.freeze)
+
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
+        ctx.with_runtime do |rt|
+          rt.rb_funcall self, :compile_expandarray, [REG_CFP, req, rt.return_value]
+
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
+        end
+      end
+
+      deferred.call
+      req.deferred_entry = deferred.entry.to_i
+
+      # attr rb_snum_t sp_inc = (rb_snum_t)num - 1 + (flag & 1 ? 1 : 0);
+      loc = @temp_stack.pop
+      num.times { @temp_stack.push :unknown }
+      with_runtime do |rt|
+        rt.if(rt.RB_SPECIAL_CONST_P(loc)) {
+          rt.break
+        }.else {
+          # Jump in to the deferred compiler
+          rt.patchable_jump req.deferred_entry
+        }
+      end
+    end
+
     # Call a C function at `func_loc` with `params`. Return value will be in RAX
     def call_cfunc func_loc, params, fisk = __
       raise NotImplementedError, "too many parameters" if params.length > 6
@@ -2705,8 +2803,8 @@ class TenderJIT
       fisk.write_to(@string_buffer)
     end
 
-    def with_runtime
-      rt = Runtime.new(Fisk.new, jit_buffer, @temp_stack)
+    def with_runtime temp_stack = @temp_stack
+      rt = Runtime.new(Fisk.new, jit_buffer, temp_stack)
       yield rt
       rt.write!
     end

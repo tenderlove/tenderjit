@@ -21,6 +21,7 @@ class TenderJIT
   # Struct layouts
 
   RBasic                = Internals.struct("RBasic")
+  RArray                = Internals.struct("RArray")
   RClass                = Internals.struct("RClass")
 
   RObject               = Internals.struct("RObject")
