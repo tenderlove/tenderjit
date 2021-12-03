@@ -2706,7 +2706,13 @@ class TenderJIT
               end
             }.else {
               # recompile
-              rt.break
+              rt.patchable_jump req.deferred_entry
+
+              # FIXME: It's weird that as we compile things we'll have to jump
+              # back here, then jump back to the origin.  It would be nice to
+              # directly jump back to the origin.  I need to figure out a way
+              # to do that.
+              rt.jump jit_buffer.memory.to_i + return_loc
             }
           else
             rt.if_embedded_array?(stack_top) {
