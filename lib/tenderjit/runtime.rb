@@ -710,7 +710,7 @@ class TenderJIT
 
       if block_given?
         yield tv
-        tv.release!
+        self.release_temp(tv)
       else
         tv
       end
