@@ -28,10 +28,15 @@ class TenderJIT
         offset = src.displacement
         reg = src.register
       else
-        raise NotImplementedError
+        if src.register?
+          offset = 0
+          reg = src
+        else
+          raise NotImplementedError
+        end
       end
 
-      @fisk.lea(dest, @fisk.m(reg, offset))
+      @fisk.lea(cast_to_fisk(dest), @fisk.m(reg, offset))
     end
 
     def check_vm_stack_overflow temp_stack, exit_location, local_size, stack_max
@@ -172,8 +177,16 @@ class TenderJIT
       Pointer.new reg.to_register, type, find_size(type), offset, self
     end
 
+    def dec reg
+      @fisk.dec reg.to_register
+    end
+
     def sub reg, val
-      @fisk.sub reg, cast_to_fisk(val)
+      @fisk.sub cast_to_fisk(reg), cast_to_fisk(val)
+    end
+
+    def neg reg
+      @fisk.neg reg.to_register
     end
 
     def add reg, val
@@ -184,7 +197,16 @@ class TenderJIT
       @fisk.inc reg
     end
 
-    def mult val1, val2
+    def mult val1, val2, dest = nil
+      if val1.register?
+        @fisk.mov @fisk.rax, cast_to_fisk(val2)
+        @fisk.mul cast_to_fisk(val1)
+        if dest
+          @fisk.mov cast_to_fisk(dest), @fisk.rax
+        end
+        return
+      end
+
       raise NotImplementedError unless val1.memory?
       raise NotImplementedError unless val2.memory?
 
@@ -253,9 +275,13 @@ class TenderJIT
     private :perform_division
 
     def write_memory reg, offset, val
-      @fisk.with_register do |tmp|
-        @fisk.mov(tmp, val)
-        @fisk.mov(@fisk.m64(reg, offset), tmp)
+      if val.memory?
+        @fisk.with_register do |tmp|
+          @fisk.mov(tmp, val)
+          @fisk.mov(@fisk.m64(reg, offset), tmp)
+        end
+      else
+        @fisk.mov(@fisk.m64(reg, offset), cast_to_fisk(val))
       end
     end
 
@@ -272,6 +298,10 @@ class TenderJIT
 
     def write_immediate_to_reg reg, val
       @fisk.mov(reg, @fisk.uimm(val))
+    end
+
+    def load_from_reg src, offset, dest
+      @fisk.mov(dest, @fisk.m64(src, offset))
     end
 
     def read_to_reg src, offset
@@ -398,6 +428,26 @@ class TenderJIT
     end
     alias :fixnum? :RB_FIXNUM_P
 
+    def while loc
+      raise "Must be a register" unless loc.register?
+      loc = cast_to_fisk(loc)
+
+      finish_label = push_label
+      start_label = push_label
+
+      @fisk.put_label start_label.name
+      @fisk.test loc, loc
+      @fisk.jz finish_label
+      yield
+
+      pop_label
+      finish_label = pop_label
+
+      @fisk.jmp start_label
+      @fisk.put_label finish_label
+      self
+    end
+
     def if_extended_array? loc
       else_label = push_label # else label
       finish_label = push_label
@@ -481,8 +531,10 @@ class TenderJIT
     end
 
     def embedded_array_buffer array, dst
-      # Put the array in the destination register
-      write dst, array
+      if array != dst
+        # Put the array in the destination register
+        write dst, array
+      end
 
       # Add the offset of the "as" field
       @fisk.add dst.to_register, @fisk.imm(RArray.offsetof("as"))

@@ -13,6 +13,7 @@ class TenderJIT
     SCRATCH_REGISTERS = [
       Fisk::Registers::R9,
       Fisk::Registers::R10,
+      Fisk::Registers::R11,
     ]
 
     attr_reader :blocks
@@ -2686,7 +2687,7 @@ class TenderJIT
 
             # Verify the compile time check
             rt.if_embedded_array?(stack_top) {
-              rt.temp_var do |tmp|
+              rt.temp_var { |tmp|
 
                 rt.embedded_array_length(stack_top, tmp)
 
@@ -2701,9 +2702,57 @@ class TenderJIT
                   # great!
                   rt.jump jit_buffer.memory.to_i + return_loc
                 }.else {
-                  rt.break
+                  rt.temp_var { |tmp2|
+                    rt.temp_var { |stack|
+                      # number of nils to push = tmp - req.num
+                      rt.write tmp2, req.num
+                      rt.sub tmp2, tmp
+
+                      # Dereference the stack top to get the array
+                      rt.write stack, stack_top
+
+                      # Push the array reference on the stack so we can get it again later
+                      rt.push_reg stack
+
+                      # Copy the stack top to a temp reg
+                      rt.load_address_in stack, stack_top
+
+                      rt.while(tmp2) {
+                        rt.write_memory stack.to_register, 0, @fisk.imm(Qnil)
+                        rt.add stack, Fiddle::SIZEOF_VOIDP
+                        rt.dec(tmp2)
+                      }
+
+                      # Get the array reference back
+                      rt.pop_reg tmp2
+
+                      # Get the buffer for the embedded array
+                      rt.embedded_array_buffer(tmp2, tmp2)
+
+                      # Push to the end of the array
+                      rt.push_reg stack
+                      rt.write stack, tmp
+                      rt.mult stack, Fiddle::SIZEOF_VOIDP, stack
+                      rt.add tmp2, stack
+                      rt.sub tmp2, Fiddle::SIZEOF_VOIDP
+                      rt.pop_reg stack
+
+                      rt.while(tmp) {
+                        rt.push_reg tmp2
+                        rt.load_from_reg tmp2.to_register, 0, tmp2.to_register
+                        rt.write_to_mem stack.to_register, 0, tmp2.to_register
+                        rt.pop_reg tmp2
+                        rt.add stack, Fiddle::SIZEOF_VOIDP
+                        rt.sub tmp2, Fiddle::SIZEOF_VOIDP
+                        rt.dec(tmp)
+                      }
+                    }
+                  }
+
+                  # great!
+                  rt.jump jit_buffer.memory.to_i + return_loc
                 }
-              end
+              }
             }.else {
               # recompile
               rt.patchable_jump req.deferred_entry
@@ -2731,7 +2780,55 @@ class TenderJIT
                   # great!
                   rt.jump jit_buffer.memory.to_i + return_loc
                 }.else {
-                  # recompile
+                  rt.temp_var { |tmp2|
+                    rt.temp_var { |stack|
+                      # number of nils to push = tmp - req.num
+                      rt.write tmp2, req.num
+                      rt.sub tmp2, tmp
+
+                      # Dereference the stack top to get the array
+                      rt.write stack, stack_top
+
+                      # Push the array reference on the stack so we can get it again later
+                      rt.push_reg stack
+
+                      # Copy the stack top to a temp reg
+                      rt.load_address_in stack, stack_top
+
+                      rt.while(tmp2) {
+                        rt.write_memory stack.to_register, 0, @fisk.imm(Qnil)
+                        rt.add stack, Fiddle::SIZEOF_VOIDP
+                        rt.dec(tmp2)
+                      }
+
+                      # Get the array reference back
+                      rt.pop_reg tmp2
+
+                      # Get the buffer for the embedded array
+                      rt.extended_array_buffer(tmp2, tmp2)
+
+                      # Push to the end of the array
+                      rt.push_reg stack
+                      rt.write stack, tmp
+                      rt.mult stack, Fiddle::SIZEOF_VOIDP, stack
+                      rt.add tmp2, stack
+                      rt.sub tmp2, Fiddle::SIZEOF_VOIDP
+                      rt.pop_reg stack
+
+                      rt.while(tmp) {
+                        rt.push_reg tmp2
+                        rt.load_from_reg tmp2.to_register, 0, tmp2.to_register
+                        rt.write_to_mem stack.to_register, 0, tmp2.to_register
+                        rt.pop_reg tmp2
+                        rt.add stack, Fiddle::SIZEOF_VOIDP
+                        rt.sub tmp2, Fiddle::SIZEOF_VOIDP
+                        rt.dec(tmp)
+                      }
+                    }
+                  }
+
+                  # great!
+                  rt.jump jit_buffer.memory.to_i + return_loc
                   rt.break
                 }
               end
