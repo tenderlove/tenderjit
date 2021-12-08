@@ -285,7 +285,7 @@ class TenderJIT
     rb_iseq.body.variable.coverage = 0
   end
 
-  SIZE = (4096 * 10) * 3
+  DEFAULT_ALLOCATED_MEMORY = (4096 * 10) * 3
 
   CACHE_BUSTERS = Fisk::Helpers.jitbuffer(4096)
 
@@ -430,7 +430,10 @@ class TenderJIT
   attr_reader :stats
   attr_reader :interpreter_call
 
-  def initialize
+  # @param allocated_memory [Integer] Memory, in bytes, allocated in total to the
+  #   JIT.
+  #
+  def initialize(allocated_memory: DEFAULT_ALLOCATED_MEMORY)
     @stats = STATS
     @stats.compiled_methods = 0
     @stats.executed_methods = 0
@@ -439,17 +442,17 @@ class TenderJIT
 
     @exit_stats   = ExitStats.malloc(Fiddle::RUBY_FREE)
 
-    memory        = Fisk::Helpers.mmap_jit(SIZE)
-    CFuncs.memset(memory, 0xCC, SIZE)
-    @jit_buffer   = Fisk::Helpers::JITBuffer.new memory, SIZE / 3
+    memory        = Fisk::Helpers.mmap_jit(allocated_memory)
+    CFuncs.memset(memory, 0xCC, allocated_memory)
+    @jit_buffer   = Fisk::Helpers::JITBuffer.new memory, allocated_memory / 3
 
     @interpreter_call = INTERPRETER_CALL
 
-    memory += SIZE / 3
-    @deferred_calls = DeferredCompilations.new(Fisk::Helpers::JITBuffer.new(memory, SIZE / 3))
+    memory += allocated_memory / 3
+    @deferred_calls = DeferredCompilations.new(Fisk::Helpers::JITBuffer.new(memory, allocated_memory / 3))
 
-    memory += SIZE / 3
-    exit_buffer   = Fisk::Helpers::JITBuffer.new(memory, SIZE / 3)
+    memory += allocated_memory / 3
+    exit_buffer   = Fisk::Helpers::JITBuffer.new(memory, allocated_memory / 3)
     @exit_code    = ExitCode.new exit_buffer, @stats.to_i, @exit_stats.to_i
     @compiled_iseq_addrs = []
   end
