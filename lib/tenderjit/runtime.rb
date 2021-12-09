@@ -194,7 +194,7 @@ class TenderJIT
     end
 
     def inc reg
-      @fisk.inc reg
+      @fisk.inc reg.to_register
     end
 
     def mult val1, val2, dest = nil
@@ -323,7 +323,7 @@ class TenderJIT
     end
 
     def write_to_mem dst, offset, src
-      @fisk.mov(@fisk.m64(dst, offset), src)
+      @fisk.mov(@fisk.m64(dst.to_register, offset), cast_to_fisk(src))
     end
 
     def write dst, src
@@ -449,6 +449,39 @@ class TenderJIT
     end
 
     def if_extended_array? loc
+      raise unless loc.register?
+
+      else_label = push_label # else label
+      finish_label = push_label
+
+      # get the flags from the object
+      # First write the Ruby object to the temp `flags` register
+
+      @fisk.test(pointer(loc, type: RBasic).flags, @fisk.imm(Ruby::T_ARRAY))
+      @fisk.jz else_label
+
+      # Then get the flags field from that temp register and write it out
+      # to the same register (because we don't need the Ruby object)
+      @fisk.test(pointer(loc, type: RBasic).flags, @fisk.imm(Ruby::RARRAY_EMBED_FLAG))
+
+      @fisk.jnz else_label
+      yield
+      @fisk.jmp finish_label # finish label
+      self
+    end
+
+    def if_nil? loc
+      else_label = push_label # else label
+      finish_label = push_label
+
+      @fisk.cmp(loc, @fisk.imm(Qnil))
+      @fisk.jne else_label
+      yield
+      @fisk.jmp finish_label # finish label
+      self
+    end
+
+    def if_array? loc
       else_label = push_label # else label
       finish_label = push_label
 
@@ -460,13 +493,19 @@ class TenderJIT
 
         @fisk.test(pointer(flags, type: RBasic).flags, @fisk.imm(Ruby::T_ARRAY))
         @fisk.jz else_label
-
-        # Then get the flags field from that temp register and write it out
-        # to the same register (because we don't need the Ruby object)
-        @fisk.test(pointer(flags, type: RBasic).flags, @fisk.imm(Ruby::RARRAY_EMBED_FLAG))
       end
 
-      @fisk.jnz else_label
+      @fisk.jz else_label
+      yield
+      @fisk.jmp finish_label # finish label
+      self
+    end
+
+    def if_test_bit reg, bit
+      else_label = push_label # else label
+      finish_label = push_label
+      @fisk.test(cast_to_fisk(reg), cast_to_fisk(bit))
+      @fisk.jz else_label
       yield
       @fisk.jmp finish_label # finish label
       self
@@ -476,19 +515,17 @@ class TenderJIT
       else_label = push_label # else label
       finish_label = push_label
 
-      temp_var do |flags|
-        flags.write loc
+      raise unless loc.register?
 
-        # get the flags from the object
-        # First write the Ruby object to the temp `flags` register
+      # get the flags from the object
+      # First write the Ruby object to the temp `flags` register
 
-        @fisk.test(pointer(flags, type: RBasic).flags, @fisk.imm(Ruby::T_ARRAY))
-        @fisk.jz else_label
+      @fisk.test(pointer(loc, type: RBasic).flags, @fisk.imm(Ruby::T_ARRAY))
+      @fisk.jz else_label
 
-        # Then get the flags field from that temp register and write it out
-        # to the same register (because we don't need the Ruby object)
-        @fisk.test(pointer(flags, type: RBasic).flags, @fisk.imm(Ruby::RARRAY_EMBED_FLAG))
-      end
+      # Then get the flags field from that temp register and write it out
+      # to the same register (because we don't need the Ruby object)
+      @fisk.test(pointer(loc, type: RBasic).flags, @fisk.imm(Ruby::RARRAY_EMBED_FLAG))
 
       @fisk.jz else_label
       yield
