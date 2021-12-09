@@ -202,7 +202,9 @@ class TenderJIT
 
     IVarRequest = Struct.new(:id, :current_pc, :next_pc, :stack_loc, :deferred_entry)
 
-    def compile_getinstancevariable recv, req, loc
+    def compile_getinstancevariable cfp, req, loc
+      recv = RbControlFrameStruct.self(cfp)
+
       if rb.RB_SPECIAL_CONST_P(recv)
         raise NotImplementedError, "no ivar reads on non-heap objects"
       end
@@ -599,7 +601,9 @@ class TenderJIT
       end
     end
 
-    def compile_setinstancevariable recv, req, loc
+    def compile_setinstancevariable cfp, req, loc
+      recv = RbControlFrameStruct.self(cfp)
+
       if rb.RB_SPECIAL_CONST_P(recv)
         raise NotImplementedError, "no ivar reads on non-heap objects"
       end
@@ -668,12 +672,10 @@ class TenderJIT
       # stack until after this method call
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
-
           rt.push_reg REG_BP
           rt.push_reg REG_BP
           rt.push_reg rt.c_param(0)
-          rt.rb_funcall_without_alignment self, :compile_setinstancevariable, [cfp_ptr.self, req, rt.return_value]
+          rt.rb_funcall_without_alignment self, :compile_setinstancevariable, [REG_CFP, req, rt.return_value]
           rt.pop_reg rt.c_param(0)
           rt.pop_reg REG_BP
           rt.pop_reg REG_BP
@@ -731,8 +733,6 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
-
           temp = rt.temp_var
           temp.write rt.pointer(rt.return_value)[0]
           temp.shl   24
@@ -752,7 +752,7 @@ class TenderJIT
             rt.pointer(rt.return_value)[0] = temp
             temp.release!
 
-            rt.rb_funcall self, :compile_getinstancevariable, [cfp_ptr.self, req, rt.return_value]
+            rt.rb_funcall self, :compile_getinstancevariable, [REG_CFP, req, rt.return_value]
 
             rt.NUM2INT(rt.return_value)
 
@@ -1014,7 +1014,7 @@ class TenderJIT
       Fiddle::Pointer.new(stack - (Fiddle::SIZEOF_VOIDP * (i + 1))).ptr
     end
 
-    def compile_jump stack, req, patch_loc
+    def compile_jump cfp, req, patch_loc
       target_block = @blocks.find { |b| b.entry_idx == req.jump_idx }
 
       unless target_block
@@ -1708,9 +1708,7 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
-
-          rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request, rt.return_value]
+          rt.rb_funcall self, :compile_jump, [REG_CFP, patch_request, rt.return_value]
 
           rt.NUM2INT(rt.return_value)
 
@@ -1769,9 +1767,7 @@ class TenderJIT
       deferred_true, deferred_false = [patch_true, patch_false].map do |patch|
         req = @jit.deferred_call(@temp_stack) do |ctx|
           ctx.with_runtime do |rt|
-            cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
-
-            rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch, ctx.fisk.rax]
+            rt.rb_funcall self, :compile_jump, [REG_CFP, patch, rt.return_value]
 
             rt.NUM2INT(rt.return_value)
 
@@ -1801,7 +1797,7 @@ class TenderJIT
     class HandleOptGetinlinecache < Struct.new(:jump_idx, :jump_type, :temp_stack, :ic, :current_pc)
     end
 
-    def compile_opt_getinlinecache stack, req, patch_loc
+    def compile_opt_getinlinecache cfp, req, patch_loc
       patch_loc = patch_loc - jit_buffer.memory.to_i
 
       stack = req.temp_stack.dup
@@ -1851,9 +1847,7 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
-
-          rt.rb_funcall self, :compile_opt_getinlinecache, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
+          rt.rb_funcall self, :compile_opt_getinlinecache, [REG_CFP, patch_request, rt.return_value]
 
           rt.NUM2INT(rt.return_value)
 
@@ -1920,9 +1914,7 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
-
-          rt.rb_funcall self, :compile_jump, [cfp_ptr.sp, patch_request, ctx.fisk.rax]
+          rt.rb_funcall self, :compile_jump, [REG_CFP, patch_request, rt.return_value]
 
           rt.NUM2INT(rt.return_value)
 
