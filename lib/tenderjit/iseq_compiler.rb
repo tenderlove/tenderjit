@@ -688,6 +688,8 @@ class TenderJIT
       # jump back to the re-written jmp
       deferred.call
 
+      @temp_stack.pop
+
       req.deferred_entry = deferred.entry.to_i
 
       with_runtime do |rt|
