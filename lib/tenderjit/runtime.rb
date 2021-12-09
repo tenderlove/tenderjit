@@ -28,10 +28,15 @@ class TenderJIT
         offset = src.displacement
         reg = src.register
       else
-        raise NotImplementedError
+        if src.register?
+          offset = 0
+          reg = src
+        else
+          raise NotImplementedError
+        end
       end
 
-      @fisk.lea(dest, @fisk.m(reg, offset))
+      @fisk.lea(cast_to_fisk(dest), @fisk.m(reg, offset))
     end
 
     def check_vm_stack_overflow temp_stack, exit_location, local_size, stack_max
@@ -39,7 +44,7 @@ class TenderJIT
 
       loc = temp_stack.first.loc + (margin / Fiddle::SIZEOF_VOIDP)
       with_ref(loc) do |reg|
-        self.if(reg, :>, REG_CFP) {
+        self.if(reg, :<, REG_CFP) {
           # do nothing
         }.else {
           jump(exit_location)
@@ -172,8 +177,16 @@ class TenderJIT
       Pointer.new reg.to_register, type, find_size(type), offset, self
     end
 
+    def dec reg
+      @fisk.dec reg.to_register
+    end
+
     def sub reg, val
-      @fisk.sub reg, cast_to_fisk(val)
+      @fisk.sub cast_to_fisk(reg), cast_to_fisk(val)
+    end
+
+    def neg reg
+      @fisk.neg reg.to_register
     end
 
     def add reg, val
@@ -181,10 +194,19 @@ class TenderJIT
     end
 
     def inc reg
-      @fisk.inc reg
+      @fisk.inc reg.to_register
     end
 
-    def mult val1, val2
+    def mult val1, val2, dest = nil
+      if val1.register?
+        @fisk.mov @fisk.rax, cast_to_fisk(val2)
+        @fisk.mul cast_to_fisk(val1)
+        if dest
+          @fisk.mov cast_to_fisk(dest), @fisk.rax
+        end
+        return
+      end
+
       raise NotImplementedError unless val1.memory?
       raise NotImplementedError unless val2.memory?
 
@@ -253,9 +275,13 @@ class TenderJIT
     private :perform_division
 
     def write_memory reg, offset, val
-      @fisk.with_register do |tmp|
-        @fisk.mov(tmp, val)
-        @fisk.mov(@fisk.m64(reg, offset), tmp)
+      if val.memory?
+        @fisk.with_register do |tmp|
+          @fisk.mov(tmp, val)
+          @fisk.mov(@fisk.m64(reg, offset), tmp)
+        end
+      else
+        @fisk.mov(@fisk.m64(reg, offset), cast_to_fisk(val))
       end
     end
 
@@ -272,6 +298,10 @@ class TenderJIT
 
     def write_immediate_to_reg reg, val
       @fisk.mov(reg, @fisk.uimm(val))
+    end
+
+    def load_from_reg src, offset, dest
+      @fisk.mov(dest, @fisk.m64(src, offset))
     end
 
     def read_to_reg src, offset
@@ -293,7 +323,7 @@ class TenderJIT
     end
 
     def write_to_mem dst, offset, src
-      @fisk.mov(@fisk.m64(dst, offset), src)
+      @fisk.mov(@fisk.m64(dst.to_register, offset), cast_to_fisk(src))
     end
 
     def write dst, src
@@ -312,6 +342,10 @@ class TenderJIT
 
     def movsd reg, source
       @fisk.movsd reg, cast_to_fisk(source)
+    end
+
+    def nop
+      @fisk.nop
     end
 
     def break
@@ -394,6 +428,161 @@ class TenderJIT
     end
     alias :fixnum? :RB_FIXNUM_P
 
+    def while loc
+      raise "Must be a register" unless loc.register?
+      loc = cast_to_fisk(loc)
+
+      finish_label = push_label
+      start_label = push_label
+
+      @fisk.put_label start_label.name
+      @fisk.test loc, loc
+      @fisk.jz finish_label
+      yield
+
+      pop_label
+      finish_label = pop_label
+
+      @fisk.jmp start_label
+      @fisk.put_label finish_label
+      self
+    end
+
+    def if_extended_array? loc
+      raise unless loc.register?
+
+      else_label = push_label # else label
+      finish_label = push_label
+
+      # get the flags from the object
+      # First write the Ruby object to the temp `flags` register
+
+      @fisk.test(pointer(loc, type: RBasic).flags, @fisk.imm(Ruby::T_ARRAY))
+      @fisk.jz else_label
+
+      # Then get the flags field from that temp register and write it out
+      # to the same register (because we don't need the Ruby object)
+      @fisk.test(pointer(loc, type: RBasic).flags, @fisk.imm(Ruby::RARRAY_EMBED_FLAG))
+
+      @fisk.jnz else_label
+      yield
+      @fisk.jmp finish_label # finish label
+      self
+    end
+
+    def if_nil? loc
+      else_label = push_label # else label
+      finish_label = push_label
+
+      @fisk.cmp(loc, @fisk.imm(Qnil))
+      @fisk.jne else_label
+      yield
+      @fisk.jmp finish_label # finish label
+      self
+    end
+
+    def if_array? loc
+      else_label = push_label # else label
+      finish_label = push_label
+
+      temp_var do |flags|
+        flags.write loc
+
+        # get the flags from the object
+        # First write the Ruby object to the temp `flags` register
+
+        @fisk.test(pointer(flags, type: RBasic).flags, @fisk.imm(Ruby::T_ARRAY))
+        @fisk.jz else_label
+      end
+
+      @fisk.jz else_label
+      yield
+      @fisk.jmp finish_label # finish label
+      self
+    end
+
+    def if_test_bit reg, bit
+      else_label = push_label # else label
+      finish_label = push_label
+      @fisk.test(cast_to_fisk(reg), cast_to_fisk(bit))
+      @fisk.jz else_label
+      yield
+      @fisk.jmp finish_label # finish label
+      self
+    end
+
+    def if_embedded_array? loc
+      else_label = push_label # else label
+      finish_label = push_label
+
+      raise unless loc.register?
+
+      # get the flags from the object
+      # First write the Ruby object to the temp `flags` register
+
+      @fisk.test(pointer(loc, type: RBasic).flags, @fisk.imm(Ruby::T_ARRAY))
+      @fisk.jz else_label
+
+      # Then get the flags field from that temp register and write it out
+      # to the same register (because we don't need the Ruby object)
+      @fisk.test(pointer(loc, type: RBasic).flags, @fisk.imm(Ruby::RARRAY_EMBED_FLAG))
+
+      @fisk.jz else_label
+      yield
+      @fisk.jmp finish_label # finish label
+      self
+    end
+
+    def embedded_array_length array, dst
+      dst = cast_to_fisk(dst)
+      write dst, array
+      write dst, pointer(dst, type: RBasic).flags
+      @fisk.and dst, @fisk.imm(Ruby::RARRAY_EMBED_LEN_MASK)
+      @fisk.shr dst, @fisk.imm(Ruby::RARRAY_EMBED_LEN_SHIFT)
+    end
+
+    def extended_array_length array, dst
+      array_loc = array
+
+      # If the array is in a register already, great.  If not, we need
+      # to put it in a register so we can dereference the items
+      unless array_loc.register?
+        write dst, array_loc
+        array_loc = dst
+      end
+
+      write dst, pointer(array_loc, type: RArray).as.heap.len
+    end
+
+    def extended_array_buffer array, dst
+      array_loc = array
+
+      # If the array is in a register already, great.  If not, we need
+      # to put it in a register so we can dereference the items
+      unless array_loc.register?
+        write dst, array_loc
+        array_loc = dst
+      end
+
+      write dst, pointer(array_loc, type: RArray).as.heap.ptr
+    end
+
+    def embedded_array_buffer array, dst
+      if array != dst
+        # Put the array in the destination register
+        write dst, array
+      end
+
+      # Add the offset of the "as" field
+      @fisk.add dst.to_register, @fisk.imm(RArray.offsetof("as"))
+    end
+
+    def buffer_ref tmp, i
+      raise "tmp must be a register" unless tmp.register?
+
+      @fisk.m64(tmp.to_register, i * Fiddle::SIZEOF_VOIDP)
+    end
+
     def if lhs, op = nil, rhs = nil
       else_label = push_label # else label
       finish_label = push_label
@@ -407,7 +596,15 @@ class TenderJIT
             @fisk.cmp op1, op2
           end
         end
-        @fisk.jg else_label # else label
+
+        case op
+        when :<
+          @fisk.jge else_label # else label
+        when :>=
+          @fisk.jl else_label # else label
+        else
+          raise NotImplementedError, op.to_s
+        end
       else
         if lhs.respond_to?(:call)
           lhs.call(@fisk)

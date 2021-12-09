@@ -92,6 +92,14 @@ class TenderJIT
       self.RB_IMMEDIATE_P(obj_addr) || !self.RB_TEST(obj_addr)
     end
 
+    def embedded_array? obj_addr
+      if rb_type(obj_addr) == Ruby::T_ARRAY
+        (RBasic.flags(obj_addr) & Ruby::RARRAY_EMBED_FLAG) == Ruby::RARRAY_EMBED_FLAG
+      else
+        false
+      end
+    end
+
     def rb_class_of obj_addr
       if !self.RB_SPECIAL_CONST_P(obj_addr)
         RBasic.klass(obj_addr).to_i

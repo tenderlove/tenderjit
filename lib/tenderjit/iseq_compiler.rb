@@ -13,6 +13,7 @@ class TenderJIT
     SCRATCH_REGISTERS = [
       Fisk::Registers::R9,
       Fisk::Registers::R10,
+      Fisk::Registers::R11,
     ]
 
     attr_reader :blocks
@@ -2660,6 +2661,303 @@ class TenderJIT
       end
     end
 
+    class CompileExpandArray < Struct.new(:num, :flag, :temp_stack, :deferred_entry)
+    end
+
+    def compile_embedded_expandarray rt, req, tmp, stack_top
+      rt.temp_var { |tmp2|
+        rt.temp_var { |stack|
+          # Push the array reference on the stack so we can get it again later
+          rt.push_reg tmp
+
+          rt.embedded_array_length(tmp, tmp)
+
+          rt.if(tmp, :>=, req.num) {
+            # Get the array back
+            rt.pop_reg tmp
+
+            # Get the buffer for the embedded array
+            rt.embedded_array_buffer(tmp, tmp)
+
+            (req.num - 1).downto(0) do |i|
+              rt.push rt.buffer_ref(tmp, i), name: "array ref"
+            end
+
+          }.else {
+            # number of nils to push = tmp - req.num
+            rt.write tmp2, req.num
+            rt.sub tmp2, tmp
+
+            # Copy the stack top to a temp reg
+            rt.load_address_in stack, stack_top
+
+            rt.while(tmp2) {
+              rt.write_memory stack.to_register, 0, @fisk.imm(Qnil)
+              rt.add stack, Fiddle::SIZEOF_VOIDP
+              rt.dec(tmp2)
+            }
+
+            # Get the array reference back
+            rt.pop_reg tmp2
+
+            # Get the buffer for the embedded array
+            rt.embedded_array_buffer(tmp2, tmp2)
+
+            # Push to the end of the array
+            rt.push_reg stack
+            rt.write stack, tmp
+            rt.mult stack, Fiddle::SIZEOF_VOIDP, stack
+            rt.add tmp2, stack
+            rt.sub tmp2, Fiddle::SIZEOF_VOIDP
+            rt.pop_reg stack
+
+            rt.while(tmp) {
+              rt.push_reg tmp2
+              rt.load_from_reg tmp2.to_register, 0, tmp2.to_register
+              rt.write_to_mem stack.to_register, 0, tmp2.to_register
+              rt.pop_reg tmp2
+              rt.add stack, Fiddle::SIZEOF_VOIDP
+              rt.sub tmp2, Fiddle::SIZEOF_VOIDP
+              rt.dec(tmp)
+            }
+          }
+        }
+      }
+    end
+
+    def compile_expandarray cfp, req, loc
+      stack = RbControlFrameStruct.sp(cfp)
+
+      patch_loc = loc - jit_buffer.memory.to_i
+      return_loc = patch_loc + JMP_BYTES
+
+      # Get the top of the runtime stack
+      seen_ptr = Fiddle.read_ptr(stack, -Fiddle::SIZEOF_VOIDP)
+
+      temp_stack = req.temp_stack.dup
+
+      stack_top = temp_stack.pop
+
+      entry_loc  = jit_buffer.address
+
+      with_runtime(temp_stack) do |rt|
+        # Is this a tagged pointer?  See `handle_expandarray`
+        if seen_ptr & 1 == 1
+          rt.if_test_bit(stack_top, 1) {
+            rt.temp_var { |tmp|
+              tmp.write stack_top
+
+              # clear the tag bit
+              rt.and(tmp.to_register, ~1)
+              compile_embedded_expandarray(rt, req, tmp, stack_top)
+            }
+            # Remove the machine stack allocated "Ruby object"
+            rt.add @fisk.rsp, RUBY_OBJECT_ON_STACK_SIZE
+
+          }.else {
+            # recompile
+            rt.patchable_jump req.deferred_entry
+
+            # FIXME: It's weird that as we compile things we'll have to jump
+            # back here, then jump back to the origin.  It would be nice to
+            # directly jump back to the origin.  I need to figure out a way
+            # to do that.
+          }
+        else
+          raise "This should never happen" unless rb.rb_type(seen_ptr) == T_ARRAY
+
+          # Compile time check
+          if rb.embedded_array?(seen_ptr)
+            rt.temp_var { |tmp|
+              # Dereference the stack top to get the array
+              tmp.write stack_top
+
+              # Verify the compile time check
+              rt.if_embedded_array?(tmp) {
+                compile_embedded_expandarray(rt, req, tmp, stack_top)
+              }.else {
+                # recompile
+                rt.patchable_jump req.deferred_entry
+
+                # FIXME: Same as above fixme
+              }
+            }
+          else
+            rt.temp_var { |tmp|
+              tmp.write stack_top
+
+              rt.if_extended_array?(tmp) {
+                # Write the array length in to the `len` register
+                rt.extended_array_length(stack_top, tmp)
+
+                rt.if(tmp, :>=, req.num) {
+                  # Get the buffer for the extended array
+                  rt.extended_array_buffer(stack_top, tmp)
+
+                  (req.num - 1).downto(0) do |i|
+                    rt.push rt.buffer_ref(tmp, i), name: "array ref"
+                  end
+                }.else {
+                  rt.temp_var { |tmp2|
+                    rt.temp_var { |stack|
+                      # number of nils to push = tmp - req.num
+                      rt.write tmp2, req.num
+                      rt.sub tmp2, tmp
+
+                      # Dereference the stack top to get the array
+                      rt.write stack, stack_top
+
+                      # Push the array reference on the stack so we can get it again later
+                      rt.push_reg stack
+
+                      # Copy the stack top to a temp reg
+                      rt.load_address_in stack, stack_top
+
+                      rt.while(tmp2) {
+                        rt.write_memory stack.to_register, 0, @fisk.imm(Qnil)
+                        rt.add stack, Fiddle::SIZEOF_VOIDP
+                        rt.dec(tmp2)
+                      }
+
+                      # Get the array reference back
+                      rt.pop_reg tmp2
+
+                      # Get the buffer for the embedded array
+                      rt.extended_array_buffer(tmp2, tmp2)
+
+                      # Push to the end of the array
+                      rt.push_reg stack
+                      rt.write stack, tmp
+                      rt.mult stack, Fiddle::SIZEOF_VOIDP, stack
+                      rt.add tmp2, stack
+                      rt.sub tmp2, Fiddle::SIZEOF_VOIDP
+                      rt.pop_reg stack
+
+                      rt.while(tmp) {
+                        rt.push_reg tmp2
+                        rt.load_from_reg tmp2.to_register, 0, tmp2.to_register
+                        rt.write_to_mem stack.to_register, 0, tmp2.to_register
+                        rt.pop_reg tmp2
+                        rt.add stack, Fiddle::SIZEOF_VOIDP
+                        rt.sub tmp2, Fiddle::SIZEOF_VOIDP
+                        rt.dec(tmp)
+                      }
+                    }
+                  }
+                }
+              }.else {
+                # recompile
+                rt.patchable_jump req.deferred_entry
+                # FIXME: see above
+              }
+            }
+          end
+        end
+
+        # great!
+        rt.jump jit_buffer.memory.to_i + return_loc
+      end
+
+      patch_source_jump jit_buffer, at: patch_loc, to: entry_loc
+
+      entry_loc
+    end
+
+    RUBY_OBJECT_ON_STACK_SIZE = 48
+
+    def compile_push_stack_array rt
+      loc = @temp_stack.pop
+
+      write_loc = @temp_stack.push :unknown
+      # Allocate a fake embedded array on the stack
+      rt.temp_var do |tmp|
+        rt.sub @fisk.rsp, RUBY_OBJECT_ON_STACK_SIZE
+        rt.write tmp, @fisk.rsp
+        rt.add tmp, Fiddle::SIZEOF_VOIDP
+
+        flags = Ruby::T_ARRAY |
+          (Ruby::RARRAY_EMBED_FLAG) |
+          (3 << Ruby::RARRAY_EMBED_LEN_SHIFT)
+
+        rt.write_to_mem(tmp, RBasic.offsetof("flags"), flags)
+        rt.write(rt.pointer(tmp, type: RArray).as.ary[0], loc)
+        rt.write(rt.pointer(tmp, type: RArray).as.ary[1], Qnil)
+        rt.write(rt.pointer(tmp, type: RArray).as.ary[2], Qnil)
+
+        # Make it look like an integer so that the GC won't try to mark
+        rt.inc tmp
+        rt.write write_loc, tmp
+      end
+    end
+
+    def handle_coercearray
+      addr = Fiddle::Handle::DEFAULT["rb_check_array_type"]
+
+      loc = @temp_stack.pop
+      write_loc = @temp_stack.push :unknown
+      with_runtime do |rt|
+        rt.if(rt.RB_SPECIAL_CONST_P(loc)) {
+          rt.if_nil?(rt.call_cfunc(addr, [loc])) {
+            compile_push_stack_array(rt)
+          }.else {
+            rt.write(write_loc, rt.return_value)
+          }
+        }.else {
+          rt.if_array?(loc) {
+            # do nothing
+          }.else {
+            rt.if_nil?(rt.call_cfunc(addr, [loc])) {
+              compile_push_stack_array(rt)
+            }.else {
+              rt.write(write_loc, rt.return_value)
+            }
+          }
+        }
+      end
+    end
+
+    # num is the number of elements we need to expand
+    # flag is special
+    def handle_expandarray num, flag
+      raise NotImplementedError if flag != 0
+
+      # handle_coercearray will try to coerce the stack's top value to an array
+      # see vm_expandarray.  If the top of the stack isn't an array, it will
+      # *allocate* an array on the machine's stack.  Then push that value on
+      # the stack and tag it as an int by setting the lower bit to 1.  This
+      # guarantees that the `compile_expandarray` runtime check will only ever
+      # see an "int" which is actually a tagged array, or a real array.  If
+      # it's tagged we just have to remove the tag and use it as an array.
+      # Also if it's tagged we need to unwind rsp.
+
+      handle_coercearray
+
+      #sp_inc = num - 1 + (flag & 1 ? 1 : 0);
+
+      req = CompileExpandArray.new(num, flag, @temp_stack.dup.freeze)
+
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
+        ctx.with_runtime do |rt|
+          rt.rb_funcall self, :compile_expandarray, [REG_CFP, req, rt.return_value]
+
+          rt.NUM2INT(rt.return_value)
+
+          rt.jump rt.return_value
+        end
+      end
+
+      deferred.call
+      req.deferred_entry = deferred.entry.to_i
+
+      # attr rb_snum_t sp_inc = (rb_snum_t)num - 1 + (flag & 1 ? 1 : 0);
+      @temp_stack.pop
+      num.times { @temp_stack.push :unknown }
+
+      with_runtime do |rt|
+        rt.patchable_jump req.deferred_entry
+      end
+    end
+
     # Call a C function at `func_loc` with `params`. Return value will be in RAX
     def call_cfunc func_loc, params, fisk = __
       raise NotImplementedError, "too many parameters" if params.length > 6
@@ -2705,8 +3003,8 @@ class TenderJIT
       fisk.write_to(@string_buffer)
     end
 
-    def with_runtime
-      rt = Runtime.new(Fisk.new, jit_buffer, @temp_stack)
+    def with_runtime temp_stack = @temp_stack
+      rt = Runtime.new(Fisk.new, jit_buffer, temp_stack)
       yield rt
       rt.write!
     end
