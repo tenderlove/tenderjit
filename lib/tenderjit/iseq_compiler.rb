@@ -631,6 +631,9 @@ class TenderJIT
       return_loc = patch_source_jump jit_buffer, at: (loc - jit_buffer.memory.to_i),
                                                  to: code_start
 
+      temp_stack = req.temp_stack.dup
+      read_loc = temp_stack.pop
+
       with_runtime do |rt|
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
@@ -644,11 +647,11 @@ class TenderJIT
 
           # If it's an embedded object, write to the embedded array
           rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
-            self_ptr.as.ary[ivar_idx] = rt.c_param(0)
+            self_ptr.as.ary[ivar_idx] = read_loc
 
           }.else { # Otherwise, the extended table
             temp.write self_ptr.as.heap.ivptr
-            rt.pointer(temp)[ivar_idx] = rt.c_param(0)
+            rt.pointer(temp)[ivar_idx] = read_loc
           }
 
         }.else { # Otherwise we need to recompile
@@ -664,7 +667,7 @@ class TenderJIT
     end
 
     def handle_setinstancevariable id, ic
-      req = IVarRequest.new(id, current_pc, next_pc, @temp_stack.size)
+      req = IVarRequest.new(id, current_pc, next_pc, @temp_stack.dup.freeze)
 
       @compile_requests << Fiddle::Pinned.new(req)
 
@@ -672,13 +675,7 @@ class TenderJIT
       # stack until after this method call
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          rt.push_reg REG_BP
-          rt.push_reg REG_BP
-          rt.push_reg rt.c_param(0)
-          rt.rb_funcall_without_alignment self, :compile_setinstancevariable, [REG_CFP, req, rt.return_value]
-          rt.pop_reg rt.c_param(0)
-          rt.pop_reg REG_BP
-          rt.pop_reg REG_BP
+          rt.rb_funcall self, :compile_setinstancevariable, [REG_CFP, req, rt.return_value]
 
           rt.NUM2INT(rt.return_value)
 
@@ -686,16 +683,14 @@ class TenderJIT
         end
       end
 
-      read_loc = @temp_stack.pop
-
       # jump back to the re-written jmp
       deferred.call
 
       req.deferred_entry = deferred.entry.to_i
 
-      __.mov(__.rdi, read_loc)
-      __.lea(__.rax, __.rip)
-      __.jmp(__.absolute(deferred.entry.to_i))
+      with_runtime do |rt|
+        rt.patchable_jump req.deferred_entry
+      end
     end
 
     def handle_checktype type
@@ -723,7 +718,7 @@ class TenderJIT
     end
 
     def handle_getinstancevariable id, ic
-      req = IVarRequest.new(id, current_pc, next_pc, @temp_stack.size)
+      req = IVarRequest.new(id, current_pc, next_pc, @temp_stack.dup.freeze)
 
       exit_addr = exits.make_exit("temporary_exit", current_pc, @temp_stack.size)
 
