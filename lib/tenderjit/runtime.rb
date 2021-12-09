@@ -76,9 +76,9 @@ class TenderJIT
       @fisk.mov @fisk.rax, v
     end
 
-    def patchable_jump dest
+    def patchable_jump dest, type: :jmp
       @fisk.lea(return_value, @fisk.rip)
-      jump dest
+      jump dest, type: type
     end
 
     def patchable_call dest
@@ -135,14 +135,19 @@ class TenderJIT
         .call(@fisk.rax)
     end
 
-    def jump location
-      case location
-      when TemporaryVariable
-        @fisk.jmp location.reg
-      when Fisk::Operand
-        @fisk.jmp location
+    def jump location, type: :jmp
+      case type
+      when :jmp, :jnz
+        case location
+        when TemporaryVariable
+          @fisk.send type, location.reg
+        when Fisk::Operand
+          @fisk.send type, location
+        else
+          @fisk.send type, @fisk.absolute(location)
+        end
       else
-        @fisk.jmp @fisk.absolute(location)
+        raise NotImplementedError, "uknown jump type #{type}"
       end
     end
 

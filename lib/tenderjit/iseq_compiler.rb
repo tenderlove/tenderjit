@@ -200,7 +200,7 @@ class TenderJIT
       }
     end
 
-    IVarRequest = Struct.new(:id, :current_pc, :next_pc, :stack_loc, :deferred_entry)
+    IVarRequest = Struct.new(:id, :current_pc, :next_pc, :temp_stack, :deferred_entry)
 
     def compile_getinstancevariable cfp, req, loc
       recv = RbControlFrameStruct.self(cfp)
@@ -340,10 +340,11 @@ class TenderJIT
       loc = @temp_stack.push(:unknown)
 
       # Jump in to the deferred compiler
-      __.lea(__.rax, __.rip)
-      __.jmp(__.absolute(deferred.entry))
-      __.pop(REG_BP)
-      __.mov(loc, __.rax)
+      with_runtime do |rt|
+        rt.patchable_jump req.deferred_entry
+        rt.pop_reg REG_BP
+        rt.write loc, rt.return_value
+      end
     end
 
     class CompileBlock < Struct.new(:call_info, :temp_stack, :current_pc, :next_pc, :deferred_entry)
@@ -545,10 +546,11 @@ class TenderJIT
       loc = @temp_stack.push(:unknown)
 
       # Jump in to the deferred compiler
-      __.lea(__.rax, __.rip)
-      __.jmp(__.absolute(deferred.entry))
-      __.pop(REG_BP)
-      __.mov(loc, __.rax)
+      with_runtime do |rt|
+        rt.patchable_jump req.deferred_entry
+        rt.pop_reg REG_BP
+        rt.write loc, rt.return_value
+      end
     end
 
     def compile_iseq cfp, req, loc
@@ -764,9 +766,10 @@ class TenderJIT
 
       req.deferred_entry = deferred.entry.to_i
 
-      __.lea(__.rax, __.rip)
-      __.jmp(__.absolute(deferred.entry.to_i))
-      __.mov(write_loc, __.rax)
+      with_runtime do |rt|
+        rt.patchable_jump req.deferred_entry
+        rt.write write_loc, rt.return_value
+      end
     end
 
     def compile_opt_aref cfp, req, patch_loc
@@ -919,7 +922,7 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          rt.rb_funcall self, :compile_opt_aref, [REG_CFP, req, ctx.fisk.rax]
+          rt.rb_funcall self, :compile_opt_aref, [REG_CFP, req, rt.return_value]
 
           rt.NUM2INT(rt.return_value)
 
@@ -934,13 +937,14 @@ class TenderJIT
       (argc + 1).times { @temp_stack.pop }
 
       #Jump in to the deferred compiler
-      __.lea(__.rax, __.rip)
-      __.jmp(__.absolute(deferred.entry))
+      with_runtime do |rt|
+        rt.patchable_jump req.deferred_entry
 
-      # The call will return here, and its return value will be in RAX
-      loc = @temp_stack.push(:unknown)
-      __.pop(REG_BP)
-      __.mov(loc, __.rax)
+        # The call will return here, and its return value will be in RAX
+        loc = @temp_stack.push(:unknown)
+        rt.pop_reg(REG_BP)
+        rt.write(loc, rt.return_value)
+      end
     end
 
     def handle_opt_send_without_block call_data
@@ -977,7 +981,7 @@ class TenderJIT
             rt.pointer(rt.return_value)[0] = temp
             temp.release!
 
-            rt.rb_funcall self, :compile_opt_send_without_block, [REG_CFP, compile_request, ctx.fisk.rax]
+            rt.rb_funcall self, :compile_opt_send_without_block, [REG_CFP, compile_request, rt.return_value]
 
             rt.NUM2INT(rt.return_value)
 
@@ -993,16 +997,17 @@ class TenderJIT
 
       deferred.call
 
-      # Jump in to the deferred compiler
-      __.lea(__.rax, __.rip)
-      __.jmp(__.absolute(deferred.entry))
-
       (ci.vm_ci_argc + 1).times { @temp_stack.pop }
 
-      # The method call will return here, and its return value will be in RAX
-      loc = @temp_stack.push(:unknown)
-      __.pop(REG_BP)
-      __.mov(loc, __.rax)
+      with_runtime do |rt|
+        # Jump in to the deferred compiler
+        rt.patchable_jump compile_request.deferred_entry
+
+        # The method call will return here, and its return value will be in RAX
+        loc = @temp_stack.push(:unknown)
+        rt.pop_reg REG_BP
+        rt.write loc, rt.return_value
+      end
     end
 
     def topn stack, i
@@ -1715,7 +1720,7 @@ class TenderJIT
 
       deferred.call
 
-        #__.int(__.lit(3))
+      # FIXME: should we teach patchable_jump about jz?
       __.test(read_loc, __.imm(~Qnil))
         .lea(__.rax, __.rip)
         .jz(__.absolute(deferred.entry.to_i))
@@ -1774,17 +1779,17 @@ class TenderJIT
         req
       end
 
-      if target_jump_block
-        jit_buffer.write_jump to: target_jump_block.start_address,
-                              type: :jnz
-      else
-        # Jump if value is true
-        __.lea(__.rax, __.rip)
-        __.jnz(__.absolute(deferred_true.entry))
-      end
+      with_runtime do |rt|
+        if target_jump_block
+          jit_buffer.write_jump to: target_jump_block.start_address,
+            type: :jnz
+        else
+          # Jump if value is true
+          rt.patchable_jump deferred_true.entry, type: :jnz
+        end
 
-      __.lea(__.rax, __.rip)
-      __.jmp(__.absolute(deferred_false.entry))
+        rt.patchable_jump deferred_false.entry
+      end
 
       :stop
     end
@@ -1919,8 +1924,7 @@ class TenderJIT
 
       deferred.call
 
-      __.lea(__.rax, __.rip)
-      __.jmp(__.absolute(deferred.entry.to_i))
+      with_runtime { |rt| rt.patchable_jump deferred.entry }
 
       :stop
     end
@@ -2467,12 +2471,12 @@ class TenderJIT
       (argc + 1).times { @temp_stack.pop }
 
       #Jump in to the deferred compiler
-      __.lea(__.rax, __.rip)
-      __.jmp(__.absolute(deferred.entry))
-
-      # The call will return here, and its return value will be in RAX
-      loc = @temp_stack.push(:unknown)
-      __.mov(loc, __.rax)
+      with_runtime { |rt|
+        rt.patchable_jump deferred.entry
+        # The call will return here, and its return value will be in RAX
+        loc = @temp_stack.push(:unknown)
+        rt.write loc, rt.return_value
+      }
     end
 
     def handle_setn n
