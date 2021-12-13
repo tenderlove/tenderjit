@@ -1657,13 +1657,8 @@ class TenderJIT
             rt.call_cfunc rb_ary_tmp_new_from_values, [0, cnt, stack_addr_from_top]
             ary.write rt.return_value
 
-            # Store and use for alignment.
-            rt.push_reg ary
-
-            rt.call_cfunc rb_reg_new_ary, [ary, opt], auto_align: false
+            rt.call_cfunc rb_reg_new_ary, [ary, opt]
             rt.write result, rt.return_value
-
-            rt.pop_reg ary
 
             rt.call_cfunc rb_ary_clear, [ary]
           end
