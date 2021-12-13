@@ -810,11 +810,11 @@ class TenderJIT
 
             # We know it's an array at compile time
             if klass == ::Array
-              rt.call_cfunc rb.symbol_address("rb_ary_aref1"), [recv, param], auto_align: false
+              rt.call_cfunc rb.symbol_address("rb_ary_aref1"), [recv, param], auto_align: false, preserve_tempvars: false
 
               # We know it's a hash at compile time
             elsif klass == ::Hash
-              rt.call_cfunc rb.symbol_address("rb_hash_aref"), [recv, param], auto_align: false
+              rt.call_cfunc rb.symbol_address("rb_hash_aref"), [recv, param], auto_align: false, preserve_tempvars: false
 
             else
               raise NotImplementedError

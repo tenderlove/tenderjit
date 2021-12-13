@@ -11,6 +11,13 @@ class TenderJIT
       #
       @cfunc_call_stack_depth = 8
 
+      # We need to keep track of the active temp variables, because we may need
+      # to save them.
+      # Ordered iteration is required; the number is small so sequential access
+      # is ok.
+      #
+      @active_temp_vars = []
+
       yield self if block_given?
     end
 
@@ -708,6 +715,8 @@ class TenderJIT
     def temp_var name = "temp_var"
       tv = TemporaryVariable.new @fisk.register(name), Fiddle::TYPE_VOIDP, Fiddle::SIZEOF_VOIDP, 0, self
 
+      @active_temp_vars << tv
+
       if block_given?
         yield tv
         self.release_temp(tv)
@@ -758,30 +767,32 @@ class TenderJIT
     #  :call_reg: Specify an alternate register for the (long) function call; defaults
     #             to RAX.
     #
-    def call_cfunc func_loc, params, auto_align: true, call_reg: Fisk::Registers::RAX
+    def call_cfunc func_loc, params, auto_align: true, preserve_tempvars: true, call_reg: Fisk::Registers::RAX
       raise NotImplementedError, "too many parameters" if params.length > 6
       raise "No function location" unless func_loc > 0
 
-      align_funcall(auto_align) do
-        params.each_with_index do |param, i|
-          case param
-          when Integer
-            @fisk.mov(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(param))
-          when Fisk::Operand
-            @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
-          when TemporaryVariable
-            @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param.to_register)
-          when Proc
-            param.call Fisk::Registers::CALLER_SAVED[i]
-          else
-            raise NotImplementedError
+      preserve_temp_var_regs(preserve_tempvars) do
+        align_funcall(auto_align) do
+          params.each_with_index do |param, i|
+            case param
+            when Integer
+              @fisk.mov(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(param))
+            when Fisk::Operand
+              @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
+            when TemporaryVariable
+              @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param.to_register)
+            when Proc
+              param.call Fisk::Registers::CALLER_SAVED[i]
+            else
+              raise NotImplementedError
+            end
           end
+
+          @fisk.mov(call_reg, @fisk.uimm(func_loc))
+            .call(call_reg)
+
+          @fisk.rax
         end
-
-        @fisk.mov(call_reg, @fisk.uimm(func_loc))
-          .call(call_reg)
-
-        @fisk.rax
       end
     end
 
@@ -812,9 +823,33 @@ class TenderJIT
 
     def release_temp temp
       @fisk.release_register temp.reg
+
+      @active_temp_vars.delete temp
     end
 
     private
+
+    # Invokes the passing block, saving and restoring the registers used for temp
+    # variables.
+    #
+    # @param preserve [Boolean] Set to false not to preserve; this param exists
+    #   just to simplify the caller code.
+    #
+    def preserve_temp_var_regs(preserve)
+      return yield if !preserve
+
+      @active_temp_vars.each do |temp_var|
+        self.push_reg temp_var
+      end
+
+      result = yield
+
+      @active_temp_vars.reverse_each do |temp_var|
+        self.pop_reg temp_var
+      end
+
+      result
+    end
 
     def push_label n = "label"
       @label_count += 1
