@@ -719,13 +719,13 @@ class TenderJIT
     # Push a register on the machine stack
     def push_reg reg
       @fisk.push reg.to_register
-      @cfunc_call_stack_depth += reg.size
+      @cfunc_call_stack_depth += reg.to_register.size / 8
     end
 
     # Pop a register on the machine stack
     def pop_reg reg
       @fisk.pop reg.to_register
-      @cfunc_call_stack_depth -= reg.size
+      @cfunc_call_stack_depth -= reg.to_register.size / 8
     end
 
     def return
