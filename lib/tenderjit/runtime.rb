@@ -766,7 +766,7 @@ class TenderJIT
       raise NotImplementedError, "too many parameters" if params.length > 6
       raise "No function location" unless func_loc > 0
 
-      align_cfunc_call(auto_align) do
+      align_funcall(auto_align) do
         params.each_with_index do |param, i|
           case param
           when Integer
@@ -795,7 +795,7 @@ class TenderJIT
     #
     # arguments:
     # - auto_align: true/false
-    def align_cfunc_call auto_align, &block
+    def align_funcall auto_align, &block
       if @cfunc_call_stack_depth % 8 != 0
         message = "Auto alignment is supported only for a stack depth multiple of 8 (current: #{@cfunc_call_stack_depth})"
         raise NotImplementedError, message
