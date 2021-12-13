@@ -800,11 +800,11 @@ class TenderJIT
       if !auto_align || @cfunc_call_stack_depth % 16 == 0
         yield
       else
-        @fisk.push REG_BP.to_register
+        self.push_reg REG_BP
 
         result = yield
 
-        @fisk.pop REG_BP.to_register
+        self.pop_reg REG_BP
 
         result
       end
