@@ -99,40 +99,36 @@ class TenderJIT
       @fisk.mov Fisk::Registers::CALLER_SAVED.fetch(i), v
     end
 
-    def rb_funcall recv, method_name, params
-      @fisk.push REG_BP.to_register # alignment
-      rb_funcall_without_alignment recv, method_name, params
-      @fisk.pop REG_BP.to_register  # alignment
-    end
-
-    def rb_funcall_without_alignment recv, method_name, params
+    def rb_funcall recv, method_name, params, auto_align: true
       raise "Too many parameters!" if params.length > 3
 
-      func_addr = Internals.symbol_address "rb_funcall"
+      align_funcall(auto_align) do
+        func_addr = Internals.symbol_address "rb_funcall"
 
-      @fisk.mov(Fisk::Registers::CALLER_SAVED[0], @fisk.uimm(Fiddle.dlwrap(recv)))
-      @fisk.mov(Fisk::Registers::CALLER_SAVED[1], @fisk.uimm(CFuncs.rb_intern(method_name.to_s)))
-      @fisk.mov(Fisk::Registers::CALLER_SAVED[2], @fisk.uimm(params.length))
+        @fisk.mov(Fisk::Registers::CALLER_SAVED[0], @fisk.uimm(Fiddle.dlwrap(recv)))
+        @fisk.mov(Fisk::Registers::CALLER_SAVED[1], @fisk.uimm(CFuncs.rb_intern(method_name.to_s)))
+        @fisk.mov(Fisk::Registers::CALLER_SAVED[2], @fisk.uimm(params.length))
 
-      params.each_with_index do |param, i|
-        i += 3
+        params.each_with_index do |param, i|
+          i += 3
 
-        if param.is_a?(Fisk::Operand) || param.is_a?(TemporaryVariable)
-          param = param.to_register if param.is_a?(TemporaryVariable)
+          if param.is_a?(Fisk::Operand) || param.is_a?(TemporaryVariable)
+            param = param.to_register if param.is_a?(TemporaryVariable)
 
-          @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
+            @fisk.mov(Fisk::Registers::CALLER_SAVED[i], param)
 
-          #if param.memory?
-            @fisk.shl(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(1))
-            @fisk.inc(Fisk::Registers::CALLER_SAVED[i])
-          #end
-        else
-          @fisk.mov(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(Fiddle.dlwrap(param)))
+            #if param.memory?
+              @fisk.shl(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(1))
+              @fisk.inc(Fisk::Registers::CALLER_SAVED[i])
+            #end
+          else
+            @fisk.mov(Fisk::Registers::CALLER_SAVED[i], @fisk.uimm(Fiddle.dlwrap(param)))
+          end
         end
-      end
 
-      @fisk.mov(@fisk.rax, @fisk.uimm(func_addr))
-        .call(@fisk.rax)
+        @fisk.mov(@fisk.rax, @fisk.uimm(func_addr))
+          .call(@fisk.rax)
+      end
     end
 
     def jump location, type: :jmp

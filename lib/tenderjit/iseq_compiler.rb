@@ -2597,7 +2597,7 @@ class TenderJIT
               ctx.with_runtime do |rt|
                 # We pushed before calling the patchable jump,
                 # so this function call should already be aligned
-                rt.rb_funcall_without_alignment self, :compile_getblockparamproxy, [REG_CFP, req, rt.return_value]
+                rt.rb_funcall self, :compile_getblockparamproxy, [REG_CFP, req, rt.return_value], auto_align: false
                 rt.NUM2INT(rt.return_value)
 
                 rt.jump rt.return_value
