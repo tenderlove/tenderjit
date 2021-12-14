@@ -5,6 +5,7 @@ require "helper"
 class TenderJIT
   class RuntimeTest < Test
     include Fisk::Registers
+    SCRATCH_REGISTERS = ISEQCompiler::SCRATCH_REGISTERS
 
     attr_reader :rt, :saving_buffer
 
@@ -34,6 +35,25 @@ class TenderJIT
       data_buffer.seek 0
 
       [data_buffer.memory.to_i, data_buffer.memory.to_i + template.size]
+    end
+
+    # Prepare a function that overwrites the scratch (as defined in the ISEQCompiler
+    # class) registers.
+    #
+    # Returns the location of the buffer/function.
+    #
+    def prepare_temp_var_regs_overwriting_func
+      buffer = Fisk::Helpers::JITBuffer.new(Fisk::Helpers.mmap_jit(4096), 4096)
+      fisk = Fisk.new
+
+      fisk.asm(buffer) do
+        xor SCRATCH_REGISTERS[0], SCRATCH_REGISTERS[0]
+        xor SCRATCH_REGISTERS[1], SCRATCH_REGISTERS[1]
+
+        ret
+      end
+
+      buffer.memory.to_i
     end
 
     def test_if_eq_imm8_imm64_false_branch
@@ -112,6 +132,33 @@ class TenderJIT
       saving_buffer.to_function([], Fiddle::TYPE_VOID).call
 
       # If we get here, all is well!
+    end
+
+    def test_call_cfunc_save_temp_var_regs
+      temp_var_regs_overwriting_func = prepare_temp_var_regs_overwriting_func
+
+      rt.temp_var do |tv1|
+        rt.temp_var do |tv2|
+          tv1.write 1
+          tv2.write 2
+
+          rt.call_cfunc temp_var_regs_overwriting_func, []
+
+          # We do know which the scratch registers are, but it's better not to use
+          # information that, from this level of abstraction, is better to keep hidden.
+          #
+          rt.write RAX, tv1
+          rt.write RBX, tv2
+        end
+      end
+
+      rt.return
+      rt.write!
+
+      saving_buffer.to_function([], Fiddle::TYPE_VOID).call
+
+      assert_equal 1, saving_buffer.saved_rax
+      assert_equal 2, saving_buffer.saved_rbx
     end
   end # class RuntimeTest
 end
