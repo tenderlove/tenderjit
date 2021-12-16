@@ -46,5 +46,6 @@ class TenderJIT
     make_function "rb_iseq_label", [TYPE_VOIDP], TYPE_VOIDP
     make_function "rb_obj_class", [TYPE_VOIDP], TYPE_VOIDP
     make_function "rb_method_basic_definition_p", [TYPE_VOIDP, TYPE_INT], TYPE_INT
+    make_function "rb_gc_writebarrier", [TYPE_VOIDP, TYPE_VOIDP], TYPE_VOID
   end
 end

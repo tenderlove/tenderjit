@@ -536,7 +536,9 @@ class TenderJIT
     ary = nil
     if ptr == 0 || ptr == Qnil
       ary = []
-      body.variable.coverage = Fiddle.dlwrap(ary)
+      ary_addr = Fiddle.dlwrap(ary)
+      body.variable.coverage = ary_addr
+      CFuncs.rb_gc_writebarrier(addr, ary_addr)
     else
       ary = Fiddle.dlunwrap(ptr)
     end
