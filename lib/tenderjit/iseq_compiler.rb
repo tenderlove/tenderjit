@@ -2634,10 +2634,8 @@ class TenderJIT
               func_addr = rb.symbol_address("rb_vm_bh_to_procval")
 
               # Push EP because calling the cfunc will clobber our register.
-              # FIXME: See #83
-              rt.push_reg ep
+              # NB: EP is pushed automatically because of "preserve_temp_var_regs"
               rt.call_cfunc func_addr, [REG_EC, ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]], auto_align: false
-              rt.pop_reg ep
 
               # Set the block handler in EP
               ep_ptr[-idx] = rt.return_value
