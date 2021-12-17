@@ -12,6 +12,24 @@ class TenderJIT
       assert_has_insn method(:aref), insn: :opt_aref
     end
 
+    def thing param; param; end
+
+    def test_aref_with_method
+      m = method(:thing)
+      expected = aref(m, "something")
+
+      jit.compile method(:aref)
+
+      jit.enable!
+      actual = aref(m, "something")
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
     def test_opt_aref
       jit.compile method(:aref)
 

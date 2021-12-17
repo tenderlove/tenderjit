@@ -585,10 +585,7 @@ class TenderJIT
     end
 
     def handle_dup
-      last = @temp_stack.peek(0)
-      with_runtime do |rt|
-        rt.push last.loc, name: last.name, type: last.type
-      end
+      handle_topn 0
     end
 
     def handle_concatstrings num
@@ -789,9 +786,7 @@ class TenderJIT
 
       entry_location = jit_buffer.address
 
-      patch_loc = patch_loc - jit_buffer.memory.to_i
-
-      jit_buffer.patch_jump at: patch_loc, to: entry_location
+      loc = patch_loc - jit_buffer.memory.to_i
 
       param = req.temp_stack[0] # param
       recv  = req.temp_stack[1] # recv
@@ -817,7 +812,7 @@ class TenderJIT
               rt.call_cfunc rb.symbol_address("rb_hash_aref"), [recv, param], auto_align: false, preserve_tempvars: false
 
             else
-              raise NotImplementedError
+              compile_send cfp, req, patch_loc
             end
           }.else {
             rt.patchable_jump req.deferred_entry
@@ -825,8 +820,10 @@ class TenderJIT
         end
 
         # patched a jmp and it is 5 bytes
-        rt.jump jit_buffer.memory.to_i + patch_loc + 5
+        rt.jump jit_buffer.memory.to_i + loc + 5
       end
+
+      jit_buffer.patch_jump at: loc, to: entry_location
 
       entry_location
     end
@@ -2942,6 +2939,13 @@ class TenderJIT
 
       with_runtime do |rt|
         rt.patchable_jump req.deferred_entry
+      end
+    end
+
+    def handle_topn n
+      with_runtime do |rt|
+        peek = @temp_stack.peek(n)
+        rt.push peek.loc, name: peek.name, type: peek.type
       end
     end
 

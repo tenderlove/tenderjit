@@ -44,7 +44,7 @@ class TenderJIT
       jit.disable!
 
       assert_equal 1, jit.compiled_methods
-      assert_equal 1, jit.exits
+      assert_equal 0, jit.exits
       assert_equal [:foo, :qux, :baz], v
     end
   end
