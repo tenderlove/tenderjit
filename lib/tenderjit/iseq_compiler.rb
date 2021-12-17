@@ -1702,6 +1702,7 @@ class TenderJIT
       read_loc = @temp_stack.pop
 
       patch_request = BranchUnless.new jump_pc, :jz, @temp_stack.dup.freeze
+      @compile_requests << Fiddle::Pinned.new(patch_request)
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
