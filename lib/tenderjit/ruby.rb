@@ -23,7 +23,10 @@ class TenderJIT
     end
 
     # From vm_core.h
-
+    # Based on enum vm_special_object_type (vm_core.h)
+    VM_SPECIAL_OBJECT_TYPE = {
+      VM_SPECIAL_OBJECT_VMCORE => "rb_mRubyVMFrozenCore"
+    }.freeze
 
     INTEGER_REDEFINED_OP_FLAG = (1 << 0)
     FLOAT_REDEFINED_OP_FLAG   = (1 << 1)
@@ -271,6 +274,13 @@ class TenderJIT
       else
         RB_BUILTIN_TYPE(obj_addr)
       end
+    end
+
+    def rb_special_type type
+      special_symbol = VM_SPECIAL_OBJECT_TYPE[type]
+      return unless special_symbol
+
+      symbol_address(special_symbol)
     end
 
     def rb_current_vm
