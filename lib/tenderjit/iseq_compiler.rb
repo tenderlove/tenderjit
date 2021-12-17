@@ -2945,6 +2945,13 @@ class TenderJIT
       end
     end
 
+    def handle_topn n
+      with_runtime do |rt|
+        peek = @temp_stack.peek(n)
+        rt.push peek.loc, name: peek.name, type: peek.type
+      end
+    end
+
     # Call a C function at `func_loc` with `params`. Return value will be in RAX
     def call_cfunc func_loc, params, fisk = __
       raise NotImplementedError, "too many parameters" if params.length > 6
