@@ -2294,6 +2294,17 @@ class TenderJIT
       end
     end
 
+    def handle_putspecialobject type
+      special_type_addr = rb.rb_special_type type
+      return :stop unless special_type_addr
+
+      object_type = rb.rb_type special_type_addr
+
+      with_runtime do |rt|
+        rt.push special_type_addr, name: :special_type, type: object_type
+      end
+    end
+
     # `leave` instruction
     def handle_leave
       # FIXME: We need to check interrupts and exit
