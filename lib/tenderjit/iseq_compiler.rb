@@ -585,10 +585,7 @@ class TenderJIT
     end
 
     def handle_dup
-      last = @temp_stack.peek(0)
-      with_runtime do |rt|
-        rt.push last.loc, name: last.name, type: last.type
-      end
+      handle_topn 0
     end
 
     def handle_concatstrings num
