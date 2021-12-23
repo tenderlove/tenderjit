@@ -712,17 +712,14 @@ class TenderJIT
     end
 
     # Create a temporary variable
-    def temp_var name = "temp_var"
+    def temp_var name = "temp_var", &block
       tv = TemporaryVariable.new @fisk.register(name), Fiddle::TYPE_VOIDP, Fiddle::SIZEOF_VOIDP, 0, self
 
       @active_temp_vars << tv
 
-      if block_given?
-        yield tv
-        self.release_temp(tv)
-      else
-        tv
-      end
+      yield tv
+
+      self.release_temp(tv)
     end
 
     # Push a register on the machine stack
