@@ -638,28 +638,27 @@ class TenderJIT
       with_runtime do |rt|
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-        temp = rt.temp_var
-        temp.write cfp_ptr.self
+        rt.temp_var do |temp|
+          temp.write cfp_ptr.self
 
-        self_ptr = rt.pointer(temp, type: RObject)
+          self_ptr = rt.pointer(temp, type: RObject)
 
-        # If the object class is the same, continue
-        rt.if_eq(self_ptr.basic.klass, RBasic.klass(recv).to_i) {
+          # If the object class is the same, continue
+          rt.if_eq(self_ptr.basic.klass, RBasic.klass(recv).to_i) {
 
-          # If it's an embedded object, write to the embedded array
-          rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
-            self_ptr.as.ary[ivar_idx] = read_loc
+            # If it's an embedded object, write to the embedded array
+            rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
+              self_ptr.as.ary[ivar_idx] = read_loc
 
-          }.else { # Otherwise, the extended table
-            temp.write self_ptr.as.heap.ivptr
-            rt.pointer(temp)[ivar_idx] = read_loc
+            }.else { # Otherwise, the extended table
+              temp.write self_ptr.as.heap.ivptr
+              rt.pointer(temp)[ivar_idx] = read_loc
+            }
+
+          }.else { # Otherwise we need to recompile
+            rt.patchable_jump req.deferred_entry
           }
-
-        }.else { # Otherwise we need to recompile
-          rt.patchable_jump req.deferred_entry
-        }
-
-        temp.release!
+        end
 
         rt.jump jit_buffer.memory.to_i + return_loc
       end
