@@ -749,8 +749,6 @@ class TenderJIT
             temp.shl 8
             temp.or rt.pointer(rt.return_value)[0]
             rt.pointer(rt.return_value)[0] = temp
-            temp.release!
-
             rt.rb_funcall self, :compile_getinstancevariable, [REG_CFP, req, rt.return_value]
 
             rt.NUM2INT(rt.return_value)
@@ -760,6 +758,8 @@ class TenderJIT
             rt.break
             rt.jump exit_addr
           }
+
+          temp.release!
         end
       end
 
@@ -981,7 +981,6 @@ class TenderJIT
             temp.shl 8
             temp.or rt.pointer(rt.return_value)[0]
             rt.pointer(rt.return_value)[0] = temp
-            temp.release!
 
             rt.rb_funcall self, :compile_opt_send_without_block, [REG_CFP, compile_request, rt.return_value]
 
@@ -992,6 +991,8 @@ class TenderJIT
             rt.break
             rt.jump exit_addr
           }
+
+          temp.release!
         end
       end
 
