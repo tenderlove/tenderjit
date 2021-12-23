@@ -452,44 +452,43 @@ class TenderJIT
         rt.push_reg REG_BP
 
         ret_loc = jit_buffer.memory.to_i + return_loc
-        var = rt.temp_var
-        var.write ret_loc
+        rt.temp_var do |var|
+          var.write ret_loc
 
-        # Callee will `ret` to return which will pop this address from the
-        # stack and jump to it
-        rt.push_reg var
+          # Callee will `ret` to return which will pop this address from the
+          # stack and jump to it
+          rt.push_reg var
 
-        # If the iseq hasn't been compiled yet, put in a stub that will compile
-        # it and jump back.
-        if iseq.body.jit_func == 0
-          comp_req = CompileISeqBlock.new(iseq_ptr, temp_stack.dup.freeze)
-          @compile_requests << Fiddle::Pinned.new(comp_req)
+          # If the iseq hasn't been compiled yet, put in a stub that will compile
+          # it and jump back.
+          if iseq.body.jit_func == 0
+            comp_req = CompileISeqBlock.new(iseq_ptr, temp_stack.dup.freeze)
+            @compile_requests << Fiddle::Pinned.new(comp_req)
 
-          deferred = @jit.deferred_call(temp_stack) do |ctx|
-            ctx.with_runtime do |rt|
-              rt.rb_funcall self, :compile_iseq, [REG_CFP, comp_req, rt.return_value]
+            deferred = @jit.deferred_call(temp_stack) do |ctx|
+              ctx.with_runtime do |rt|
+                rt.rb_funcall self, :compile_iseq, [REG_CFP, comp_req, rt.return_value]
 
-              rt.NUM2INT(rt.return_value)
+                rt.NUM2INT(rt.return_value)
 
-              rt.jump rt.return_value
+                rt.jump rt.return_value
+              end
             end
+
+            deferred.call
+
+            rt.patchable_jump deferred.entry
           end
 
-          deferred.call
+          # Dereference the JIT function address, skipping the REG_* assigments
+          # and jump to it
+          var.write iseq.body.to_i
+          iseq_body = rt.pointer(var, type: RbIseqConstantBody)
+          var.write iseq_body.jit_func
+          rt.add var, @skip_bytes
 
-          rt.patchable_jump deferred.entry
+          rt.jump var
         end
-
-        # Dereference the JIT function address, skipping the REG_* assigments
-        # and jump to it
-        var.write iseq.body.to_i
-        iseq_body = rt.pointer(var, type: RbIseqConstantBody)
-        var.write iseq_body.jit_func
-        rt.add var, @skip_bytes
-
-        rt.jump var
-
-        var.release!
       end
 
       method_entry_addr
