@@ -730,34 +730,33 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          temp = rt.temp_var
-          temp.write rt.pointer(rt.return_value)[0]
-          temp.shl   24
-          temp.shr   32
-          rt.add     temp, 5
-          rt.add     temp, rt.return_value
+          rt.temp_var do |temp|
+            temp.write rt.pointer(rt.return_value)[0]
+            temp.shl   24
+            temp.shr   32
+            rt.add     temp, 5
+            rt.add     temp, rt.return_value
 
-          rt.if_eq(temp.to_register, deferred.entry.to_i) {
-            temp.write 0xFFFFFF_00000000_FF
-            temp.and rt.pointer(rt.return_value)[0]
-            rt.pointer(rt.return_value)[0] = temp
-            temp.write exit_addr
-            temp.sub rt.return_value
-            rt.sub temp.to_register, 5
-            temp.shl 8
-            temp.or rt.pointer(rt.return_value)[0]
-            rt.pointer(rt.return_value)[0] = temp
-            rt.rb_funcall self, :compile_getinstancevariable, [REG_CFP, req, rt.return_value]
+            rt.if_eq(temp.to_register, deferred.entry.to_i) {
+              temp.write 0xFFFFFF_00000000_FF
+              temp.and rt.pointer(rt.return_value)[0]
+              rt.pointer(rt.return_value)[0] = temp
+              temp.write exit_addr
+              temp.sub rt.return_value
+              rt.sub temp.to_register, 5
+              temp.shl 8
+              temp.or rt.pointer(rt.return_value)[0]
+              rt.pointer(rt.return_value)[0] = temp
+              rt.rb_funcall self, :compile_getinstancevariable, [REG_CFP, req, rt.return_value]
 
-            rt.NUM2INT(rt.return_value)
+              rt.NUM2INT(rt.return_value)
 
-            rt.jump rt.return_value
-          }.else {
-            rt.break
-            rt.jump exit_addr
-          }
-
-          temp.release!
+              rt.jump rt.return_value
+            }.else {
+              rt.break
+              rt.jump exit_addr
+            }
+          end
         end
       end
 
