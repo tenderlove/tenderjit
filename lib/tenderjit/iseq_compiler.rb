@@ -852,38 +852,38 @@ class TenderJIT
       recv   = req.temp_stack.peek(2).loc # recv
 
       with_runtime do |rt|
-        temp = rt.temp_var
-        temp.write recv
+        rt.temp_var do |temp|
+          temp.write recv
 
-        _self = rt.pointer(temp, type: RObject)
+          _self = rt.pointer(temp, type: RObject)
 
-        rt.if_eq(_self.basic.klass, RBasic.klass(peek_recv).to_i) {
-          klass = Fiddle.dlunwrap(klass)
+          rt.if_eq(_self.basic.klass, RBasic.klass(peek_recv).to_i) {
+            klass = Fiddle.dlunwrap(klass)
 
-          rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
+            rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
 
-          # We know it's an array at compile time
-          if klass == ::Array
-            rt.temp_var do |x|
-              x.write param1
-              rt.FIX2LONG(x)
-              rt.call_cfunc(rb.symbol_address("rb_ary_store"), [recv, x, param2])
+            # We know it's an array at compile time
+            if klass == ::Array
+              rt.temp_var do |x|
+                x.write param1
+                rt.FIX2LONG(x)
+                rt.call_cfunc(rb.symbol_address("rb_ary_store"), [recv, x, param2])
+              end
+              rt.return_value = param2
+
+              # We know it's a hash at compile time
+            elsif klass == ::Hash
+              rt.call_cfunc(rb.symbol_address("rb_hash_aset"), [recv, param1, param2])
+              rt.return_value = param2
+
+            else
+              raise NotImplementedError
             end
-            rt.return_value = param2
-
-            # We know it's a hash at compile time
-          elsif klass == ::Hash
-            rt.call_cfunc(rb.symbol_address("rb_hash_aset"), [recv, param1, param2])
-            rt.return_value = param2
-
-          else
-            raise NotImplementedError
-          end
-        }.else {
-          rt.break
-          rt.patchable_jump req.deferred_entry
-        }
-        temp.release!
+          }.else {
+            rt.break
+            rt.patchable_jump req.deferred_entry
+          }
+        end
 
         # patched a jmp and it is 5 bytes
         rt.jump jit_buffer.memory.to_i + patch_loc + 5
@@ -961,35 +961,34 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          temp = rt.temp_var
-          temp.write rt.pointer(rt.return_value)[0]
-          temp.shl   24
-          temp.shr   32
-          rt.add     temp, 5
-          rt.add     temp, rt.return_value
+          rt.temp_var do |temp|
+            temp.write rt.pointer(rt.return_value)[0]
+            temp.shl   24
+            temp.shr   32
+            rt.add     temp, 5
+            rt.add     temp, rt.return_value
 
-          rt.if_eq(temp.to_register, deferred.entry.to_i) {
-            temp.write 0xFFFFFF_00000000_FF
-            temp.and rt.pointer(rt.return_value)[0]
-            rt.pointer(rt.return_value)[0] = temp
-            temp.write exit_addr
-            temp.sub rt.return_value
-            rt.sub temp.to_register, 5
-            temp.shl 8
-            temp.or rt.pointer(rt.return_value)[0]
-            rt.pointer(rt.return_value)[0] = temp
+            rt.if_eq(temp.to_register, deferred.entry.to_i) {
+              temp.write 0xFFFFFF_00000000_FF
+              temp.and rt.pointer(rt.return_value)[0]
+              rt.pointer(rt.return_value)[0] = temp
+              temp.write exit_addr
+              temp.sub rt.return_value
+              rt.sub temp.to_register, 5
+              temp.shl 8
+              temp.or rt.pointer(rt.return_value)[0]
+              rt.pointer(rt.return_value)[0] = temp
 
-            rt.rb_funcall self, :compile_opt_send_without_block, [REG_CFP, compile_request, rt.return_value]
+              rt.rb_funcall self, :compile_opt_send_without_block, [REG_CFP, compile_request, rt.return_value]
 
-            rt.NUM2INT(rt.return_value)
+              rt.NUM2INT(rt.return_value)
 
-            rt.jump rt.return_value
-          }.else {
-            rt.break
-            rt.jump exit_addr
-          }
-
-          temp.release!
+              rt.jump rt.return_value
+            }.else {
+              rt.break
+              rt.jump exit_addr
+            }
+          end
         end
       end
 
