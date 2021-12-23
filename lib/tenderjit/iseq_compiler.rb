@@ -363,24 +363,24 @@ class TenderJIT
         #rt.check_vm_stack_overflow req.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-        temp = rt.temp_var
-        temp.write cfp_ptr.ep
-        ep_ptr = rt.pointer(temp)
+        rt.temp_var do |temp|
+          temp.write cfp_ptr.ep
+          ep_ptr = rt.pointer(temp)
 
-        # Find the LEP (or "Local" EP)
-        rt.test_flags(ep_ptr[VM_ENV_DATA_INDEX_FLAGS], VM_ENV_FLAG_LOCAL).else {
-          # TODO: need a test for this case
-          rt.break
-        }
+          # Find the LEP (or "Local" EP)
+          rt.test_flags(ep_ptr[VM_ENV_DATA_INDEX_FLAGS], VM_ENV_FLAG_LOCAL).else {
+            # TODO: need a test for this case
+            rt.break
+          }
 
-        # Get the block handler
-        temp.write ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]
-        rt.if_eq(temp, VM_BLOCK_HANDLER_NONE) {
-          rt.jump side_exit
-        }.else {
-          rt.patchable_jump req.deferred_entry
-        }
-        temp.release!
+          # Get the block handler
+          temp.write ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]
+          rt.if_eq(temp, VM_BLOCK_HANDLER_NONE) {
+            rt.jump side_exit
+          }.else {
+            rt.patchable_jump req.deferred_entry
+          }
+        end
       end
 
       method_entry_addr
