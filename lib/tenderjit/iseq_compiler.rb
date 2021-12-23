@@ -409,44 +409,45 @@ class TenderJIT
         #rt.check_vm_stack_overflow req.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-        temp = rt.temp_var
-        temp.write cfp_ptr.ep
-        ep_ptr = rt.pointer(temp)
+        rt.temp_var do |temp|
+          temp.write cfp_ptr.ep
+          ep_ptr = rt.pointer(temp)
 
-        # Find the LEP (or "Local" EP)
-        rt.test_flags(ep_ptr[VM_ENV_DATA_INDEX_FLAGS], VM_ENV_FLAG_LOCAL).else {
-          # TODO: need a test for this case
-          rt.break
-        }
-
-        # Get the block handler
-        temp.write ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]
-
-        rt.temp_var do |check|
-          check.write temp.to_register
-          check.and 0x3
-          # Check if it's an ISEQ
-          rt.if_eq(check.to_register, 0x1) {
-            # Convert it to a captured block
-            temp.and(~0x3)
-          }.else {
-            rt.patchable_jump req.deferred_entry
+          # Find the LEP (or "Local" EP)
+          rt.test_flags(ep_ptr[VM_ENV_DATA_INDEX_FLAGS], VM_ENV_FLAG_LOCAL).else {
+            # TODO: need a test for this case
+            rt.break
           }
+
+          # Get the block handler
+          temp.write ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]
+
+          rt.temp_var do |check|
+            check.write temp.to_register
+            check.and 0x3
+            # Check if it's an ISEQ
+            rt.if_eq(check.to_register, 0x1) {
+              # Convert it to a captured block
+              temp.and(~0x3)
+            }.else {
+              rt.patchable_jump req.deferred_entry
+            }
+          end
+
+          # Dereference the captured block
+          captured_ptr = rt.pointer(temp, type: rb.struct("rb_captured_block"))
+          temp.write captured_ptr.self
+
+          ts = temp_stack.dup
+
+          Frames::Block.new(
+            iseq_ptr,
+            temp,
+            SpecVals::PreviousEP.new(captured.ep),
+            0,
+            iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
+            local_size - param_size, ts).push(rt)
         end
-
-        # Dereference the captured block
-        captured_ptr = rt.pointer(temp, type: rb.struct("rb_captured_block"))
-        temp.write captured_ptr.self
-
-        ts = temp_stack.dup
-
-        Frames::Block.new(
-          iseq_ptr,
-          temp,
-          SpecVals::PreviousEP.new(captured.ep),
-          0,
-          iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-          local_size - param_size, ts).push(rt)
 
         # Save the base pointer
         rt.push_reg REG_BP
