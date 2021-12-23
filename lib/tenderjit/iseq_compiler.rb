@@ -1472,34 +1472,31 @@ class TenderJIT
           else # Otherwise it must be some other type of tagged pointer
             flags = recv & RUBY_IMMEDIATE_MASK
 
-            tv = rt.temp_var
-            tv.write recv_loc
-            tv.and RUBY_IMMEDIATE_MASK
+            rt.temp_var do |tv|
+              tv.write recv_loc
+              tv.and RUBY_IMMEDIATE_MASK
 
-            rt.if_eq(tv.to_register, flags).else {
-              rt.patchable_jump req.deferred_entry
-              rt.jump jit_buffer.memory.to_i + return_loc
-            }
-
-            tv.release!
+              rt.if_eq(tv.to_register, flags).else {
+                rt.patchable_jump req.deferred_entry
+                rt.jump jit_buffer.memory.to_i + return_loc
+              }
+            end
           end
         else
           rt.if(rt.RB_SPECIAL_CONST_P(recv_loc)) {
             rt.patchable_jump req.deferred_entry
             rt.jump jit_buffer.memory.to_i + return_loc
           }.else {
+            rt.temp_var do |tv|
+              tv.write recv_loc
 
-            tv = rt.temp_var
-            tv.write recv_loc
+              recv_ptr = rt.pointer(tv, type: RObject)
 
-            recv_ptr = rt.pointer(tv, type: RObject)
-
-            rt.if_eq(RBasic.klass(recv), recv_ptr.basic.klass).else {
-              rt.patchable_jump req.deferred_entry
-              rt.jump jit_buffer.memory.to_i + return_loc
-            }
-
-            tv.release!
+              rt.if_eq(RBasic.klass(recv), recv_ptr.basic.klass).else {
+                rt.patchable_jump req.deferred_entry
+                rt.jump jit_buffer.memory.to_i + return_loc
+              }
+            end
           }
         end
       end
