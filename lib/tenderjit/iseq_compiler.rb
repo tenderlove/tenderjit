@@ -1092,26 +1092,25 @@ class TenderJIT
         rt.push_reg REG_BP
 
         ret_loc = jit_buffer.memory.to_i + return_loc
-        var = rt.temp_var
-        var.write ret_loc
+        rt.temp_var do |var|
+          var.write ret_loc
 
-        # Callee will `ret` to return which will pop this address from the
-        # stack and jump to it
-        rt.push_reg var
+          # Callee will `ret` to return which will pop this address from the
+          # stack and jump to it
+          rt.push_reg var
 
-        # Dereference the JIT function address, skipping the REG_* assigments
-        # and jump to it
-        if $DEBUG
-          $stderr.puts "Should return to #{sprintf("%#x", ret_loc)}"
+          # Dereference the JIT function address, skipping the REG_* assigments
+          # and jump to it
+          if $DEBUG
+            $stderr.puts "Should return to #{sprintf("%#x", ret_loc)}"
+          end
+          var.write iseq.body.to_i
+          iseq_body = rt.pointer(var, type: RbIseqConstantBody)
+          var.write iseq_body.jit_func
+          rt.add var, @skip_bytes
+
+          rt.jump var
         end
-        var.write iseq.body.to_i
-        iseq_body = rt.pointer(var, type: RbIseqConstantBody)
-        var.write iseq_body.jit_func
-        rt.add var, @skip_bytes
-
-        rt.jump var
-
-        var.release!
       end
     end
 
