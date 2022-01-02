@@ -233,28 +233,27 @@ class TenderJIT
       with_runtime do |rt|
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-        temp = rt.temp_var
-        temp.write cfp_ptr.self
+        rt.temp_var do |temp|
+          temp.write cfp_ptr.self
 
-        self_ptr = rt.pointer(temp, type: RObject)
+          self_ptr = rt.pointer(temp, type: RObject)
 
-        # If the object class is the same, continue
-        rt.if_eq(self_ptr.basic.klass, RBasic.klass(recv).to_i) {
+          # If the object class is the same, continue
+          rt.if_eq(self_ptr.basic.klass, RBasic.klass(recv).to_i) {
 
-          # If it's an embedded object, read the ivar out of the object
-          rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
-            rt.return_value = self_ptr.as.ary[ivar_idx]
+            # If it's an embedded object, read the ivar out of the object
+            rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
+              rt.return_value = self_ptr.as.ary[ivar_idx]
 
-          }.else { # Otherwise, check the extended table
-            temp.write self_ptr.as.heap.ivptr
-            rt.return_value = rt.pointer(temp)[ivar_idx]
+            }.else { # Otherwise, check the extended table
+              temp.write self_ptr.as.heap.ivptr
+              rt.return_value = rt.pointer(temp)[ivar_idx]
+            }
+
+          }.else { # Otherwise we need to recompile
+            rt.patchable_jump req.deferred_entry
           }
-
-        }.else { # Otherwise we need to recompile
-          rt.patchable_jump req.deferred_entry
-        }
-
-        temp.release!
+        end
 
         rt.jump jit_buffer.memory.to_i + return_loc
       end
@@ -364,24 +363,24 @@ class TenderJIT
         #rt.check_vm_stack_overflow req.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-        temp = rt.temp_var
-        temp.write cfp_ptr.ep
-        ep_ptr = rt.pointer(temp)
+        rt.temp_var do |temp|
+          temp.write cfp_ptr.ep
+          ep_ptr = rt.pointer(temp)
 
-        # Find the LEP (or "Local" EP)
-        rt.test_flags(ep_ptr[VM_ENV_DATA_INDEX_FLAGS], VM_ENV_FLAG_LOCAL).else {
-          # TODO: need a test for this case
-          rt.break
-        }
+          # Find the LEP (or "Local" EP)
+          rt.test_flags(ep_ptr[VM_ENV_DATA_INDEX_FLAGS], VM_ENV_FLAG_LOCAL).else {
+            # TODO: need a test for this case
+            rt.break
+          }
 
-        # Get the block handler
-        temp.write ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]
-        rt.if_eq(temp, VM_BLOCK_HANDLER_NONE) {
-          rt.jump side_exit
-        }.else {
-          rt.patchable_jump req.deferred_entry
-        }
-        temp.release!
+          # Get the block handler
+          temp.write ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]
+          rt.if_eq(temp, VM_BLOCK_HANDLER_NONE) {
+            rt.jump side_exit
+          }.else {
+            rt.patchable_jump req.deferred_entry
+          }
+        end
       end
 
       method_entry_addr
@@ -409,87 +408,87 @@ class TenderJIT
         #rt.check_vm_stack_overflow req.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-        temp = rt.temp_var
-        temp.write cfp_ptr.ep
-        ep_ptr = rt.pointer(temp)
+        rt.temp_var do |temp|
+          temp.write cfp_ptr.ep
+          ep_ptr = rt.pointer(temp)
 
-        # Find the LEP (or "Local" EP)
-        rt.test_flags(ep_ptr[VM_ENV_DATA_INDEX_FLAGS], VM_ENV_FLAG_LOCAL).else {
-          # TODO: need a test for this case
-          rt.break
-        }
-
-        # Get the block handler
-        temp.write ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]
-
-        rt.temp_var do |check|
-          check.write temp.to_register
-          check.and 0x3
-          # Check if it's an ISEQ
-          rt.if_eq(check.to_register, 0x1) {
-            # Convert it to a captured block
-            temp.and(~0x3)
-          }.else {
-            rt.patchable_jump req.deferred_entry
+          # Find the LEP (or "Local" EP)
+          rt.test_flags(ep_ptr[VM_ENV_DATA_INDEX_FLAGS], VM_ENV_FLAG_LOCAL).else {
+            # TODO: need a test for this case
+            rt.break
           }
+
+          # Get the block handler
+          temp.write ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]
+
+          rt.temp_var do |check|
+            check.write temp.to_register
+            check.and 0x3
+            # Check if it's an ISEQ
+            rt.if_eq(check.to_register, 0x1) {
+              # Convert it to a captured block
+              temp.and(~0x3)
+            }.else {
+              rt.patchable_jump req.deferred_entry
+            }
+          end
+
+          # Dereference the captured block
+          captured_ptr = rt.pointer(temp, type: rb.struct("rb_captured_block"))
+          temp.write captured_ptr.self
+
+          ts = temp_stack.dup
+
+          Frames::Block.new(
+            iseq_ptr,
+            temp,
+            SpecVals::PreviousEP.new(captured.ep),
+            0,
+            iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
+            local_size - param_size, ts).push(rt)
         end
-
-        # Dereference the captured block
-        captured_ptr = rt.pointer(temp, type: rb.struct("rb_captured_block"))
-        temp.write captured_ptr.self
-
-        ts = temp_stack.dup
-
-        Frames::Block.new(
-          iseq_ptr,
-          temp,
-          SpecVals::PreviousEP.new(captured.ep),
-          0,
-          iseq.body.iseq_encoded + (opt_pc * Fiddle::SIZEOF_VOIDP),
-          local_size - param_size, ts).push(rt)
 
         # Save the base pointer
         rt.push_reg REG_BP
 
         ret_loc = jit_buffer.memory.to_i + return_loc
-        var = rt.temp_var
-        var.write ret_loc
+        rt.temp_var do |var|
+          var.write ret_loc
 
-        # Callee will `ret` to return which will pop this address from the
-        # stack and jump to it
-        rt.push_reg var
+          # Callee will `ret` to return which will pop this address from the
+          # stack and jump to it
+          rt.push_reg var
 
-        # If the iseq hasn't been compiled yet, put in a stub that will compile
-        # it and jump back.
-        if iseq.body.jit_func == 0
-          comp_req = CompileISeqBlock.new(iseq_ptr, temp_stack.dup.freeze)
-          @compile_requests << Fiddle::Pinned.new(comp_req)
+          # If the iseq hasn't been compiled yet, put in a stub that will compile
+          # it and jump back.
+          if iseq.body.jit_func == 0
+            comp_req = CompileISeqBlock.new(iseq_ptr, temp_stack.dup.freeze)
+            @compile_requests << Fiddle::Pinned.new(comp_req)
 
-          deferred = @jit.deferred_call(temp_stack) do |ctx|
-            ctx.with_runtime do |rt|
-              rt.rb_funcall self, :compile_iseq, [REG_CFP, comp_req, rt.return_value]
+            deferred = @jit.deferred_call(temp_stack) do |ctx|
+              ctx.with_runtime do |rt|
+                rt.rb_funcall self, :compile_iseq, [REG_CFP, comp_req, rt.return_value]
 
-              rt.NUM2INT(rt.return_value)
+                rt.NUM2INT(rt.return_value)
 
-              rt.jump rt.return_value
+                rt.jump rt.return_value
+              end
             end
+
+            deferred.call
+
+            rt.patchable_jump deferred.entry
           end
 
-          deferred.call
+          # Dereference the JIT function address, skipping the REG_* assigments
+          # and jump to it
+          var.write iseq.body.to_i
+          iseq_body = rt.pointer(var, type: RbIseqConstantBody)
+          var.write iseq_body.jit_func
+          rt.add var, @skip_bytes
 
-          rt.patchable_jump deferred.entry
+          rt.jump var
         end
-
-        # Dereference the JIT function address, skipping the REG_* assigments
-        # and jump to it
-        var.write iseq.body.to_i
-        iseq_body = rt.pointer(var, type: RbIseqConstantBody)
-        var.write iseq_body.jit_func
-        rt.add var, @skip_bytes
-
-        rt.jump var
-
-        var.release!
       end
 
       method_entry_addr
@@ -636,28 +635,27 @@ class TenderJIT
       with_runtime do |rt|
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
-        temp = rt.temp_var
-        temp.write cfp_ptr.self
+        rt.temp_var do |temp|
+          temp.write cfp_ptr.self
 
-        self_ptr = rt.pointer(temp, type: RObject)
+          self_ptr = rt.pointer(temp, type: RObject)
 
-        # If the object class is the same, continue
-        rt.if_eq(self_ptr.basic.klass, RBasic.klass(recv).to_i) {
+          # If the object class is the same, continue
+          rt.if_eq(self_ptr.basic.klass, RBasic.klass(recv).to_i) {
 
-          # If it's an embedded object, write to the embedded array
-          rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
-            self_ptr.as.ary[ivar_idx] = read_loc
+            # If it's an embedded object, write to the embedded array
+            rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
+              self_ptr.as.ary[ivar_idx] = read_loc
 
-          }.else { # Otherwise, the extended table
-            temp.write self_ptr.as.heap.ivptr
-            rt.pointer(temp)[ivar_idx] = read_loc
+            }.else { # Otherwise, the extended table
+              temp.write self_ptr.as.heap.ivptr
+              rt.pointer(temp)[ivar_idx] = read_loc
+            }
+
+          }.else { # Otherwise we need to recompile
+            rt.patchable_jump req.deferred_entry
           }
-
-        }.else { # Otherwise we need to recompile
-          rt.patchable_jump req.deferred_entry
-        }
-
-        temp.release!
+        end
 
         rt.jump jit_buffer.memory.to_i + return_loc
       end
@@ -729,34 +727,33 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          temp = rt.temp_var
-          temp.write rt.pointer(rt.return_value)[0]
-          temp.shl   24
-          temp.shr   32
-          rt.add     temp, 5
-          rt.add     temp, rt.return_value
+          rt.temp_var do |temp|
+            temp.write rt.pointer(rt.return_value)[0]
+            temp.shl   24
+            temp.shr   32
+            rt.add     temp, 5
+            rt.add     temp, rt.return_value
 
-          rt.if_eq(temp.to_register, deferred.entry.to_i) {
-            temp.write 0xFFFFFF_00000000_FF
-            temp.and rt.pointer(rt.return_value)[0]
-            rt.pointer(rt.return_value)[0] = temp
-            temp.write exit_addr
-            temp.sub rt.return_value
-            rt.sub temp.to_register, 5
-            temp.shl 8
-            temp.or rt.pointer(rt.return_value)[0]
-            rt.pointer(rt.return_value)[0] = temp
-            temp.release!
+            rt.if_eq(temp.to_register, deferred.entry.to_i) {
+              temp.write 0xFFFFFF_00000000_FF
+              temp.and rt.pointer(rt.return_value)[0]
+              rt.pointer(rt.return_value)[0] = temp
+              temp.write exit_addr
+              temp.sub rt.return_value
+              rt.sub temp.to_register, 5
+              temp.shl 8
+              temp.or rt.pointer(rt.return_value)[0]
+              rt.pointer(rt.return_value)[0] = temp
+              rt.rb_funcall self, :compile_getinstancevariable, [REG_CFP, req, rt.return_value]
 
-            rt.rb_funcall self, :compile_getinstancevariable, [REG_CFP, req, rt.return_value]
+              rt.NUM2INT(rt.return_value)
 
-            rt.NUM2INT(rt.return_value)
-
-            rt.jump rt.return_value
-          }.else {
-            rt.break
-            rt.jump exit_addr
-          }
+              rt.jump rt.return_value
+            }.else {
+              rt.break
+              rt.jump exit_addr
+            }
+          end
         end
       end
 
@@ -852,38 +849,38 @@ class TenderJIT
       recv   = req.temp_stack.peek(2).loc # recv
 
       with_runtime do |rt|
-        temp = rt.temp_var
-        temp.write recv
+        rt.temp_var do |temp|
+          temp.write recv
 
-        _self = rt.pointer(temp, type: RObject)
+          _self = rt.pointer(temp, type: RObject)
 
-        rt.if_eq(_self.basic.klass, RBasic.klass(peek_recv).to_i) {
-          klass = Fiddle.dlunwrap(klass)
+          rt.if_eq(_self.basic.klass, RBasic.klass(peek_recv).to_i) {
+            klass = Fiddle.dlunwrap(klass)
 
-          rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
+            rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
 
-          # We know it's an array at compile time
-          if klass == ::Array
-            rt.temp_var do |x|
-              x.write param1
-              rt.FIX2LONG(x)
-              rt.call_cfunc(rb.symbol_address("rb_ary_store"), [recv, x, param2])
+            # We know it's an array at compile time
+            if klass == ::Array
+              rt.temp_var do |x|
+                x.write param1
+                rt.FIX2LONG(x)
+                rt.call_cfunc(rb.symbol_address("rb_ary_store"), [recv, x, param2])
+              end
+              rt.return_value = param2
+
+              # We know it's a hash at compile time
+            elsif klass == ::Hash
+              rt.call_cfunc(rb.symbol_address("rb_hash_aset"), [recv, param1, param2])
+              rt.return_value = param2
+
+            else
+              raise NotImplementedError
             end
-            rt.return_value = param2
-
-            # We know it's a hash at compile time
-          elsif klass == ::Hash
-            rt.call_cfunc(rb.symbol_address("rb_hash_aset"), [recv, param1, param2])
-            rt.return_value = param2
-
-          else
-            raise NotImplementedError
-          end
-        }.else {
-          rt.break
-          rt.patchable_jump req.deferred_entry
-        }
-        temp.release!
+          }.else {
+            rt.break
+            rt.patchable_jump req.deferred_entry
+          }
+        end
 
         # patched a jmp and it is 5 bytes
         rt.jump jit_buffer.memory.to_i + patch_loc + 5
@@ -961,34 +958,34 @@ class TenderJIT
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
-          temp = rt.temp_var
-          temp.write rt.pointer(rt.return_value)[0]
-          temp.shl   24
-          temp.shr   32
-          rt.add     temp, 5
-          rt.add     temp, rt.return_value
+          rt.temp_var do |temp|
+            temp.write rt.pointer(rt.return_value)[0]
+            temp.shl   24
+            temp.shr   32
+            rt.add     temp, 5
+            rt.add     temp, rt.return_value
 
-          rt.if_eq(temp.to_register, deferred.entry.to_i) {
-            temp.write 0xFFFFFF_00000000_FF
-            temp.and rt.pointer(rt.return_value)[0]
-            rt.pointer(rt.return_value)[0] = temp
-            temp.write exit_addr
-            temp.sub rt.return_value
-            rt.sub temp.to_register, 5
-            temp.shl 8
-            temp.or rt.pointer(rt.return_value)[0]
-            rt.pointer(rt.return_value)[0] = temp
-            temp.release!
+            rt.if_eq(temp.to_register, deferred.entry.to_i) {
+              temp.write 0xFFFFFF_00000000_FF
+              temp.and rt.pointer(rt.return_value)[0]
+              rt.pointer(rt.return_value)[0] = temp
+              temp.write exit_addr
+              temp.sub rt.return_value
+              rt.sub temp.to_register, 5
+              temp.shl 8
+              temp.or rt.pointer(rt.return_value)[0]
+              rt.pointer(rt.return_value)[0] = temp
 
-            rt.rb_funcall self, :compile_opt_send_without_block, [REG_CFP, compile_request, rt.return_value]
+              rt.rb_funcall self, :compile_opt_send_without_block, [REG_CFP, compile_request, rt.return_value]
 
-            rt.NUM2INT(rt.return_value)
+              rt.NUM2INT(rt.return_value)
 
-            rt.jump rt.return_value
-          }.else {
-            rt.break
-            rt.jump exit_addr
-          }
+              rt.jump rt.return_value
+            }.else {
+              rt.break
+              rt.jump exit_addr
+            }
+          end
         end
       end
 
@@ -1092,26 +1089,25 @@ class TenderJIT
         rt.push_reg REG_BP
 
         ret_loc = jit_buffer.memory.to_i + return_loc
-        var = rt.temp_var
-        var.write ret_loc
+        rt.temp_var do |var|
+          var.write ret_loc
 
-        # Callee will `ret` to return which will pop this address from the
-        # stack and jump to it
-        rt.push_reg var
+          # Callee will `ret` to return which will pop this address from the
+          # stack and jump to it
+          rt.push_reg var
 
-        # Dereference the JIT function address, skipping the REG_* assigments
-        # and jump to it
-        if $DEBUG
-          $stderr.puts "Should return to #{sprintf("%#x", ret_loc)}"
+          # Dereference the JIT function address, skipping the REG_* assigments
+          # and jump to it
+          if $DEBUG
+            $stderr.puts "Should return to #{sprintf("%#x", ret_loc)}"
+          end
+          var.write iseq.body.to_i
+          iseq_body = rt.pointer(var, type: RbIseqConstantBody)
+          var.write iseq_body.jit_func
+          rt.add var, @skip_bytes
+
+          rt.jump var
         end
-        var.write iseq.body.to_i
-        iseq_body = rt.pointer(var, type: RbIseqConstantBody)
-        var.write iseq_body.jit_func
-        rt.add var, @skip_bytes
-
-        rt.jump var
-
-        var.release!
       end
     end
 
@@ -1473,34 +1469,31 @@ class TenderJIT
           else # Otherwise it must be some other type of tagged pointer
             flags = recv & RUBY_IMMEDIATE_MASK
 
-            tv = rt.temp_var
-            tv.write recv_loc
-            tv.and RUBY_IMMEDIATE_MASK
+            rt.temp_var do |tv|
+              tv.write recv_loc
+              tv.and RUBY_IMMEDIATE_MASK
 
-            rt.if_eq(tv.to_register, flags).else {
-              rt.patchable_jump req.deferred_entry
-              rt.jump jit_buffer.memory.to_i + return_loc
-            }
-
-            tv.release!
+              rt.if_eq(tv.to_register, flags).else {
+                rt.patchable_jump req.deferred_entry
+                rt.jump jit_buffer.memory.to_i + return_loc
+              }
+            end
           end
         else
           rt.if(rt.RB_SPECIAL_CONST_P(recv_loc)) {
             rt.patchable_jump req.deferred_entry
             rt.jump jit_buffer.memory.to_i + return_loc
           }.else {
+            rt.temp_var do |tv|
+              tv.write recv_loc
 
-            tv = rt.temp_var
-            tv.write recv_loc
+              recv_ptr = rt.pointer(tv, type: RObject)
 
-            recv_ptr = rt.pointer(tv, type: RObject)
-
-            rt.if_eq(RBasic.klass(recv), recv_ptr.basic.klass).else {
-              rt.patchable_jump req.deferred_entry
-              rt.jump jit_buffer.memory.to_i + return_loc
-            }
-
-            tv.release!
+              rt.if_eq(RBasic.klass(recv), recv_ptr.basic.klass).else {
+                rt.patchable_jump req.deferred_entry
+                rt.jump jit_buffer.memory.to_i + return_loc
+              }
+            end
           }
         end
       end
@@ -2421,13 +2414,12 @@ class TenderJIT
 
     def handle_swap
       with_runtime do |rt|
-        temp = rt.temp_var
-        temp.write @temp_stack[0]
+        rt.temp_var do |temp|
+          temp.write @temp_stack[0]
 
-        rt.write @temp_stack[0], @temp_stack[1]
-        rt.write @temp_stack[1], temp
-
-        temp.release!
+          rt.write @temp_stack[0], @temp_stack[1]
+          rt.write @temp_stack[1], temp
+        end
       end
     end
 

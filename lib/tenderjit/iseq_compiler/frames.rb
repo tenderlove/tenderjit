@@ -21,69 +21,73 @@ class TenderJIT
           ec_ptr = rt.pointer REG_EC, type: RbExecutionContextT
           cfp_ptr = rt.pointer REG_CFP, type: RbControlFrameStruct
 
-          temp =  if _self.temp_register?
-                    _self
-                  else
-                    new_self = rt.temp_var("self")
-                    new_self.write self._self
-                    new_self
-                  end
-
-          # Write `self` to the next frame.  Frames grow down, so we subtract
-          # the size of the frame from the offset of "self" then set self to
-          # that value
-          next_frame_loc = -RbControlFrameStruct.byte_size
-          self_offset = RbControlFrameStruct.offsetof("self")
-
-          rt.write_register(REG_CFP, next_frame_loc + self_offset, temp.to_register)
-
-          # Fill in the local table
-          local_size.times do
-            rt.write temp_stack.push(:local), Qnil
+          push_execution = ->(&block) do
+            if _self.temp_register?
+              block.call _self
+            else
+              rt.temp_var("self") do |new_self|
+                new_self.write _self
+                block.call new_self
+              end
+            end
           end
 
-          # Set up the stack values for the callee frame.  It's important we
-          # set these values before pushing the new CFP.  Captured blocks need
-          # to set the block code on the *caller* frame before we push a new
-          # frame.
-          #
-          # /* setup ep with managing data */
-          # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
-          # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
-          # *sp++ = type;       /* ep[-0] / ENV_FLAGS */
-          rt.write temp_stack.push(:cref), cref_or_me
-          write_specval rt, temp_stack.push(:specval)
-          rt.write temp_stack.push(:env_flags), type
+          push_execution.call do |temp|
+            # Write `self` to the next frame.  Frames grow down, so we subtract
+            # the size of the frame from the offset of "self" then set self to
+            # that value
+            next_frame_loc = -RbControlFrameStruct.byte_size
+            self_offset = RbControlFrameStruct.offsetof("self")
 
-          # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
-          cfp_ptr.sub # like -- in C
+            rt.write_register(REG_CFP, next_frame_loc + self_offset, temp.to_register)
 
-          temp.write_address_of(temp_stack + 0)
-          new_sp = temp
+            # Fill in the local table
+            local_size.times do
+              rt.write temp_stack.push(:local), Qnil
+            end
 
-          # /* setup new frame */
-          # *cfp = (const struct rb_control_frame_struct) {
-          #     .pc         = pc,
-          #     .sp         = sp,
-          #     .iseq       = iseq,
-          #     .self       = self,
-          #     .ep         = sp - 1,
-          #     .block_code = NULL,
-          #     .__bp__     = sp
-          # };
-          cfp_ptr.pc = pc
-          cfp_ptr.sp     = new_sp
-          cfp_ptr.__bp__ = new_sp
+            # Set up the stack values for the callee frame.  It's important we
+            # set these values before pushing the new CFP.  Captured blocks need
+            # to set the block code on the *caller* frame before we push a new
+            # frame.
+            #
+            # /* setup ep with managing data */
+            # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
+            # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
+            # *sp++ = type;       /* ep[-0] / ENV_FLAGS */
+            rt.write temp_stack.push(:cref), cref_or_me
+            write_specval rt, temp_stack.push(:specval)
+            rt.write temp_stack.push(:env_flags), type
 
-          new_sp.sub
-          cfp_ptr.ep     = new_sp
+            # rb_control_frame_t *const cfp = RUBY_VM_NEXT_CONTROL_FRAME(ec->cfp);
+            cfp_ptr.sub # like -- in C
 
-          cfp_ptr.iseq = iseq
-          cfp_ptr.block_code = 0
+            temp.write_address_of(temp_stack + 0)
+            new_sp = temp
 
-          # ec->cfp = cfp;
-          ec_ptr.cfp = cfp_ptr
-          temp.release!
+            # /* setup new frame */
+            # *cfp = (const struct rb_control_frame_struct) {
+            #     .pc         = pc,
+            #     .sp         = sp,
+            #     .iseq       = iseq,
+            #     .self       = self,
+            #     .ep         = sp - 1,
+            #     .block_code = NULL,
+            #     .__bp__     = sp
+            # };
+            cfp_ptr.pc = pc
+            cfp_ptr.sp     = new_sp
+            cfp_ptr.__bp__ = new_sp
+
+            new_sp.sub
+            cfp_ptr.ep     = new_sp
+
+            cfp_ptr.iseq = iseq
+            cfp_ptr.block_code = 0
+
+            # ec->cfp = cfp;
+            ec_ptr.cfp = cfp_ptr
+          end
         end
 
         def write_specval rt, stack_loc
