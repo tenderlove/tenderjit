@@ -526,7 +526,6 @@ class TenderJIT
       ci = RbCallInfo.new cd.ci
 
       req = CompileBlock.new(ci, @temp_stack.dup.freeze, current_pc, next_pc)
-
       @compile_requests << Fiddle::Pinned.new(req)
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
@@ -2568,6 +2567,8 @@ class TenderJIT
 
         rt.temp_var("EP") do |ep|
           req = GetBlockParamProxy.new idx, level, @temp_stack.dup.freeze
+          @compile_requests << Fiddle::Pinned.new(req)
+
           req.exit_addr = exits.make_exit("getblockparamproxy", current_pc, @temp_stack.size)
 
           push_loc = @temp_stack.push("proc", type: T_DATA)
@@ -2913,6 +2914,7 @@ class TenderJIT
       #sp_inc = num - 1 + (flag & 1 ? 1 : 0);
 
       req = CompileExpandArray.new(num, flag, @temp_stack.dup.freeze)
+      @compile_requests << Fiddle::Pinned.new(req)
 
       deferred = @jit.deferred_call(@temp_stack) do |ctx|
         ctx.with_runtime do |rt|
