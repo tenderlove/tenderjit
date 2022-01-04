@@ -2420,15 +2420,9 @@ class TenderJIT
     end
 
     def handle_swap
-      with_runtime do |rt|
-        temp = rt.temp_var
-        temp.write @temp_stack[0]
-
-        rt.write @temp_stack[0], @temp_stack[1]
-        rt.write @temp_stack[1], temp
-
-        temp.release!
-      end
+      top_item, second_item = @temp_stack.pop_item, @temp_stack.pop_item
+      @temp_stack.push_item top_item
+      @temp_stack.push_item second_item
     end
 
     def handle_opt_aset call_data

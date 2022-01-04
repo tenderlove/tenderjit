@@ -64,10 +64,21 @@ class TenderJIT
       m
     end
 
+    # Push a TempStack::Item on the temp stack. Returns the pushed item
+    def push_item item
+      @stack.push item
+      item
+    end
+
     # Pop a value from the temp stack. Returns the memory location where the
     # value should be read in machine code.
     def pop
       @stack.pop.loc
+    end
+
+    # Pop an item from the temp stack. Returns an instannce of TempStack::Item
+    def pop_item
+      @stack.pop
     end
 
     def initialize_copy other
