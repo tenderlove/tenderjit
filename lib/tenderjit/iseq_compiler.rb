@@ -469,7 +469,7 @@ class TenderJIT
           comp_req = CompileISeqBlock.new(iseq_ptr, temp_stack.dup.freeze)
           @compile_requests << Fiddle::Pinned.new(comp_req)
 
-          deferred = @jit.deferred_call(temp_stack) do |ctx|
+          deferred = @jit.deferred_call(NoFlush.new) do |ctx|
             ctx.with_runtime do |rt|
               rt.rb_funcall self, :compile_iseq, [REG_CFP, comp_req, rt.return_value]
 
@@ -497,6 +497,10 @@ class TenderJIT
       end
 
       method_entry_addr
+    end
+
+    class NoFlush
+      def flush x; end
     end
 
     def compile_invokeblock cfp, req, loc
