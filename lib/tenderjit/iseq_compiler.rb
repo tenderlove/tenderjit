@@ -819,11 +819,11 @@ class TenderJIT
 
             # We know it's an array at compile time
             if klass == ::Array
-              rt.call_cfunc rb.symbol_address("rb_ary_aref1"), [recv, param], auto_align: false, preserve_tempvars: false
+              rt.call_cfunc symbol_addr("rb_ary_aref1"), [recv, param], auto_align: false, preserve_tempvars: false
 
               # We know it's a hash at compile time
             elsif klass == ::Hash
-              rt.call_cfunc rb.symbol_address("rb_hash_aref"), [recv, param], auto_align: false, preserve_tempvars: false
+              rt.call_cfunc symbol_addr("rb_hash_aref"), [recv, param], auto_align: false, preserve_tempvars: false
 
             else
               compile_send cfp, req, patch_loc
@@ -882,13 +882,13 @@ class TenderJIT
             rt.temp_var do |x|
               x.write param1
               rt.FIX2LONG(x)
-              rt.call_cfunc(rb.symbol_address("rb_ary_store"), [recv, x, param2])
+              rt.call_cfunc(symbol_addr("rb_ary_store"), [recv, x, param2])
             end
             rt.return_value = param2
 
             # We know it's a hash at compile time
           elsif klass == ::Hash
-            rt.call_cfunc(rb.symbol_address("rb_hash_aset"), [recv, param1, param2])
+            rt.call_cfunc(symbol_addr("rb_hash_aset"), [recv, param1, param2])
             rt.return_value = param2
 
           else
@@ -1253,7 +1253,7 @@ class TenderJIT
           if req.has_blockarg?
             temp_stack = temp_stack.dup
             if temp_stack.peek(0).symbol?
-              rt.call_cfunc Fiddle::Handle::DEFAULT["rb_sym_to_proc"], [temp_stack.pop]
+              rt.call_cfunc symbol_addr("rb_sym_to_proc"), [temp_stack.pop]
               loc = temp_stack.push :proc
               rt.write loc, rt.return_value
             else
@@ -2433,9 +2433,9 @@ class TenderJIT
 
     def vm_splat_array read_loc, store_loc, flag
       with_runtime do |rt|
-        rb_check_to_array = rb.symbol_address("rb_check_to_array")
-        rb_ary_new_from_args = rb.symbol_address("rb_ary_new_from_args")
-        rb_ary_dup = rb.symbol_address("rb_ary_dup")
+        rb_check_to_array = symbol_addr("rb_check_to_array")
+        rb_ary_new_from_args = symbol_addr("rb_ary_new_from_args")
+        rb_ary_dup = symbol_addr("rb_ary_dup")
 
         rt.call_cfunc rb_check_to_array, [read_loc]
 
@@ -2569,7 +2569,7 @@ class TenderJIT
 
               if rb.RB_STATIC_SYM_P(block_handler)
                 rt.if(rt.RB_STATIC_SYM_P(ep_ptr[VM_ENV_DATA_INDEX_SPECVAL])) {
-                  addr = rb.symbol_address("rb_sym_to_proc")
+                  addr = Fiddle::Handle::DEFAULT["rb_sym_to_proc"]
                   rt.call_cfunc(addr, [ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]])
                   # Set the block handler in EP
                   ep_ptr[-req.idx] = rt.return_value
@@ -2583,7 +2583,7 @@ class TenderJIT
                   rt.push_reg ep
                   rt.patchable_jump req.deferred_entry
                 }.else {
-                  addr = rb.symbol_address("rb_sym_to_proc")
+                  addr = Fiddle::Handle::DEFAULT["rb_sym_to_proc"]
                   rt.call_cfunc(addr, [ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]])
                   # Set the block handler in EP
                   ep_ptr[-req.idx] = rt.return_value
