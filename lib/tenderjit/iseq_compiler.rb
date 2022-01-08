@@ -127,6 +127,8 @@ class TenderJIT
             print_str("#{sprintf("%04d", @insn_idx)} running   #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)} SP #{@temp_stack.size}\n")
           end
           @fisk = Fisk.new
+          # Uncomment for finding GC related bugs
+          #GC.start
           v = send("handle_#{name}", *params)
           if v == :quit
             make_exit(name, @current_pc, @temp_stack).write_to jit_buffer
@@ -402,8 +404,12 @@ class TenderJIT
 
       method_entry_addr = jit_buffer.address
 
-      with_runtime do |rt|
-        rt.flush_pc_and_sp req.next_pc, REG_BP
+      with_runtime(temp_stack) do |rt|
+        if temp_stack.empty?
+          rt.flush_pc_and_sp req.next_pc, REG_BP
+        else
+          rt.flush_pc_and_sp req.next_pc, temp_stack.first.loc
+        end
 
         # TODO: We need an overflow check here, I think
         #rt.check_vm_stack_overflow req.temp_stack, overflow_exit, local_size - param_size, iseq.body.stack_max
@@ -465,7 +471,7 @@ class TenderJIT
           comp_req = CompileISeqBlock.new(iseq_ptr, temp_stack.dup.freeze)
           @compile_requests << Fiddle::Pinned.new(comp_req)
 
-          deferred = @jit.deferred_call(temp_stack) do |ctx|
+          deferred = @jit.deferred_call(NoFlush.new) do |ctx|
             ctx.with_runtime do |rt|
               rt.rb_funcall self, :compile_iseq, [REG_CFP, comp_req, rt.return_value]
 
@@ -493,6 +499,10 @@ class TenderJIT
       end
 
       method_entry_addr
+    end
+
+    class NoFlush
+      def flush x; end
     end
 
     def compile_invokeblock cfp, req, loc
@@ -571,13 +581,16 @@ class TenderJIT
     def handle_setglobal gid
       global_name = Fiddle.dlunwrap(CFuncs.rb_id2str(gid))
       stack_val   = @temp_stack.first.type
-      loc = @temp_stack.pop
-
       addr = Fiddle::Handle::DEFAULT["rb_gvar_set"]
+
       with_runtime do |rt|
         if global_name == "$halt_at_runtime" && stack_val == true
           rt.break
         else
+          # GC could be triggered
+          rt.flush_sp
+          loc = @temp_stack.pop
+
           rt.call_cfunc addr, [gid, loc]
         end
       end
@@ -589,9 +602,12 @@ class TenderJIT
 
     def handle_concatstrings num
       loc = @temp_stack[num - 1]
-      num.times { @temp_stack.pop }
       addr = Fiddle::Handle::DEFAULT["rb_str_concat_literals"]
       with_runtime do |rt|
+        # GC could be triggered
+        rt.flush_sp
+
+        num.times { @temp_stack.pop }
         rt.with_ref(loc) do |reg|
           rt.call_cfunc addr, [num, reg]
         end
@@ -798,17 +814,18 @@ class TenderJIT
           rt.if_eq(_self.basic.klass, klass) {
             klass = Fiddle.dlunwrap(klass)
 
+            # GC can be triggered
             rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
 
             rt.push_reg REG_BP # Callee will pop this
 
             # We know it's an array at compile time
             if klass == ::Array
-              rt.call_cfunc rb.symbol_address("rb_ary_aref1"), [recv, param], auto_align: false, preserve_tempvars: false
+              rt.call_cfunc symbol_addr("rb_ary_aref1"), [recv, param], auto_align: false, preserve_tempvars: false
 
               # We know it's a hash at compile time
             elsif klass == ::Hash
-              rt.call_cfunc rb.symbol_address("rb_hash_aref"), [recv, param], auto_align: false, preserve_tempvars: false
+              rt.call_cfunc symbol_addr("rb_hash_aref"), [recv, param], auto_align: false, preserve_tempvars: false
 
             else
               compile_send cfp, req, patch_loc
@@ -859,6 +876,7 @@ class TenderJIT
         rt.if_eq(_self.basic.klass, RBasic.klass(peek_recv).to_i) {
           klass = Fiddle.dlunwrap(klass)
 
+          # GC can be triggered
           rt.flush_pc_and_sp req.next_pc, req.temp_stack.first.loc
 
           # We know it's an array at compile time
@@ -866,13 +884,13 @@ class TenderJIT
             rt.temp_var do |x|
               x.write param1
               rt.FIX2LONG(x)
-              rt.call_cfunc(rb.symbol_address("rb_ary_store"), [recv, x, param2])
+              rt.call_cfunc(symbol_addr("rb_ary_store"), [recv, x, param2])
             end
             rt.return_value = param2
 
             # We know it's a hash at compile time
           elsif klass == ::Hash
-            rt.call_cfunc(rb.symbol_address("rb_hash_aset"), [recv, param1, param2])
+            rt.call_cfunc(symbol_addr("rb_hash_aset"), [recv, param1, param2])
             rt.return_value = param2
 
           else
@@ -1163,6 +1181,8 @@ class TenderJIT
 
     def handle_anytostring
       with_runtime do |rt|
+        # GC could be triggered
+        rt.flush_sp
         rt.call_cfunc Fiddle::Handle::DEFAULT["rb_obj_as_string_result"],
           [@temp_stack.pop, @temp_stack.pop]
         rt.write @temp_stack.push(:string), rt.return_value
@@ -1235,7 +1255,7 @@ class TenderJIT
           if req.has_blockarg?
             temp_stack = temp_stack.dup
             if temp_stack.peek(0).symbol?
-              rt.call_cfunc Fiddle::Handle::DEFAULT["rb_sym_to_proc"], [temp_stack.pop]
+              rt.call_cfunc symbol_addr("rb_sym_to_proc"), [temp_stack.pop]
               loc = temp_stack.push :proc
               rt.write loc, rt.return_value
             else
@@ -1528,6 +1548,9 @@ class TenderJIT
 
     def handle_newhash num
       with_runtime do |rt|
+        # GC could be triggered
+        rt.flush_sp
+
         if num == 0
           address = Fiddle::Handle::DEFAULT["rb_hash_new"]
           ret = rt.call_cfunc(address, [])
@@ -1566,6 +1589,9 @@ class TenderJIT
       with_runtime do |rt|
         rt.push_reg REG_BP
 
+        # GC could be triggered
+        rt.flush_sp
+
         values_loc = if num > 0
           @temp_stack.peek(num - 1).loc
         else
@@ -1592,10 +1618,13 @@ class TenderJIT
     def handle_newrange flag
       rb_range_new = Fiddle::Handle::DEFAULT["rb_range_new"]
 
-      high = @temp_stack.pop
-      low = @temp_stack.pop
-
       with_runtime do |rt|
+        # GC could be triggered
+        rt.flush_sp
+
+        high = @temp_stack.pop
+        low = @temp_stack.pop
+
         rt.call_cfunc rb_range_new, [low, high, flag]
         rt.push rt.return_value, name: :range
       end
@@ -1603,14 +1632,18 @@ class TenderJIT
 
     def handle_duparray ary
       with_runtime do |rt|
-        rt.call_cfunc rb.symbol_address("rb_ary_resurrect"), [Fisk::Imm64.new(ary)]
+        # GC could be triggered
+        rt.flush_sp
+        rt.call_cfunc Fiddle::Handle::DEFAULT["rb_ary_resurrect"], [Fisk::Imm64.new(ary)]
         rt.push rt.return_value, name: RUBY_T_ARRAY
       end
     end
 
     def handle_duphash hash
       with_runtime do |rt|
-        rt.call_cfunc rb.symbol_address("rb_hash_resurrect"), [Fisk::Imm64.new(hash)]
+        # GC could be triggered
+        rt.flush_sp
+        rt.call_cfunc Fiddle::Handle::DEFAULT["rb_hash_resurrect"], [Fisk::Imm64.new(hash)]
         rt.push rt.return_value, name: RUBY_T_HASH
       end
     end
@@ -1618,10 +1651,13 @@ class TenderJIT
     def handle_tostring
       rb_obj_as_string_result = Fiddle::Handle::DEFAULT["rb_obj_as_string_result"]
 
-      str = @temp_stack.pop
-      val = @temp_stack.pop
-
       with_runtime do |rt|
+        # GC could be triggered
+        rt.flush_sp
+
+        str = @temp_stack.pop
+        val = @temp_stack.pop
+
         rt.call_cfunc rb_obj_as_string_result, [str, val]
         rt.push rt.return_value, name: RUBY_T_STRING
       end
@@ -1640,7 +1676,7 @@ class TenderJIT
       with_runtime do |rt|
         rt.with_ref(@temp_stack.peek(cnt - 1).loc) do |stack_addr_from_top|
           # This instruction can raise RegexpError, so we need the CFP to have
-          # up-to-date PC/SP
+          # up-to-date PC/SP.  Also GC can be triggered
           if @temp_stack.size == 0
             rt.flush_pc_and_sp next_pc, REG_BP
           else
@@ -1665,9 +1701,12 @@ class TenderJIT
     def handle_intern
       rb_str_intern = Fiddle::Handle::DEFAULT["rb_str_intern"]
 
-      str = @temp_stack.pop
-
       with_runtime do |rt|
+        # GC can be triggered
+        rt.flush_sp
+
+        str = @temp_stack.pop
+
         rt.call_cfunc rb_str_intern, [str]
         rt.push rt.return_value, name: RUBY_T_SYMBOL
       end
@@ -2383,6 +2422,11 @@ class TenderJIT
     end
 
     def handle_splatarray flag
+      with_runtime do |rt|
+        # GC can be triggered
+        rt.flush_sp
+      end
+
       pop_loc = @temp_stack.pop
       push_loc = @temp_stack.push(:object, type: T_ARRAY)
 
@@ -2391,9 +2435,9 @@ class TenderJIT
 
     def vm_splat_array read_loc, store_loc, flag
       with_runtime do |rt|
-        rb_check_to_array = rb.symbol_address("rb_check_to_array")
-        rb_ary_new_from_args = rb.symbol_address("rb_ary_new_from_args")
-        rb_ary_dup = rb.symbol_address("rb_ary_dup")
+        rb_check_to_array = symbol_addr("rb_check_to_array")
+        rb_ary_new_from_args = symbol_addr("rb_ary_new_from_args")
+        rb_ary_dup = symbol_addr("rb_ary_dup")
 
         rt.call_cfunc rb_check_to_array, [read_loc]
 
@@ -2500,9 +2544,13 @@ class TenderJIT
       peek_ep = rb.vm_get_ep peek_ep, req.level
       raise "EP is wrong!" unless rb.VM_ENV_LOCAL_P(peek_ep)
       if !rb.VM_ENV_FLAGS(peek_ep, VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM)
-        push_loc = req.temp_stack.dup.push("proc", type: T_DATA)
+        temp_stack = req.temp_stack.dup
 
-        with_runtime do |rt|
+        push_loc = temp_stack.push("proc", type: T_DATA)
+
+        with_runtime(temp_stack, alignment: 0) do |rt|
+          rt.flush_sp
+
           rt.temp_var do |ep|
             rt.pop_reg ep
 
@@ -2523,7 +2571,7 @@ class TenderJIT
 
               if rb.RB_STATIC_SYM_P(block_handler)
                 rt.if(rt.RB_STATIC_SYM_P(ep_ptr[VM_ENV_DATA_INDEX_SPECVAL])) {
-                  addr = rb.symbol_address("rb_sym_to_proc")
+                  addr = Fiddle::Handle::DEFAULT["rb_sym_to_proc"]
                   rt.call_cfunc(addr, [ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]])
                   # Set the block handler in EP
                   ep_ptr[-req.idx] = rt.return_value
@@ -2537,7 +2585,7 @@ class TenderJIT
                   rt.push_reg ep
                   rt.patchable_jump req.deferred_entry
                 }.else {
-                  addr = rb.symbol_address("rb_sym_to_proc")
+                  addr = Fiddle::Handle::DEFAULT["rb_sym_to_proc"]
                   rt.call_cfunc(addr, [ep_ptr[VM_ENV_DATA_INDEX_SPECVAL]])
                   # Set the block handler in EP
                   ep_ptr[-req.idx] = rt.return_value
@@ -2990,8 +3038,8 @@ class TenderJIT
       fisk.write_to(@string_buffer)
     end
 
-    def with_runtime temp_stack = @temp_stack
-      rt = Runtime.new(Fisk.new, jit_buffer, temp_stack)
+    def with_runtime temp_stack = @temp_stack, alignment: 8
+      rt = Runtime.new(Fisk.new, jit_buffer, temp_stack, alignment: alignment)
       yield rt
       rt.write!
     end
@@ -3004,6 +3052,10 @@ class TenderJIT
       def optimized_method_type mdef
         RbMethodDefinitionStruct.new(mdef).body.optimized.type
       end
+    end
+
+    def symbol_addr name
+      Fiddle::Handle::DEFAULT[name]
     end
   end
 end

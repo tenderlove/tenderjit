@@ -153,6 +153,7 @@ class TenderJIT
     def test_offset
       assert_equal Fiddle::Handle::DEFAULT["ruby_current_vm_ptr"], Ruby::SYMBOLS["ruby_current_vm_ptr"]
       assert_equal Fiddle::Handle::DEFAULT["rb_iseq_eval_main"], Ruby::SYMBOLS["rb_iseq_eval_main"]
+      assert_equal Fiddle::Handle::DEFAULT["rb_cInteger"], Ruby::SYMBOLS["rb_cInteger"]
     end
 
     def test_redefined_flag_len

@@ -100,6 +100,10 @@ class TenderJIT
       @stack.size
     end
 
+    def empty?
+      @stack.empty?
+    end
+
     protected
 
     attr_reader :stack
