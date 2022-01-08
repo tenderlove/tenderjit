@@ -127,6 +127,8 @@ class TenderJIT
             print_str("#{sprintf("%04d", @insn_idx)} running   #{name.ljust(LJUST)} #{sprintf("%#x", @iseq.to_i)} SP #{@temp_stack.size}\n")
           end
           @fisk = Fisk.new
+          # Uncomment for finding GC related bugs
+          #GC.start
           v = send("handle_#{name}", *params)
           if v == :quit
             make_exit(name, @current_pc, @temp_stack).write_to jit_buffer
