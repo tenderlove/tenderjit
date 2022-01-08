@@ -1,6 +1,6 @@
 class TenderJIT
   class Runtime
-    def initialize fisk, jit_buffer, temp_stack
+    def initialize fisk, jit_buffer, temp_stack, alignment: 8
       @fisk       = fisk
       @labels     = []
       @label_count = 0
@@ -9,7 +9,7 @@ class TenderJIT
 
       # Used for automatic alignment; the stack starts unaligned.
       #
-      @cfunc_call_stack_depth = 8
+      @cfunc_call_stack_depth = alignment
 
       # We need to keep track of the active temp variables, because we may need
       # to save them.
@@ -21,7 +21,23 @@ class TenderJIT
       yield self if block_given?
     end
 
+    def flush_sp
+      sp = if @temp_stack.empty?
+             REG_BP
+           else
+             @temp_stack.first.loc
+           end
+
+      cfp_ptr = pointer REG_CFP, type: RbControlFrameStruct
+
+      with_ref(sp) do |reg|
+        cfp_ptr.sp = reg
+      end
+    end
+
     def flush_pc_and_sp pc, sp
+      raise unless sp.memory? || sp.register?
+
       cfp_ptr = pointer REG_CFP, type: RbControlFrameStruct
       cfp_ptr.pc = pc
 
