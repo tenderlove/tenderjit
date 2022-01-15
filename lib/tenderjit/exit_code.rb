@@ -22,6 +22,9 @@ class TenderJIT
         __.mov(tmp, stats_addr)
           .inc(__.m64(tmp, Stats.offsetof("exits")))
 
+        offset = ExitStats.offsetof(exit_insn_name)
+        raise "Unknown exit name #{exit_insn_name}" unless offset
+
         # increment the instruction specific counter
         __.mov(tmp, exit_stats_addr)
           .inc(__.m64(tmp, ExitStats.offsetof(exit_insn_name)))

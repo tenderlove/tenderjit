@@ -204,6 +204,20 @@ class TenderJIT
 
     IVarRequest = Struct.new(:id, :current_pc, :next_pc, :temp_stack, :deferred_entry)
 
+    def iv_index_for recv, id
+      klass        = CFuncs.rb_obj_class(recv)
+      iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
+      value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
+
+      if iv_index_tbl == 0 || 0 == CFuncs.rb_st_lookup(iv_index_tbl, id, value.ref)
+        CFuncs.rb_ivar_set(recv, id, Qundef)
+        iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
+        CFuncs.rb_st_lookup(iv_index_tbl, id, value.ref)
+      end
+
+      RbIvIndexTblEntry.new(value).index
+    end
+
     def compile_getinstancevariable cfp, req, loc
       recv = RbControlFrameStruct.self(cfp)
 
@@ -216,21 +230,11 @@ class TenderJIT
         raise NotImplementedError, "no ivar reads on non objects #{type}"
       end
 
-      klass        = CFuncs.rb_obj_class(recv)
-      iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
-      value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
-
-      if iv_index_tbl == 0 || 0 == CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
-        CFuncs.rb_ivar_set(recv, req.id, Qundef)
-        iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
-        CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
-      end
-
-      ivar_idx = value.ptr.to_int
+      ivar_idx = iv_index_for recv, req.id
 
       code_start = jit_buffer.address
       patch_at   = loc - jit_buffer.memory.to_i
-      return_loc = patch_at + 5
+      return_loc = patch_at + JMP_BYTES
 
       with_runtime do |rt|
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
@@ -1196,11 +1200,41 @@ class TenderJIT
     class CompileISeqBlock < Struct.new(:iseq_ptr, :temp_stack)
     end
 
+    def compile_call_ivar cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
+      raise NotImplementedError if argc > 0
+
+      ivar_id = RbMethodDefinitionStruct.new(cme.def).body.attr.id
+      ivar_idx = iv_index_for recv, ivar_id
+
+      with_runtime do |rt|
+        # caller expects to pop REG_BP, so we need this for alignment
+        rt.push_reg REG_BP
+        recv_loc = req.temp_stack.peek(argc).loc
+
+        rt.temp_var do |temp|
+          temp.write recv_loc
+
+          self_ptr = rt.pointer(temp, type: RObject)
+
+          # If it's an embedded object, read the ivar out of the object
+          rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
+            rt.return_value = self_ptr.as.ary[ivar_idx]
+
+          }.else { # Otherwise, check the extended table
+            temp.write self_ptr.as.heap.ivptr
+            rt.return_value = rt.pointer(temp)[ivar_idx]
+          }
+        end
+
+        rt.jump jit_buffer.memory.to_i + return_loc
+      end
+    end
+
     def compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
       case optimized_method_type(cme.def)
       when rb.c("OPTIMIZED_METHOD_TYPE_SEND")
         with_runtime do |rt|
-          rt.jump req.make_exit(exits, "unknown_method_type")
+          rt.jump req.make_exit(exits, "optimized_method_type_send")
         end
       when rb.c("OPTIMIZED_METHOD_TYPE_CALL")
         # https://github.com/ruby/ruby/blob/cbf2078a25c3efb12f45b643a636ff7bb4d402b6/vm_eval.c#L270
@@ -1525,18 +1559,24 @@ class TenderJIT
       end
 
       case method_definition.type
-      when VM_METHOD_TYPE_CFUNC
-        compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, return_loc
-      when VM_METHOD_TYPE_ISEQ
+      when VM_METHOD_TYPE_ISEQ      # /*!< Ruby method */
         compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, return_loc
+      when VM_METHOD_TYPE_CFUNC     # /*!< C method */
+        compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, return_loc
       when VM_METHOD_TYPE_BMETHOD
         compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, return_loc
-      when VM_METHOD_TYPE_OPTIMIZED
+      when VM_METHOD_TYPE_OPTIMIZED # /*!< Kernel#send, Proc#call, etc */
         compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
+      when VM_METHOD_TYPE_IVAR
+        compile_call_ivar cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
       else
-        side_exit = req.make_exit(exits, "unknown_method_type")
-        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
-        return side_exit
+        type = method_definition.type
+
+        name = TenderJIT.constants.grep(/^VM_METHOD/).find { |n|
+          TenderJIT.const_get(n) == type
+        }.to_s.downcase
+
+        method_entry_addr = req.make_exit(exits, name)
       end
 
       patch_source_jump jit_buffer, at: patch_loc, to: method_entry_addr
