@@ -43,6 +43,7 @@ class TenderJIT
 
   IseqInlineConstantCacheEntry = Internals.struct("iseq_inline_constant_cache_entry")
   IseqInlineConstantCache = Internals.struct("iseq_inline_constant_cache")
+  RbIvIndexTblEntry = Internals.struct("rb_iv_index_tbl_entry")
 
   RbCallInfo.instance_class.class_eval do
     CI_EMBED_TAG_bits  = 1

@@ -204,6 +204,20 @@ class TenderJIT
 
     IVarRequest = Struct.new(:id, :current_pc, :next_pc, :temp_stack, :deferred_entry)
 
+    def iv_index_for recv, id
+      klass        = CFuncs.rb_obj_class(recv)
+      iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
+      value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
+
+      if iv_index_tbl == 0 || 0 == CFuncs.rb_st_lookup(iv_index_tbl, id, value.ref)
+        CFuncs.rb_ivar_set(recv, id, Qundef)
+        iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
+        CFuncs.rb_st_lookup(iv_index_tbl, id, value.ref)
+      end
+
+      RbIvIndexTblEntry.new(value).index
+    end
+
     def compile_getinstancevariable cfp, req, loc
       recv = RbControlFrameStruct.self(cfp)
 
@@ -216,21 +230,11 @@ class TenderJIT
         raise NotImplementedError, "no ivar reads on non objects #{type}"
       end
 
-      klass        = CFuncs.rb_obj_class(recv)
-      iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
-      value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
-
-      if iv_index_tbl == 0 || 0 == CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
-        CFuncs.rb_ivar_set(recv, req.id, Qundef)
-        iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
-        CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
-      end
-
-      ivar_idx = value.ptr.to_int
+      ivar_idx = iv_index_for recv, req.id
 
       code_start = jit_buffer.address
       patch_at   = loc - jit_buffer.memory.to_i
-      return_loc = patch_at + 5
+      return_loc = patch_at + JMP_BYTES
 
       with_runtime do |rt|
         cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
