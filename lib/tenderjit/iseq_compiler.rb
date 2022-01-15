@@ -1204,7 +1204,7 @@ class TenderJIT
       case optimized_method_type(cme.def)
       when rb.c("OPTIMIZED_METHOD_TYPE_SEND")
         with_runtime do |rt|
-          rt.jump req.make_exit(exits, "unknown_method_type")
+          rt.jump req.make_exit(exits, "optimized_method_type_send")
         end
       when rb.c("OPTIMIZED_METHOD_TYPE_CALL")
         # https://github.com/ruby/ruby/blob/cbf2078a25c3efb12f45b643a636ff7bb4d402b6/vm_eval.c#L270
@@ -1529,18 +1529,22 @@ class TenderJIT
       end
 
       case method_definition.type
-      when VM_METHOD_TYPE_CFUNC
-        compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, return_loc
-      when VM_METHOD_TYPE_ISEQ
+      when VM_METHOD_TYPE_ISEQ      # /*!< Ruby method */
         compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, return_loc
+      when VM_METHOD_TYPE_CFUNC     # /*!< C method */
+        compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, return_loc
       when VM_METHOD_TYPE_BMETHOD
         compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, return_loc
-      when VM_METHOD_TYPE_OPTIMIZED
+      when VM_METHOD_TYPE_OPTIMIZED # /*!< Kernel#send, Proc#call, etc */
         compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
       else
-        side_exit = req.make_exit(exits, "unknown_method_type")
-        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
-        return side_exit
+        type = method_definition.type
+
+        name = TenderJIT.constants.grep(/^VM_METHOD/).find { |n|
+          TenderJIT.const_get(n) == type
+        }.to_s.downcase
+
+        method_entry_addr = req.make_exit(exits, name)
       end
 
       patch_source_jump jit_buffer, at: patch_loc, to: method_entry_addr

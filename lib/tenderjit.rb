@@ -259,7 +259,8 @@ class TenderJIT
     "uint64_t method_missing",
     "uint64_t complex_method",
     "uint64_t unknown_method_type",
-  ]
+    "uint64_t optimized_method_type_send",
+  ] + constants.grep(/^VM_METHOD/).map { |n| "uint64_t #{n.to_s.downcase}" }
 
   attr_reader :jit_buffer, :exit_code
 
