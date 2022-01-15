@@ -373,5 +373,32 @@ class TenderJIT
       assert_equal a_expected, a_actual
       assert_equal b_expected, b_actual
     end
+
+    class HasReader
+      attr_reader :foo
+
+      def initialize
+        @foo = :hi
+      end
+    end
+
+    def call_reader x
+      x.foo
+    end
+
+    def test_attr_reader
+      instance = HasReader.new
+      expected = call_reader instance
+
+      jit.compile method(:call_reader)
+      jit.enable!
+      actual = call_reader instance
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
   end
 end

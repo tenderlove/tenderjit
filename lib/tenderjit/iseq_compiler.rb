@@ -1200,6 +1200,36 @@ class TenderJIT
     class CompileISeqBlock < Struct.new(:iseq_ptr, :temp_stack)
     end
 
+    def compile_call_ivar cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
+      raise NotImplementedError if argc > 0
+
+      ivar_id = RbMethodDefinitionStruct.new(cme.def).body.attr.id
+      ivar_idx = iv_index_for recv, ivar_id
+
+      with_runtime do |rt|
+        # caller expects to pop REG_BP, so we need this for alignment
+        rt.push_reg REG_BP
+        recv_loc = req.temp_stack.peek(argc).loc
+
+        rt.temp_var do |temp|
+          temp.write recv_loc
+
+          self_ptr = rt.pointer(temp, type: RObject)
+
+          # If it's an embedded object, read the ivar out of the object
+          rt.test_flags(self_ptr.basic.flags, ROBJECT_EMBED) {
+            rt.return_value = self_ptr.as.ary[ivar_idx]
+
+          }.else { # Otherwise, check the extended table
+            temp.write self_ptr.as.heap.ivptr
+            rt.return_value = rt.pointer(temp)[ivar_idx]
+          }
+        end
+
+        rt.jump jit_buffer.memory.to_i + return_loc
+      end
+    end
+
     def compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
       case optimized_method_type(cme.def)
       when rb.c("OPTIMIZED_METHOD_TYPE_SEND")
@@ -1537,6 +1567,8 @@ class TenderJIT
         compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, return_loc
       when VM_METHOD_TYPE_OPTIMIZED # /*!< Kernel#send, Proc#call, etc */
         compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
+      when VM_METHOD_TYPE_IVAR
+        compile_call_ivar cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
       else
         type = method_definition.type
 
