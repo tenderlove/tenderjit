@@ -1441,15 +1441,14 @@ class TenderJIT
       cme = RbCallableMethodEntryT.new(cme_ptr)
       method_definition = RbMethodDefinitionStruct.new(cme.def)
 
-      # If we find an iseq method, compile it, even if we don't enter.
-      if method_definition.type == VM_METHOD_TYPE_ISEQ
+      case method_definition.type
+      when VM_METHOD_TYPE_ISEQ
+        # If we find an iseq method, compile it, even if we don't enter.
         iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
         iseq = RbISeqT.new(iseq_ptr)
         @jit.compile_iseq_t iseq_ptr
-      end
-
-      # If we find a bmethod method, compile the block iseq.
-      if method_definition.type == VM_METHOD_TYPE_BMETHOD
+      when VM_METHOD_TYPE_BMETHOD
+        # If we find a bmethod method, compile the block iseq.
         proc_obj = RbMethodDefinitionStruct.new(cme.def).body.bmethod.proc
         proc = RData.new(proc_obj).data
         rb_block_t    = RbProcT.new(proc).block
@@ -1462,17 +1461,17 @@ class TenderJIT
         iseq = RbISeqT.new(iseq_ptr)
 
         @jit.compile_iseq_t iseq_ptr
-      end
-
-      # Only eagerly compile the blockiseq if the method type is a cfunc.
-      # We can't lazily compile the block iseq because we don't know whether
-      # or not the cfunc will call the block
-      if req.has_block? && method_definition.type == VM_METHOD_TYPE_CFUNC
-        if req.has_blockarg?
-          # TODO: C function that takes a blockarg
-          raise NotImplementedError
+      when VM_METHOD_TYPE_CFUNC
+        # Only eagerly compile the blockiseq if the method type is a cfunc.
+        # We can't lazily compile the block iseq because we don't know whether
+        # or not the cfunc will call the block
+        if req.has_block?
+          if req.has_blockarg?
+            # TODO: C function that takes a blockarg
+            raise NotImplementedError
+          end
+          @jit.compile_iseq_t req.blockiseq
         end
-        @jit.compile_iseq_t req.blockiseq
       end
 
       # If the call site has a block arg, and it's an iseq, lets compile it
