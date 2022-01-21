@@ -1447,6 +1447,8 @@ class TenderJIT
         iseq_ptr = RbMethodDefinitionStruct.new(cme.def).body.iseq.iseqptr.to_i
         iseq = RbISeqT.new(iseq_ptr)
         @jit.compile_iseq_t iseq_ptr
+
+        return complex_method_exit(req, patch_loc) if ci.splat?
       when VM_METHOD_TYPE_BMETHOD
         # If we find a bmethod method, compile the block iseq.
         proc_obj = RbMethodDefinitionStruct.new(cme.def).body.bmethod.proc
@@ -1461,6 +1463,8 @@ class TenderJIT
         iseq = RbISeqT.new(iseq_ptr)
 
         @jit.compile_iseq_t iseq_ptr
+
+        return complex_method_exit(req, patch_loc) if ci.splat?
       when VM_METHOD_TYPE_CFUNC
         # Only eagerly compile the blockiseq if the method type is a cfunc.
         # We can't lazily compile the block iseq because we don't know whether
@@ -1472,6 +1476,11 @@ class TenderJIT
           end
           @jit.compile_iseq_t req.blockiseq
         end
+
+        return complex_method_exit(req, patch_loc) if ci.splat?
+      else
+
+        return complex_method_exit(req, patch_loc) if ci.splat?
       end
 
       # If the call site has a block arg, and it's an iseq, lets compile it
@@ -1490,11 +1499,7 @@ class TenderJIT
       # kwargs, etc right now
       # If we're compiling a send that has a block, the "simple" ones are tagged
       # with VM_CALL_FCALL, otherwise we have to look for ARGS_SIMPLE
-      unless ci.supported_call?
-        side_exit = req.make_exit(exits, "complex_method")
-        patch_source_jump jit_buffer, at: patch_loc, to: side_exit
-        return side_exit
-      end
+      return complex_method_exit(req, patch_loc) unless ci.supported_call?
 
       method_entry_addr = jit_buffer.address
       return_loc = patch_loc + JMP_BYTES
@@ -3118,6 +3123,12 @@ class TenderJIT
 
     def symbol_addr name
       Fiddle::Handle::DEFAULT[name]
+    end
+
+    def complex_method_exit req, patch_loc
+      side_exit = req.make_exit(exits, "complex_method")
+      patch_source_jump jit_buffer, at: patch_loc, to: side_exit
+      side_exit
     end
   end
 end
