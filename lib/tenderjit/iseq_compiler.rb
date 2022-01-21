@@ -206,12 +206,12 @@ class TenderJIT
 
     def iv_index_for recv, id
       klass        = CFuncs.rb_obj_class(recv)
-      iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
+      iv_index_tbl = RbClassExt.iv_index_tbl(class_ext(klass)).to_i
       value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
 
       if iv_index_tbl == 0 || 0 == CFuncs.rb_st_lookup(iv_index_tbl, id, value.ref)
         CFuncs.rb_ivar_set(recv, id, Qundef)
-        iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass)).to_i
+        iv_index_tbl = RbClassExt.iv_index_tbl(class_ext(klass)).to_i
         CFuncs.rb_st_lookup(iv_index_tbl, id, value.ref)
       end
 
@@ -632,13 +632,13 @@ class TenderJIT
       end
 
       klass        = CFuncs.rb_obj_class(recv).to_i
-      iv_index_tbl = RClass.new(klass).ptr.iv_index_tbl.to_i
+      iv_index_tbl = RbClassExt.iv_index_tbl(class_ext(klass)).to_i
 
       value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
 
       if iv_index_tbl == 0 || 0 == CFuncs.rb_st_lookup(iv_index_tbl, req.id, value.ref)
         CFuncs.rb_ivar_set(recv, req.id, Qundef)
-        iv_index_tbl = RbClassExt.iv_index_tbl(RClass.ptr(klass))
+        iv_index_tbl = RbClassExt.iv_index_tbl(class_ext(klass)).to_i
         value        = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
         CFuncs.rb_st_lookup(Fiddle::Pointer.new(iv_index_tbl.to_i), req.id, value.ref)
       end
@@ -3103,6 +3103,17 @@ class TenderJIT
     else
       def optimized_method_type mdef
         RbMethodDefinitionStruct.new(mdef).body.optimized.type
+      end
+    end
+
+    if RClass.member("ptr")
+      def class_ext klass
+        RClass.ptr(klass)
+      end
+    else
+      # RVARGC puts the class struct after the object
+      def class_ext klass
+        klass.to_i + RClass.byte_size
       end
     end
 
