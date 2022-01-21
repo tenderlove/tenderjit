@@ -378,7 +378,7 @@ class TenderJIT
 
     monkey_patch = monkey_patch.string
 
-    addr = Fiddle::Handle::DEFAULT["rb_clear_constant_cache"]
+    addr = Ruby::SYMBOLS["rb_clear_constant_cache"]
 
     func_memory = Fiddle::Pointer.new addr
     page_size = Etc.sysconf(Etc::SC_PAGE_SIZE)
