@@ -1031,7 +1031,7 @@ class TenderJIT
     end
 
     def topn stack, i
-      Fiddle::Pointer.new(stack - (Fiddle::SIZEOF_VOIDP * (i + 1))).ptr
+      Fiddle::Pointer.new(stack - (Fiddle::SIZEOF_VOIDP * (i + 1))).ptr.to_i
     end
 
     def compile_jump cfp, req, patch_loc
@@ -1062,7 +1062,7 @@ class TenderJIT
       return_loc
     end
 
-    def compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, return_loc
+    def compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, temp_stack, return_loc
       # `vm_call_iseq_setup`
       param_size = iseq.body.param.size
       local_size = iseq.body.local_table_size
@@ -1070,8 +1070,6 @@ class TenderJIT
 
       # `vm_call_iseq_setup_2` FIXME: we need to deal with TAILCALL
       # `vm_call_iseq_setup_normal` FIXME: we need to deal with TAILCALL
-
-      temp_stack = req.temp_stack
 
       # pop locals and recv off the stack
       #(ci.vm_ci_argc + 1).times { @temp_stack.pop }
@@ -1383,6 +1381,65 @@ class TenderJIT
       end
     end
 
+    def compile_expand_splat req, stack, temp_stack, return_loc
+      ary_ptr = topn(stack, 0)
+      rb_ary = Fiddle.dlunwrap(ary_ptr)
+
+      temp_stack = temp_stack.dup
+
+      with_runtime do |rt|
+        rt.temp_var do |tmp|
+          tmp.write temp_stack.pop
+
+          # If the array seen at compile time is embedded, emit code for
+          # an embedded array
+          if rb.embedded_array?(ary_ptr)
+            rt.if_embedded_array?(tmp) {
+              rt.temp_var { |tmp2|
+                rt.embedded_array_length(tmp, tmp2)
+                rt.if_eq(tmp2, @fisk.imm(rb_ary.length)) {
+                  array = rt.pointer(tmp, type: RArray)
+                  rb_ary.length.times do |i|
+                    rt.write temp_stack.push(:unknown), array.as.ary[i]
+                  end
+                }.else {
+                  rt.patchable_jump req.deferred_entry
+                  rt.jump jit_buffer.memory.to_i + return_loc
+                }
+              }
+            }.else {
+              # If the runtime value isn't embedded, recompile
+              rt.patchable_jump req.deferred_entry
+              rt.jump jit_buffer.memory.to_i + return_loc
+            }
+          else
+            rt.if_embedded_array?(tmp) {
+              # If the runtime value isn't extended, recompile
+              rt.patchable_jump req.deferred_entry
+              rt.jump jit_buffer.memory.to_i + return_loc
+            }.else {
+              rt.temp_var { |tmp2|
+                rt.extended_array_length(tmp, tmp2)
+                rt.if_eq(tmp2, @fisk.imm(rb_ary.length)) {
+                  array = rt.pointer(tmp, type: RArray)
+                  tmp2.write array.as.heap.ptr
+                  array_buffer = rt.pointer(tmp2)
+
+                  rb_ary.length.times do |i|
+                    rt.write temp_stack.push(:unknown), array_buffer[i]
+                  end
+                }.else {
+                  rt.patchable_jump req.deferred_entry
+                  rt.jump jit_buffer.memory.to_i + return_loc
+                }
+              }
+            }
+          end
+        end
+      end
+      temp_stack.freeze
+    end
+
     def compile_send cfp, req, loc
       stack = RbControlFrameStruct.sp(cfp)
 
@@ -1391,7 +1448,7 @@ class TenderJIT
       argc = ci.vm_ci_argc
       temp_stack = req.temp_stack
 
-      recv = topn(stack, argc).to_i
+      recv = topn(stack, argc)
 
       if req.has_blockarg?
         block_code = Fiddle::Pointer.new(stack - Fiddle::SIZEOF_VOIDP).ptr.to_i
@@ -1414,13 +1471,14 @@ class TenderJIT
         end
 
         # adjust the stack.  The blockarg needs to be popped so argc lines up
-        recv = topn(stack - Fiddle::SIZEOF_VOIDP, argc).to_i
+        recv = topn(stack - Fiddle::SIZEOF_VOIDP, argc)
         temp_stack = req.temp_stack.dup
         temp_stack.pop
         temp_stack.freeze
       end
 
       patch_loc = loc - jit_buffer.memory.to_i
+      return_loc = patch_loc + JMP_BYTES
 
       # Get the class of the receiver.  It could be an ICLASS if the object has
       # a singleton class.  This is important for doing method lookup (in case
@@ -1441,6 +1499,8 @@ class TenderJIT
       cme = RbCallableMethodEntryT.new(cme_ptr)
       method_definition = RbMethodDefinitionStruct.new(cme.def)
 
+      method_entry_addr = nil
+
       case method_definition.type
       when VM_METHOD_TYPE_ISEQ
         # If we find an iseq method, compile it, even if we don't enter.
@@ -1448,7 +1508,28 @@ class TenderJIT
         iseq = RbISeqT.new(iseq_ptr)
         @jit.compile_iseq_t iseq_ptr
 
-        return complex_method_exit(req, patch_loc) if ci.splat?
+        if ci.splat?
+          if simple_iseq?(iseq)
+            callee_argc = iseq.body.param.size
+            ary_ptr = topn(stack, 0)
+            rb_ary = Fiddle.dlunwrap(ary_ptr)
+
+            # bail if argc doesn't match up
+            if callee_argc != (argc + rb_ary.length - 1)
+              return complex_method_exit(req, patch_loc)
+            end
+
+            method_entry_addr = jit_buffer.address
+            ts = temp_stack
+            temp_stack = compile_expand_splat req, stack, temp_stack, return_loc
+
+            temp_stack.freeze
+
+            argc += (temp_stack.size - ts.size)
+          else
+            return complex_method_exit(req, patch_loc) if ci.splat?
+          end
+        end
       when VM_METHOD_TYPE_BMETHOD
         # If we find a bmethod method, compile the block iseq.
         proc_obj = RbMethodDefinitionStruct.new(cme.def).body.bmethod.proc
@@ -1501,8 +1582,7 @@ class TenderJIT
       # with VM_CALL_FCALL, otherwise we have to look for ARGS_SIMPLE
       return complex_method_exit(req, patch_loc) unless ci.supported_call?
 
-      method_entry_addr = jit_buffer.address
-      return_loc = patch_loc + JMP_BYTES
+      method_entry_addr ||= jit_buffer.address
 
       # Lift the address up to a Ruby object.  `recv` is the address of the
       # Ruby object, not the object itself.  Lets get the object itself so we
@@ -1564,7 +1644,7 @@ class TenderJIT
 
       case method_definition.type
       when VM_METHOD_TYPE_ISEQ      # /*!< Ruby method */
-        compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, return_loc
+        compile_call_iseq iseq, req, argc, iseq_ptr, recv, cme, temp_stack, return_loc
       when VM_METHOD_TYPE_CFUNC     # /*!< C method */
         compile_call_cfunc iseq, req, argc, iseq_ptr, recv, cme, return_loc
       when VM_METHOD_TYPE_BMETHOD
@@ -3129,6 +3209,16 @@ class TenderJIT
       side_exit = req.make_exit(exits, "complex_method")
       patch_source_jump jit_buffer, at: patch_loc, to: side_exit
       side_exit
+    end
+
+    def simple_iseq? iseq
+      iseq.body.param.flags.has_opt == 0 &&
+        iseq.body.param.flags.has_rest == 0 &&
+        iseq.body.param.flags.has_post == 0 &&
+        iseq.body.param.flags.has_kw == 0 &&
+        iseq.body.param.flags.has_kwrest == 0 &&
+        iseq.body.param.flags.accepts_no_kwarg == 0 &&
+        iseq.body.param.flags.has_block == 0
     end
   end
 end
