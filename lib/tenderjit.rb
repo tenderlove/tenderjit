@@ -92,7 +92,7 @@ class TenderJIT
 
     # Can we support this type of call in the JIT?
     def supported_call?
-      unhandled = [VM_CALL_ARGS_SPLAT,
+      unhandled = [#VM_CALL_ARGS_SPLAT,
                    #VM_CALL_ARGS_BLOCKARG,
                    #VM_CALL_FCALL,
                    #VM_CALL_VCALL,
@@ -108,6 +108,10 @@ class TenderJIT
       ].inject(0) { |acc, bit| acc | bit }
 
       vm_ci_flag & unhandled == 0
+    end
+
+    def splat?
+      vm_ci_flag & VM_CALL_ARGS_SPLAT == VM_CALL_ARGS_SPLAT
     end
 
     def vm_ci_mid

@@ -136,13 +136,12 @@ class TenderJIT
   end
 
   class HardMethodJIT < JITTest
-    def fun2 a, b
+    def fun2 a:, b:
       a < b
     end
 
     def call_with_block
-      a = [1, 2]
-      fun2(*a)
+      fun2(a: 1, b: 2)
     end
 
     def test_funcall_with_splat

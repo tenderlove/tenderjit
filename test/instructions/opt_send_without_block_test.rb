@@ -400,5 +400,109 @@ class TenderJIT
       assert_equal 1, jit.executed_methods
       assert_equal 0, jit.exits
     end
+
+    def swap a, b
+      [b, a]
+    end
+
+    def call_splat list
+      swap(*list)
+    end
+
+    def test_splat
+      list = [1, 2]
+      expected = call_splat(list)
+
+      jit.compile method(:call_splat)
+      jit.enable!
+      actual = call_splat(list)
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 2, jit.compiled_methods
+      assert_equal 2, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
+    def test_splat_extended
+      # Make an extended array
+      list = [1, 2, 3, 4, 5]
+
+      # Shifting down won't convert it back to "embedded"
+      3.times { list.shift }
+
+      refute Ruby.new.embedded_array?(Fiddle.dlwrap(list))
+      expected = call_splat(list)
+
+      jit.compile method(:call_splat)
+      jit.enable!
+      actual = call_splat(list)
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 2, jit.compiled_methods
+      assert_equal 2, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
+    def test_heat_embed_switch_to_extend
+      list = [1, 2]
+      expected = call_splat(list)
+
+      # Make an extended array
+      list2 = [1, 2, 3, 4, 5]
+
+      # Shifting down won't convert it back to "embedded"
+      3.times { list2.pop }
+      refute Ruby.new.embedded_array?(Fiddle.dlwrap(list2))
+
+      jit.compile method(:call_splat)
+      jit.enable!
+      call_splat(list)
+      actual = call_splat(list2)
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 2, jit.compiled_methods
+      assert_equal 4, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
+    def test_heat_extend_switch_to_embed
+      list = [1, 2]
+
+      # Make an extended array
+      list2 = [1, 2, 3, 4, 5]
+
+      # Shifting down won't convert it back to "embedded"
+      3.times { list2.pop }
+      refute Ruby.new.embedded_array?(Fiddle.dlwrap(list2))
+
+      expected = call_splat(list2)
+
+      jit.compile method(:call_splat)
+      jit.enable!
+      call_splat(list2)
+      actual = call_splat(list)
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 2, jit.compiled_methods
+      assert_equal 4, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
+    def test_heat_embed_size_changes
+      list = [1, 2]
+      jit.compile method(:call_splat)
+      jit.enable!
+      call_splat(list)
+      assert_raises(ArgumentError) { call_splat([4, 5, 6]) }
+      jit.disable!
+
+      assert_equal 2, jit.compiled_methods
+      assert_equal 3, jit.executed_methods
+      assert_equal 1, jit.exits
+    end
   end
 end
