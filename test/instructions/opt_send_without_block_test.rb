@@ -504,5 +504,40 @@ class TenderJIT
       assert_equal 3, jit.executed_methods
       assert_equal 1, jit.exits
     end
+
+    def use_send
+      send :fun, 1, 2
+    end
+
+    def test_optimized_send
+      expected = use_send
+      jit.compile method(:use_send)
+      jit.enable!
+      actual = use_send
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 0, jit.exits
+      assert_equal 2, jit.compiled_methods
+      assert_equal 2, jit.executed_methods
+    end
+
+    def use_send_splat list
+      send :swap, *list
+    end
+
+    def test_optimized_send_splat
+      list = [1, 2]
+      expected = use_send_splat(list)
+      jit.compile method(:use_send_splat)
+      jit.enable!
+      actual = use_send_splat(list)
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 1, jit.exits
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+    end
   end
 end

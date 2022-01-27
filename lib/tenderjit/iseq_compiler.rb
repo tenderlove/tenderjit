@@ -1228,11 +1228,55 @@ class TenderJIT
       end
     end
 
-    def compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
+    class SendCI < Struct.new(:vm_ci_mid, :vm_ci_argc, :old_ci)
+      def vm_ci_flag; old_ci.vm_ci_flag; end
+
+      def splat?
+        old_ci.splat?
+      end
+
+      def supported_call?
+        old_ci.supported_call?
+      end
+    end
+
+    def compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, ci, return_loc
       case optimized_method_type(cme.def)
       when rb.c("OPTIMIZED_METHOD_TYPE_SEND")
+        stack = RbControlFrameStruct.sp(cfp)
+        method_name = topn(stack, argc - 1)
+
+        method_id = CFuncs.rb_sym2id(method_name)
+        new_ci = SendCI.new(method_id, argc - 1, ci)
+
+        ts = req.temp_stack.dup
+        params = (argc - 1).times.map { ts.pop_item }.reverse
         with_runtime do |rt|
-          rt.jump req.make_exit(exits, "optimized_method_type_send")
+          sym_loc = ts.pop
+          params.each do |param|
+            rt.write sym_loc, param.loc
+            sym_loc = param.loc
+            ts.push(param.name, type: param.type)
+          end
+
+          new_req = CompileSend.new(new_ci, ts.freeze, req.current_pc, req.next_pc, req.blockiseq)
+          @compile_requests << Fiddle::Pinned.new(new_req)
+
+          deferred = @jit.deferred_call(ts) do |ctx|
+            ctx.with_runtime do |rt|
+              rt.rb_funcall self, :compile_send, [REG_CFP, new_req, rt.return_value]
+
+              rt.NUM2INT(rt.return_value)
+
+              rt.jump rt.return_value
+            end
+          end
+
+          new_req.deferred_entry = deferred.entry.to_i
+          deferred.call
+
+          rt.patchable_jump new_req.deferred_entry
+          rt.jump jit_buffer.memory.to_i + return_loc
         end
       when rb.c("OPTIMIZED_METHOD_TYPE_CALL")
         # https://github.com/ruby/ruby/blob/cbf2078a25c3efb12f45b643a636ff7bb4d402b6/vm_eval.c#L270
@@ -1650,7 +1694,7 @@ class TenderJIT
       when VM_METHOD_TYPE_BMETHOD
         compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, return_loc
       when VM_METHOD_TYPE_OPTIMIZED # /*!< Kernel#send, Proc#call, etc */
-        compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
+        compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, ci, return_loc
       when VM_METHOD_TYPE_IVAR
         compile_call_ivar cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
       else
