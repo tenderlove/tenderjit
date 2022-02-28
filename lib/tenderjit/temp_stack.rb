@@ -70,6 +70,10 @@ class TenderJIT
       @stack.pop.loc
     end
 
+    def last
+      @stack.last
+    end
+
     # Pop an item from the temp stack. Returns an instannce of TempStack::Item
     def pop_item
       @stack.pop

@@ -1232,7 +1232,7 @@ class TenderJIT
       def vm_ci_flag; old_ci.vm_ci_flag; end
 
       def splat?
-        old_ci.splat?
+        false
       end
 
       def supported_call?
@@ -1240,18 +1240,57 @@ class TenderJIT
       end
     end
 
-    def compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, ci, return_loc
+    class FixCI < Struct.new(:previous_req, :temp_stack, :call_info, :deferred_entry)
+      def has_blockarg?
+        previous_req.has_blockarg?
+      end
+    end
+
+    def compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, ci, temp_stack, return_loc
       case optimized_method_type(cme.def)
       when rb.c("OPTIMIZED_METHOD_TYPE_SEND")
         stack = RbControlFrameStruct.sp(cfp)
-        method_name = topn(stack, argc - 1)
+
+        method_name = topn(stack, ci.vm_ci_argc - 1)
+
+        if ci.splat? && ci.vm_ci_argc == 1
+          # send(*args)
+          list = Fiddle.dlunwrap(method_name)
+          method_name = Fiddle.dlwrap(list.first)
+          argc = list.length
+        end
 
         method_id = CFuncs.rb_sym2id(method_name)
         new_ci = SendCI.new(method_id, argc - 1, ci)
 
-        ts = req.temp_stack.dup
-        params = (argc - 1).times.map { ts.pop_item }.reverse
         with_runtime do |rt|
+          ts = temp_stack.dup
+
+          new_req = req.dup
+          # make sure the compile request has the same stack
+          new_req.temp_stack = temp_stack
+
+          @compile_requests << Fiddle::Pinned.new(new_req)
+
+          deferred = @jit.deferred_call(temp_stack) do |ctx|
+            ctx.with_runtime do |rt|
+              rt.rb_funcall self, :compile_send, [REG_CFP, new_req, rt.return_value]
+
+              rt.NUM2INT(rt.return_value)
+
+              rt.jump rt.return_value
+            end
+          end
+
+          new_req.deferred_entry = deferred.entry.to_i
+          deferred.call
+
+          rt.if_eq(temp_stack[argc - 1], method_name).else {
+            rt.patchable_jump new_req.deferred_entry
+            rt.jump jit_buffer.memory.to_i + return_loc
+          }
+          params = (argc - 1).times.map { ts.pop_item }.reverse
+
           sym_loc = ts.pop
           params.each do |param|
             rt.write sym_loc, param.loc
@@ -1284,7 +1323,7 @@ class TenderJIT
           cfp_ptr = rt.pointer(REG_CFP, type: RbControlFrameStruct)
 
           func_addr = Fiddle::Handle::DEFAULT["rb_vm_invoke_proc"]
-          recv_loc = req.temp_stack.peek(argc).loc
+          recv_loc = temp_stack.peek(argc).loc
 
           if req.has_block?
             cfp_ptr.block_code = req.blockiseq
@@ -1295,7 +1334,7 @@ class TenderJIT
             tv.write recv_loc
 
             rt.temp_var do |argv|
-              argv.write_address_of req.temp_stack[argc - 1]
+              argv.write_address_of temp_stack[argc - 1]
 
               # Unwrap the proc object
               data_ptr = rt.pointer(tv, type: RData)
@@ -1367,7 +1406,7 @@ class TenderJIT
           #rt.jump req.make_exit(exits, "unknown_method_type")
         end
       else
-        puts RbMethodDefinitionStruct.new(cme.def).body.optimize_type
+        puts  optimized_method_type(cme.def)
         raise NotImplementedError, "not supported optimized type"
       end
     end
@@ -1425,11 +1464,25 @@ class TenderJIT
       end
     end
 
-    def compile_expand_splat req, stack, temp_stack, return_loc
+    def compile_expand_splat req, ci, cfp, stack, temp_stack, return_loc, is_send
       ary_ptr = topn(stack, 0)
       rb_ary = Fiddle.dlunwrap(ary_ptr)
 
       temp_stack = temp_stack.dup
+
+      # We need to invalidate in the case that someone used a symbol
+      # in an array that was different.
+      #
+      # For example:
+      #   send(*[:foo]) # :foo seen at JIT time
+      #   send(*[:bar]) # uh oh, now :bar method needs to be called
+      #
+      # if argc is 1 then we have the `send(*foo)` case
+      method_name = nil
+      if ci.vm_ci_argc == 1 && is_send
+        method_name = Fiddle.dlwrap(rb_ary.first)
+        raise unless rb.RB_SYMBOL_P(method_name)
+      end
 
       with_runtime do |rt|
         rt.temp_var do |tmp|
@@ -1443,6 +1496,13 @@ class TenderJIT
                 rt.embedded_array_length(tmp, tmp2)
                 rt.if_eq(tmp2, @fisk.imm(rb_ary.length)) {
                   array = rt.pointer(tmp, type: RArray)
+                  # Guard that the method name is the same
+                  if method_name
+                    rt.if_eq(array.as.ary[0], method_name).else {
+                      rt.patchable_jump req.deferred_entry
+                      rt.jump jit_buffer.memory.to_i + return_loc
+                    }
+                  end
                   rb_ary.length.times do |i|
                     rt.write temp_stack.push(:unknown), array.as.ary[i]
                   end
@@ -1468,6 +1528,14 @@ class TenderJIT
                   array = rt.pointer(tmp, type: RArray)
                   tmp2.write array.as.heap.ptr
                   array_buffer = rt.pointer(tmp2)
+
+                  # Guard that the method name is the same
+                  if method_name
+                    rt.if_eq(array_buffer[0], method_name).else {
+                      rt.patchable_jump req.deferred_entry
+                      rt.jump jit_buffer.memory.to_i + return_loc
+                    }
+                  end
 
                   rb_ary.length.times do |i|
                     rt.write temp_stack.push(:unknown), array_buffer[i]
@@ -1565,7 +1633,7 @@ class TenderJIT
 
             method_entry_addr = jit_buffer.address
             ts = temp_stack
-            temp_stack = compile_expand_splat req, stack, temp_stack, return_loc
+            temp_stack = compile_expand_splat req, ci, cfp, stack, temp_stack, return_loc, false
 
             temp_stack.freeze
 
@@ -1603,6 +1671,16 @@ class TenderJIT
         end
 
         return complex_method_exit(req, patch_loc) if ci.splat?
+      when VM_METHOD_TYPE_OPTIMIZED # /*!< Kernel#send, Proc#call, etc */
+        if ci.splat?
+          method_entry_addr = jit_buffer.address
+
+          is_send = optimized_method_type(cme.def) == rb.c("OPTIMIZED_METHOD_TYPE_SEND")
+          ts = temp_stack
+          temp_stack = compile_expand_splat req, ci, cfp, stack, temp_stack, return_loc, is_send
+          temp_stack.freeze
+          argc += (temp_stack.size - ts.size)
+        end
       else
 
         return complex_method_exit(req, patch_loc) if ci.splat?
@@ -1694,7 +1772,7 @@ class TenderJIT
       when VM_METHOD_TYPE_BMETHOD
         compile_call_bmethod iseq, req, argc, iseq_ptr, recv, cme, return_loc
       when VM_METHOD_TYPE_OPTIMIZED # /*!< Kernel#send, Proc#call, etc */
-        compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, ci, return_loc
+        compile_call_optimized cfp, iseq, req, argc, iseq_ptr, recv, cme, ci, temp_stack, return_loc
       when VM_METHOD_TYPE_IVAR
         compile_call_ivar cfp, iseq, req, argc, iseq_ptr, recv, cme, return_loc
       else
