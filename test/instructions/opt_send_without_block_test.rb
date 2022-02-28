@@ -504,5 +504,134 @@ class TenderJIT
       assert_equal 3, jit.executed_methods
       assert_equal 1, jit.exits
     end
+
+    def use_send
+      send :fun, 1, 2
+    end
+
+    def test_optimized_send
+      expected = use_send
+      jit.compile method(:use_send)
+      jit.enable!
+      actual = use_send
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 0, jit.exits
+      assert_equal 2, jit.compiled_methods
+      assert_equal 2, jit.executed_methods
+    end
+
+    def use_send_splat list
+      send :swap, *list
+    end
+
+    def test_optimized_send_splat
+      list = [1, 2]
+      expected = use_send_splat(list)
+      jit.compile method(:use_send_splat)
+      jit.enable!
+      actual = use_send_splat(list)
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 0, jit.exits
+      assert_equal 2, jit.compiled_methods
+      assert_equal 2, jit.executed_methods
+    end
+
+    def splat_all list
+      send(*list)
+    end
+
+    def identity list
+      list
+    end
+
+    def test_splat_all
+      list = [:use_send_splat, [1, 2]]
+      expected = splat_all(list)
+      jit.compile method(:splat_all)
+      jit.enable!
+      actual = splat_all(list)
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 0, jit.exits
+      assert_equal 3, jit.compiled_methods
+      assert_equal 3, jit.executed_methods
+    end
+
+    def test_splat_all_invalidate_name
+      list = [:use_send_splat, [1, 2]]
+      list2 = [:identity, [1, 2]]
+      expected = splat_all(list2)
+      jit.compile method(:splat_all)
+      jit.enable!
+      # heat with list
+      splat_all(list)
+      splat_all(list)
+      splat_all(list)
+      actual = splat_all(list2)
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 0, jit.exits
+      assert_equal 4, jit.compiled_methods
+      assert_equal 11, jit.executed_methods
+    end
+
+    def extended a, b, c, d, e
+      a + b + c + d + e
+    end
+
+    def extended2 a, b, c, d, e
+      2 + a + b + c + d + e
+    end
+
+    def test_splat_all_invalidate_name_extended
+      list = [:extended, 1, 2, 3, 4, 5]
+      list2 = [:extended2, 1, 3, 3, 4, 5]
+      expected = splat_all(list2)
+      jit.compile method(:splat_all)
+      jit.enable!
+      # heat with list
+      splat_all(list)
+      splat_all(list)
+      splat_all(list)
+      actual = splat_all(list2)
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 0, jit.exits
+      assert_equal 3, jit.compiled_methods
+      assert_equal 8, jit.executed_methods
+    end
+
+    def uno; 1; end
+    def dos; 2; end
+
+    def call_send_with_name name
+      send name
+    end
+
+    # Fix this test.  We're not properly invalidating when
+    # the method name changes at the call site
+    def test_send_invalidates_on_name
+      expected = call_send_with_name(:uno)
+      jit.compile method(:call_send_with_name)
+      jit.enable!
+      # heat with two
+      call_send_with_name(:dos)
+      call_send_with_name(:dos)
+      call_send_with_name(:dos)
+      actual = call_send_with_name(:uno)
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 0, jit.exits
+      assert_equal 3, jit.compiled_methods
+      assert_equal 8, jit.executed_methods
+    end
   end
 end
