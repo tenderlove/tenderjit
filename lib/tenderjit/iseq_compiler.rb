@@ -2255,6 +2255,92 @@ class TenderJIT
       __.put_label(:done)
     end
 
+    def handle_opt_and call_data
+      ts = @temp_stack
+
+      cd = RbCallData.new call_data
+      ci = RbCallInfo.new cd.ci
+
+      exit_addr = exits.make_exit("temporary_exit", current_pc, @temp_stack.size)
+
+      # only handle simple methods
+      #return unless (ci.vm_ci_flag & VM_CALL_ARGS_SIMPLE) == VM_CALL_ARGS_SIMPLE
+
+      compile_request = CompileSendWithoutBlock.new(ci, @temp_stack.dup.freeze, current_pc, next_pc)
+
+      @compile_requests << Fiddle::Pinned.new(compile_request)
+
+      deferred = @jit.deferred_call(@temp_stack) do |ctx|
+        ctx.with_runtime do |rt|
+          temp = rt.temp_var
+          temp.write rt.pointer(rt.return_value)[0]
+          temp.shl   24
+          temp.shr   32
+          rt.add     temp, 5
+          rt.add     temp, rt.return_value
+
+          rt.if_eq(temp.to_register, deferred.entry.to_i) {
+            temp.write 0xFFFFFF_00000000_FF
+            temp.and rt.pointer(rt.return_value)[0]
+            rt.pointer(rt.return_value)[0] = temp
+            temp.write exit_addr
+            temp.sub rt.return_value
+            rt.sub temp.to_register, 5
+            temp.shl 8
+            temp.or rt.pointer(rt.return_value)[0]
+            rt.pointer(rt.return_value)[0] = temp
+            temp.release!
+
+            rt.rb_funcall self, :compile_opt_send_without_block, [REG_CFP, compile_request, rt.return_value]
+
+            rt.NUM2INT(rt.return_value)
+
+            rt.jump rt.return_value
+          }.else {
+            rt.break
+            rt.jump exit_addr
+          }
+        end
+      end
+
+      compile_request.deferred_entry = deferred.entry
+
+      deferred.call
+
+      if ts.peek(0).type == T_FIXNUM && ts.peek(1).type == T_FIXNUM
+        with_runtime do |rt|
+          rt.temp_var do |tv|
+            tv.write ts.pop
+            tv.and ts.pop
+            rt.write ts.push(:object, type: T_FIXNUM), tv
+          end
+        end
+      else
+        with_runtime do |rt|
+          rt.temp_var do |rhs|
+            rhs.write ts.pop
+            rhs.and ts.pop
+
+            # Lets just assume that the top two values are fixnums and
+            # eagerly `and` them together.  If the result *isn't* a Fixnum,
+            # then hop in to the deferred compiler
+            loc = ts.push(:object, type: T_FIXNUM)
+
+            rt.if(rt.RB_FIXNUM_P(rhs.to_register)) {
+              rt.write loc, rhs
+            }.else {
+              # Jump in to the deferred compiler
+              rt.patchable_jump compile_request.deferred_entry
+
+              # The method call will return here, and its return value will be in RAX
+              rt.pop_reg REG_BP
+              rt.write loc, rt.return_value
+            }
+          end
+        end
+      end
+    end
+
     def handle_opt_plus call_data
       ts = @temp_stack
 
