@@ -464,6 +464,17 @@ class TenderJIT
     @compiled_iseq_addrs = []
   end
 
+  def print_disasm binary
+    cs = Crabstone::Disassembler.new(Crabstone::ARCH_X86, Crabstone::MODE_64)
+    cs.disasm(binary, 0x0000).each {|i|
+      printf("0x%x:\t%s\t\t%s\n",i.address, i.mnemonic, i.op_str)
+    }
+  end
+
+  def disasm
+    print_disasm @jit_buffer.memory[0, @jit_buffer.pos]
+  end
+
   def deferred_call temp_stack, &block
     @deferred_calls.deferred_call(temp_stack, &block)
   end
