@@ -4,9 +4,9 @@ class TenderJIT
     # allocation across basic blocks.  Also it won't spill registers, it
     # just crashes
     class RegisterAllocator
-      def initialize parameter_registers, freelist
-        @parameter_registers = parameter_registers
-        @freelist            = freelist.dup
+      def initialize
+        @parameter_registers = ARM64::PARAM_REGS
+        @freelist            = ARM64::FREE_REGS.dup
       end
 
       def ensure r

@@ -20,15 +20,12 @@ class TenderJIT
       a = ir.param(0)
       b = ir.param(1)
 
-      t = ir.add(a, b) # t = a + b
+      t = ir.add(b, a) # t = a + b
       ir.return t      # return t
 
-      ra = ARM64::RegisterAllocator.new(
-        ARM64::PARAM_REGS,
-        ARM64::FREE_REGS,
-      )
-
+      ra = ARM64::RegisterAllocator.new
       cg = ARM64::CodeGen.new
+
       asm = cg.assemble ra, ir
 
       buf = JITBuffer.new 4096
