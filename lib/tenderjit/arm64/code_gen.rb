@@ -12,21 +12,28 @@ class TenderJIT
 
           vr1 = insn.arg1
           vr2 = insn.arg2
+          vr3 = insn.out
 
-          pr1 = ra.ensure vr1
-
-          if vr2.immediate?
-            pr2 = vr2
+          if vr1.register?
+            pr1 = ra.ensure vr1
           else
-            pr2 = ra.ensure vr2
+            pr1 = vr1
           end
 
-          ra.free pr1 unless vr1.used_after(i)
-          ra.free pr2 unless vr2.immediate? || vr2.used_after(i)
+          if vr2.register?
+            pr2 = ra.ensure vr2
+          else
+            pr2 = vr2
+          end
 
-          pr3 = ra.alloc insn.out
+          ra.free pr1 if vr1.register? && !vr1.used_after(i)
+          ra.free pr2 if vr2.register? && !vr2.used_after(i)
 
-          send insn.op, asm, pr3, pr1, pr2
+          pr3 = ra.alloc vr3
+
+          ra.free pr3 if vr3.register? && !vr3.used_after(i)
+
+          send insn.op, asm, pr3, pr1, pr2, i
         end
 
         asm
@@ -34,11 +41,11 @@ class TenderJIT
 
       private
 
-      def add asm, out, arg1, arg2
+      def add asm, out, arg1, arg2, _
         asm.add out, arg1, arg2
       end
 
-      def return asm, out, arg1, arg2
+      def return asm, out, arg1, arg2, _
         if out != AArch64::Registers::X0
           asm.mov AArch64::Registers::X0, arg1
         end
@@ -46,8 +53,24 @@ class TenderJIT
         asm.ret
       end
 
-      def load asm, out, src, offset
+      def load asm, out, src, offset, _
         asm.ldr out, [src, offset.value]
+      end
+
+      def write asm, out, _, val, _
+        asm.mov out, val.value
+      end
+
+      def brk asm, _, _, _, i
+        asm.brk 1
+      end
+
+      def jmp asm, out, arg1, _, i
+        asm.b arg1
+      end
+
+      def put_label asm, _, label, _, _
+        asm.put_label label
       end
     end
   end

@@ -3,14 +3,14 @@ require "tenderjit/util"
 class TenderJIT
   class IR
     class Immediate < Util::ClassGen.pos(:value)
-      def variable? = false
+      def register? = false
       def immediate? = true
     end
 
     class UnsignedInt < Immediate
     end
 
-    class Variable < Util::ClassGen.pos(:name, :physical_register, :next_uses)
+    class VirtualRegister < Util::ClassGen.pos(:name, :physical_register, :next_uses)
       attr_writer :physical_register
 
       def initialize name, physical_register = nil, next_uses = []
@@ -19,27 +19,40 @@ class TenderJIT
 
       def param? = false
       def immediate? = false
-      def variable? = true
+      def register? = true
 
       def used_after i
         next_uses.any? { |n| n > i }
       end
     end
 
-    class InOut < Variable; end
-    class Param < Variable
+    class InOut < VirtualRegister; end
+
+    class Param < VirtualRegister
       def param? = true
     end
-    class NamedVariable < Variable; end
 
     class Instruction < Util::ClassGen.pos(:op, :arg1, :arg2, :out)
       attr_writer :reg, :n
+    end
+
+    class Label < Util::ClassGen.pos(:name, :offset)
+      def register? = false
+      def integer? = false
+
+      def set_offset offset
+        @offset = offset
+        freeze
+      end
+
+      def unwrap_label; offset; end
     end
 
     attr_reader :instructions
 
     def initialize
       @instructions = []
+      @labels = {}
     end
 
     def param idx
@@ -48,6 +61,10 @@ class TenderJIT
 
     def uimm int
       UnsignedInt.new(int)
+    end
+
+    def write arg1, arg2
+      push __method__, arg1, arg2
     end
 
     def add arg1, arg2
@@ -62,12 +79,31 @@ class TenderJIT
       push __method__, arg1, arg2
     end
 
+    def label name
+      @labels[name] ||= Label.new(name)
+    end
+
+    def jmp location
+      push __method__, location, location
+    end
+
+    NONE = Object.new
+    def NONE.register?; false; end
+
+    def brk
+      push __method__, NONE, NONE
+    end
+
+    def put_label name
+      push __method__, @labels.fetch(name), NONE
+    end
+
     private
 
     def push name, a, b
       out = InOut.new(@instructions.length)
-      a.next_uses << @instructions.length if a.variable?
-      b.next_uses << @instructions.length if b.variable?
+      a.next_uses << @instructions.length if a.register?
+      b.next_uses << @instructions.length if b.register?
       @instructions << Instruction.new(name, a, b, out)
       out
     end

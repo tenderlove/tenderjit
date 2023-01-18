@@ -23,16 +23,7 @@ class TenderJIT
       t = ir.add(b, a) # t = a + b
       ir.return t      # return t
 
-      ra = ARM64::RegisterAllocator.new
-      cg = ARM64::CodeGen.new
-
-      asm = cg.assemble ra, ir
-
-      buf = JITBuffer.new 4096
-
-      buf.writeable!
-      asm.write_to buf
-      buf.executable!
+      buf = assemble ir
 
       func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
       assert_equal 3, func.call(1, 2)
@@ -47,6 +38,53 @@ class TenderJIT
       # Return the value
       ir.return b
 
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([Fiddle::TYPE_VOIDP], Fiddle::TYPE_INT)
+
+      o = Object.new
+      assert_equal ra64(Fiddle.dlwrap(o)), func.call(Fiddle.dlwrap(o))
+    end
+
+    def test_write
+      ir = IR.new
+      a = ir.param(0)
+      b = ir.write(a, ir.uimm(16))
+      ir.return b
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([], Fiddle::TYPE_INT)
+
+      assert_equal 16, func.call()
+    end
+
+    def test_jump_forward
+      ir = IR.new
+      a = ir.param(0)
+
+      ir.jmp ir.label(:foo)
+
+      # Write a value to x0 but jump over it, making sure the jmp works
+      ir.return ir.write(a, ir.uimm(32))
+      b = ir.load(a, ir.uimm(0))
+
+      ir.put_label(:foo)
+      ir.return a
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+
+      assert_equal 3, func.call(3)
+    end
+
+    private
+
+    def assemble ir
       ra = ARM64::RegisterAllocator.new
       cg = ARM64::CodeGen.new
 
@@ -58,16 +96,8 @@ class TenderJIT
       asm.write_to buf
       buf.executable!
 
-      disasm buf
-
-      # Convert the JIT buffer to a function
-      func = buf.to_function([Fiddle::TYPE_VOIDP], Fiddle::TYPE_INT)
-
-      o = Object.new
-      assert_equal ra64(Fiddle.dlwrap(o)), func.call(Fiddle.dlwrap(o))
+      buf
     end
-
-    private
 
     def ra64 ptr
       Fiddle::Pointer.new(ptr)[0, Fiddle::SIZEOF_INT].unpack1("L")
