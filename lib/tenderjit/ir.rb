@@ -2,6 +2,14 @@ require "tenderjit/util"
 
 class TenderJIT
   class IR
+    class Immediate < Util::ClassGen.pos(:value)
+      def variable? = false
+      def immediate? = true
+    end
+
+    class UnsignedInt < Immediate
+    end
+
     class Variable < Util::ClassGen.pos(:name, :physical_register, :next_uses)
       attr_writer :physical_register
 
@@ -9,7 +17,9 @@ class TenderJIT
         super
       end
 
-      def param?; false; end
+      def param? = false
+      def immediate? = false
+      def variable? = true
 
       def used_after i
         next_uses.any? { |n| n > i }
@@ -18,7 +28,7 @@ class TenderJIT
 
     class InOut < Variable; end
     class Param < Variable
-      def param?; true; end
+      def param? = true
     end
     class NamedVariable < Variable; end
 
@@ -32,7 +42,13 @@ class TenderJIT
       @instructions = []
     end
 
-    def param idx; Param.new(idx); end
+    def param idx
+      Param.new(idx)
+    end
+
+    def uimm int
+      UnsignedInt.new(int)
+    end
 
     def add arg1, arg2
       push __method__, arg1, arg2
@@ -42,12 +58,16 @@ class TenderJIT
       push __method__, arg1, arg1
     end
 
+    def load arg1, arg2
+      push __method__, arg1, arg2
+    end
+
     private
 
     def push name, a, b
       out = InOut.new(@instructions.length)
-      a.next_uses << @instructions.length
-      b.next_uses << @instructions.length
+      a.next_uses << @instructions.length if a.variable?
+      b.next_uses << @instructions.length if b.variable?
       @instructions << Instruction.new(name, a, b, out)
       out
     end

@@ -14,10 +14,15 @@ class TenderJIT
           vr2 = insn.arg2
 
           pr1 = ra.ensure vr1
-          pr2 = ra.ensure vr2
+
+          if vr2.immediate?
+            pr2 = vr2
+          else
+            pr2 = ra.ensure vr2
+          end
 
           ra.free pr1 unless vr1.used_after(i)
-          ra.free pr2 unless vr2.used_after(i)
+          ra.free pr2 unless vr2.immediate? || vr2.used_after(i)
 
           pr3 = ra.alloc insn.out
 
@@ -39,6 +44,10 @@ class TenderJIT
         end
 
         asm.ret
+      end
+
+      def load asm, out, src, offset
+        asm.ldr out, [src, offset.value]
       end
     end
   end
