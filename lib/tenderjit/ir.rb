@@ -5,6 +5,12 @@ class TenderJIT
     class Immediate < Util::ClassGen.pos(:value)
       def register? = false
       def immediate? = true
+
+      def ensure ra
+        self
+      end
+
+      def free _, _, _; end
     end
 
     class UnsignedInt < Immediate
@@ -23,6 +29,14 @@ class TenderJIT
 
       def used_after i
         next_uses.any? { |n| n > i }
+      end
+
+      def ensure ra
+        ra.ensure self
+      end
+
+      def free ra, pr, i
+        ra.free(pr) unless used_after(i)
       end
     end
 
@@ -46,6 +60,12 @@ class TenderJIT
       end
 
       def unwrap_label; offset; end
+
+      def ensure ra
+        self
+      end
+
+      def free _, _, _; end
     end
 
     attr_reader :instructions
@@ -89,6 +109,8 @@ class TenderJIT
 
     NONE = Object.new
     def NONE.register?; false; end
+    def NONE.ensure ra; self; end
+    def NONE.free _, _, _; self; end
 
     def brk
       push __method__, NONE, NONE

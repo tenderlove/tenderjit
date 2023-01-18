@@ -14,24 +14,21 @@ class TenderJIT
           vr2 = insn.arg2
           vr3 = insn.out
 
-          if vr1.register?
-            pr1 = ra.ensure vr1
-          else
-            pr1 = vr1
-          end
+          # ensure we have physical registers for the arguments.
+          # `ensure` may not return a physical register in the case where
+          # the virtual register is actually a label or a literal value
+          pr1 = vr1.ensure(ra)
+          pr2 = vr2.ensure(ra)
 
-          if vr2.register?
-            pr2 = ra.ensure vr2
-          else
-            pr2 = vr2
-          end
+          # Free the physical registers if they're not used after this
+          vr1.free(ra, pr1, i)
+          vr2.free(ra, pr2, i)
 
-          ra.free pr1 if vr1.register? && !vr1.used_after(i)
-          ra.free pr2 if vr2.register? && !vr2.used_after(i)
-
+          # Allocate a physical register for the output virtual register
           pr3 = ra.alloc vr3
 
-          ra.free pr3 if vr3.register? && !vr3.used_after(i)
+          # Free the output register if it's not used after this
+          vr3.free(ra, pr3, i)
 
           send insn.op, asm, pr3, pr1, pr2, i
         end
