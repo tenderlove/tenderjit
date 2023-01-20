@@ -30,6 +30,7 @@ class TenderJIT
           # Free the output register if it's not used after this
           vr3.free(ra, pr3, i)
 
+          # Convert this SSA instruction to ARM64
           send insn.op, asm, pr3, pr1, pr2, i
         end
 
