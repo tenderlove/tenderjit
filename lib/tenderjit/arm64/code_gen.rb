@@ -25,7 +25,7 @@ class TenderJIT
           vr2.free(ra, pr2, i)
 
           # Allocate a physical register for the output virtual register
-          pr3 = ra.alloc vr3
+          pr3 = vr3.ensure(ra)
 
           # Free the output register if it's not used after this
           vr3.free(ra, pr3, i)
@@ -38,12 +38,27 @@ class TenderJIT
 
       private
 
+      def jle asm, dest, arg1, arg2, i
+        asm.cmp arg1, arg2.value
+        asm.b dest, cond: :le
+      end
+
+      def neg asm, out, arg1, _, _
+        asm.neg out, arg1
+      end
+
+      def and asm, out, arg1, arg2, _
+        asm.and out, arg1, arg2
+      end
+
       def add asm, out, arg1, arg2, _
         asm.add out, arg1, arg2
       end
 
       def return asm, out, arg1, arg2, _
         if out != AArch64::Registers::X0
+          arg1 = arg1.value unless arg1.register?
+
           asm.mov AArch64::Registers::X0, arg1
         end
 

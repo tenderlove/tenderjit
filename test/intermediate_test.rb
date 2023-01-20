@@ -82,6 +82,26 @@ class TenderJIT
       assert_equal 3, func.call(3)
     end
 
+    def test_immediate_test
+      ir = IR.new
+      a = ir.param(0)
+
+      b = ir.neg a
+      c = ir.and a, b
+      ir.jle c, ir.uimm(4), ir.label(:foo)
+      ir.return ir.uimm(0)
+      ir.put_label(:foo)
+      ir.return ir.uimm(1)
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([Fiddle::TYPE_VOIDP], Fiddle::TYPE_INT)
+
+      assert_equal 1, func.call(3)
+      assert_equal 0, func.call(Fiddle.dlwrap(Object.new))
+    end
+
     private
 
     def assemble ir

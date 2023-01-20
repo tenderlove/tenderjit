@@ -2,6 +2,12 @@ require "tenderjit/util"
 
 class TenderJIT
   class IR
+    class None
+      def register?; false; end
+      def ensure ra; self; end
+      def free _, _, _; self; end
+    end
+
     class Immediate < Util::ClassGen.pos(:value)
       def register? = false
       def immediate? = true
@@ -53,6 +59,7 @@ class TenderJIT
     class Label < Util::ClassGen.pos(:name, :offset)
       def register? = false
       def integer? = false
+      def immediate? = false
 
       def set_offset offset
         @offset = offset
@@ -103,17 +110,28 @@ class TenderJIT
       @labels[name] ||= Label.new(name)
     end
 
-    def jmp location
-      push __method__, location, location
+    NONE = None.new
+
+    def jle arg1, arg2, dest
+      push __method__, arg1, arg2, dest
+      nil
     end
 
-    NONE = Object.new
-    def NONE.register?; false; end
-    def NONE.ensure ra; self; end
-    def NONE.free _, _, _; self; end
+    def jmp location
+      push __method__, location, NONE
+      nil
+    end
 
     def brk
       push __method__, NONE, NONE
+    end
+
+    def neg arg1
+      push __method__, arg1, NONE
+    end
+
+    def and arg1, arg2
+      push __method__, arg1, arg2
     end
 
     def put_label name
@@ -122,8 +140,7 @@ class TenderJIT
 
     private
 
-    def push name, a, b
-      out = InOut.new(@instructions.length)
+    def push name, a, b, out = InOut.new(@instructions.length)
       a.next_uses << @instructions.length if a.register?
       b.next_uses << @instructions.length if b.register?
       @instructions << Instruction.new(name, a, b, out)
