@@ -1,5 +1,11 @@
 class TenderJIT
   module ARM64
+    PARAM_REGS = 8.times.map { AArch64::Registers.const_get(:"X#{_1}") }.freeze
+    FREE_REGS = [
+      AArch64::Registers::X9,
+      AArch64::Registers::X10,
+    ].freeze
+
     # This is a _local_ register allocator, it doesn't deal with register
     # allocation across basic blocks.  Also it won't spill registers, it
     # just crashes
@@ -9,13 +15,13 @@ class TenderJIT
         @freelist            = ARM64::FREE_REGS.dup
       end
 
-      def ensure r
-        return r.physical_register if r.physical_register
+      def ensure virt
+        return virt.physical_register if virt.physical_register
 
-        if r.param?
-          r.physical_register = @parameter_registers[r.name]
+        if virt.param?
+          virt.physical_register = @parameter_registers[virt.name]
         else
-          alloc r
+          alloc virt
         end
       end
 
