@@ -19,8 +19,7 @@ class TenderJIT
       def free _, _, _; end
     end
 
-    class UnsignedInt < Immediate
-    end
+    class UnsignedInt < Immediate; end
 
     class VirtualRegister < Util::ClassGen.pos(:name, :physical_register, :next_uses)
       attr_writer :physical_register
@@ -56,9 +55,7 @@ class TenderJIT
       def param? = true
     end
 
-    class Instruction < Util::ClassGen.pos(:op, :arg1, :arg2, :out)
-      attr_writer :reg, :n
-    end
+    Instruction = Util::ClassGen.pos(:op, :arg1, :arg2, :out)
 
     class Label < Util::ClassGen.pos(:name, :offset)
       def register? = false
