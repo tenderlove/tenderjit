@@ -4,7 +4,7 @@ class TenderJIT
   module ARM64
     class CodeGen
       def assemble ra, ir
-        asm = AArch64::Assembler.new
+        @asm = AArch64::Assembler.new
 
         ir.instructions.each_with_index do |insn, i|
           # vr == "virtual register"
@@ -31,32 +31,34 @@ class TenderJIT
           vr3.free(ra, pr3, i)
 
           # Convert this SSA instruction to ARM64
-          send insn.op, asm, pr3, pr1, pr2, i
+          send insn.op, pr3, pr1, pr2
         end
 
-        asm
+        @asm
       end
 
       private
 
-      def jle asm, dest, arg1, arg2, i
+      attr_reader :asm
+
+      def jle dest, arg1, arg2
         asm.cmp arg1, arg2
         asm.b dest, cond: :le
       end
 
-      def neg asm, out, arg1, _, _
+      def neg out, arg1, _
         asm.neg out, arg1
       end
 
-      def and asm, out, arg1, arg2, _
+      def and out, arg1, arg2
         asm.and out, arg1, arg2
       end
 
-      def add asm, out, arg1, arg2, _
+      def add out, arg1, arg2
         asm.add out, arg1, arg2
       end
 
-      def return asm, out, arg1, arg2, _
+      def return out, arg1, arg2
         if out != AArch64::Registers::X0 || arg1.integer?
           asm.mov AArch64::Registers::X0, arg1
         end
@@ -64,23 +66,23 @@ class TenderJIT
         asm.ret
       end
 
-      def load asm, out, src, offset, _
+      def load out, src, offset
         asm.ldr out, [src, offset]
       end
 
-      def write asm, out, _, val, _
+      def write out, _, val
         asm.mov out, val
       end
 
-      def brk asm, _, _, _, i
+      def brk _, _, _
         asm.brk 1
       end
 
-      def jmp asm, out, arg1, _, i
+      def jmp out, arg1, _
         asm.b arg1
       end
 
-      def put_label asm, _, label, _, _
+      def put_label _, label, _
         asm.put_label label
       end
     end
