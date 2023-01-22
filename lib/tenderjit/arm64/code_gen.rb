@@ -40,7 +40,7 @@ class TenderJIT
       private
 
       def jle asm, dest, arg1, arg2, i
-        asm.cmp arg1, arg2.value
+        asm.cmp arg1, arg2
         asm.b dest, cond: :le
       end
 
@@ -58,8 +58,6 @@ class TenderJIT
 
       def return asm, out, arg1, arg2, _
         if out != AArch64::Registers::X0
-          arg1 = arg1.value unless arg1.register?
-
           asm.mov AArch64::Registers::X0, arg1
         end
 
@@ -67,11 +65,11 @@ class TenderJIT
       end
 
       def load asm, out, src, offset, _
-        asm.ldr out, [src, offset.value]
+        asm.ldr out, [src, offset]
       end
 
       def write asm, out, _, val, _
-        asm.mov out, val.value
+        asm.mov out, val
       end
 
       def brk asm, _, _, _, i

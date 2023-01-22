@@ -13,7 +13,7 @@ class TenderJIT
       def immediate? = true
 
       def ensure ra
-        self
+        value
       end
 
       def free _, _, _; end
