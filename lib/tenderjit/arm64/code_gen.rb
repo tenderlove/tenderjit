@@ -21,8 +21,8 @@ class TenderJIT
           pr2 = vr2.ensure(ra)
 
           # Free the physical registers if they're not used after this
-          vr1.free(ra, pr1, i)
           vr2.free(ra, pr2, i)
+          vr1.free(ra, pr1, i)
 
           # Allocate a physical register for the output virtual register
           pr3 = vr3.ensure(ra)
@@ -57,7 +57,7 @@ class TenderJIT
       end
 
       def return asm, out, arg1, arg2, _
-        if out != AArch64::Registers::X0
+        if out != AArch64::Registers::X0 || arg1.integer?
           asm.mov AArch64::Registers::X0, arg1
         end
 
