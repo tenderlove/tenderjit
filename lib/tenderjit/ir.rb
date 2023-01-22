@@ -33,8 +33,12 @@ class TenderJIT
       def immediate? = false
       def register? = true
 
-      def used_after i
+      def used_after? i
         next_uses.any? { |n| n > i }
+      end
+
+      def used_at i
+        @next_uses << i
       end
 
       def ensure ra
@@ -42,7 +46,7 @@ class TenderJIT
       end
 
       def free ra, pr, i
-        ra.free(pr) unless used_after(i)
+        ra.free(pr) unless used_after?(i)
       end
     end
 
@@ -80,6 +84,13 @@ class TenderJIT
     def initialize
       @instructions = []
       @labels = {}
+    end
+
+    def to_arm64
+      ra = ARM64::RegisterAllocator.new
+      cg = ARM64::CodeGen.new
+
+      cg.assemble ra, self
     end
 
     def param idx
@@ -141,8 +152,8 @@ class TenderJIT
     private
 
     def push name, a, b, out = InOut.new(@instructions.length)
-      a.next_uses << @instructions.length if a.register?
-      b.next_uses << @instructions.length if b.register?
+      a.used_at @instructions.length if a.register?
+      b.used_at @instructions.length if b.register?
       @instructions << Instruction.new(name, a, b, out)
       out
     end

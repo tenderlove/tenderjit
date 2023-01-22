@@ -104,10 +104,7 @@ class TenderJIT
     private
 
     def assemble ir
-      ra = ARM64::RegisterAllocator.new
-      cg = ARM64::CodeGen.new
-
-      asm = cg.assemble ra, ir
+      asm = ir.to_arm64
 
       buf = JITBuffer.new 4096
 
