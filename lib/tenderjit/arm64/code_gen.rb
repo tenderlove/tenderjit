@@ -66,16 +66,24 @@ class TenderJIT
         asm.ret
       end
 
-      def load out, src, offset
-        asm.ldr out, [src, offset]
+      def store val, dst, offset
+        asm.stur val, [dst, offset]
       end
 
-      def write out, _, val
+      def load out, src, offset
+        asm.ldur out, [src, offset]
+      end
+
+      def write out, m, val
         asm.mov out, val
       end
 
       def brk _, _, _
         asm.brk 1
+      end
+
+      def nop _, _, _
+        asm.nop
       end
 
       def jmp out, arg1, _

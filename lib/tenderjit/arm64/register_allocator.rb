@@ -18,12 +18,14 @@ class TenderJIT
       end
 
       def ensure virt
-        return virt.physical_register if virt.physical_register
-
-        if virt.param?
-          virt.physical_register = @parameter_registers[virt.name]
+        if virt.physical_register
+          virt.physical_register
         else
-          alloc virt
+          if virt.param?
+            virt.physical_register = @parameter_registers[virt.name]
+          else
+            alloc virt
+          end
         end
       end
 
@@ -31,13 +33,13 @@ class TenderJIT
         phys = @freelist.pop
         if phys
           r.physical_register = phys
-          phys
         else
           raise "Spill!"
         end
       end
 
       def free phys
+        raise "Don't free registers twice!" if @freelist.include?(phys)
         @freelist.push phys
       end
     end

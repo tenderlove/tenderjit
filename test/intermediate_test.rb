@@ -14,6 +14,8 @@ end
 
 class TenderJIT
   class IRTest < Test
+    include Fiddle::Types
+
     def test_ir
       ir = IR.new
       a = ir.param(0)
@@ -58,6 +60,44 @@ class TenderJIT
       func = buf.to_function([], Fiddle::TYPE_INT)
 
       assert_equal 16, func.call()
+    end
+
+    def test_free_twice
+      ir = IR.new
+      a = ir.param(0)
+      b = ir.param(1)
+
+      t = ir.add(b, a) # t = a + b
+      v = ir.add(t, t)
+      ir.return v      # return t
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 6, func.call(1, 2)
+    end
+
+    def test_store
+      mem = Fiddle.malloc(64)
+      val = 0xFF
+
+      ir = IR.new
+      a = ir.param(0)
+      b = ir.write(ir.var, ir.uimm(val))
+      c = ir.store(a, ir.uimm(0), b)
+      ir.return a
+
+      buf = assemble ir
+
+      assert_nil c
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([VOIDP], VOID)
+      func.call(mem)
+
+      assert_equal val, Fiddle::Pointer.new(mem)[0, Fiddle::SIZEOF_INT].unpack1("L")
+    ensure
+      Fiddle.free mem
     end
 
     def test_jump_forward
