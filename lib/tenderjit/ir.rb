@@ -92,11 +92,15 @@ class TenderJIT
       def free _, _, _; end
     end
 
-    attr_reader :instructions
-
     def initialize
       @instructions = []
       @labels = {}
+    end
+
+    def each_instruction
+      @instructions.each_with_index do |insn, i|
+        yield insn, i
+      end
     end
 
     def to_arm64

@@ -6,7 +6,7 @@ class TenderJIT
       def assemble ra, ir
         @asm = AArch64::Assembler.new
 
-        ir.instructions.each_with_index do |insn, i|
+        ir.each_instruction do |insn, i|
           # vr == "virtual register"
           # pr == "physical register"
 
