@@ -5,15 +5,49 @@ class TenderJIT
   class IR
     NONE = Operands::None.new
 
-    Instruction = Util::ClassGen.pos(:op, :arg1, :arg2, :out)
+    class Head < Util::ClassGen.pos(:_next, :prev)
+      include Enumerable
+
+      def append node
+        @_next = node
+        node.prev = self
+        node
+      end
+
+      def each
+        node = @_next
+        while node
+          yield node
+          node = node._next
+        end
+      end
+    end
+
+    class Instruction < Util::ClassGen.pos(:op, :arg1, :arg2, :out, :_next, :prev)
+      attr_writer :prev
+
+      def append node
+        @_next = node
+        node.prev = self
+        node
+      end
+    end
 
     def initialize
-      @instructions = []
+      @insn_head = Head.new
+      @instructions = @insn_head
       @labels = {}
+      @virtual_register_name = 0
     end
 
     def each_instruction
-      @instructions.each_with_index do |insn, i|
+      @insn_head.each_with_index do |insn, i|
+        insn.arg1.set_last_use i
+        insn.arg2.set_last_use i
+        insn.out.set_last_use i
+      end
+
+      @insn_head.each_with_index do |insn, i|
         yield insn, i
       end
     end
@@ -26,7 +60,7 @@ class TenderJIT
     end
 
     def var
-      Operands::InOut.new @instructions.length
+      Operands::InOut.new(@virtual_register_name += 1)
     end
 
     def param idx
@@ -100,10 +134,7 @@ class TenderJIT
     private
 
     def push name, a, b, out = self.var
-      a.set_last_use @instructions.length if a.register?
-      b.set_last_use @instructions.length if b.register?
-      out.set_last_use @instructions.length if out.register?
-      @instructions << Instruction.new(name, a, b, out)
+      @instructions = @instructions.append Instruction.new(name, a, b, out)
       out
     end
   end

@@ -9,6 +9,7 @@ class TenderJIT
         def none?; true; end
         def ensure ra; self; end
         def free _, _, _; self; end
+        def set_last_use _ ; end
       end
 
       class Immediate < Util::ClassGen.pos(:value)
@@ -20,6 +21,7 @@ class TenderJIT
           value
         end
 
+        def set_last_use _ ; end
         def free _, _, _; end
       end
 
@@ -89,6 +91,7 @@ class TenderJIT
         end
 
         def free _, _, _; end
+        def set_last_use _; end
       end
     end
   end
