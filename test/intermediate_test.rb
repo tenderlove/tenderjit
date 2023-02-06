@@ -2,8 +2,6 @@ ENV["MT_NO_PLUGINS"] = "1"
 
 require "minitest/autorun"
 require "tenderjit/ir"
-require "tenderjit/arm64/register_allocator"
-require "tenderjit/arm64/code_gen"
 require "hatstone"
 require "jit_buffer"
 require "helper"
