@@ -6,11 +6,7 @@ require "tenderjit/arm64/register_allocator"
 require "tenderjit/arm64/code_gen"
 require "hatstone"
 require "jit_buffer"
-
-class TenderJIT
-  class Test < Minitest::Test
-  end
-end
+require "helper"
 
 class TenderJIT
   class IRTest < Test
@@ -28,6 +24,19 @@ class TenderJIT
 
       func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
       assert_equal 3, func.call(1, 2)
+    end
+
+    def test_add_int_lhs
+      ir = IR.new
+      a = ir.param(0)
+
+      t = ir.add(2, a) # t = a + b
+      ir.return t      # return t
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 3, func.call(1)
     end
 
     def test_read_field
@@ -144,7 +153,7 @@ class TenderJIT
     private
 
     def assemble ir
-      asm = ir.to_arm64
+      asm = ir.to_binary
 
       buf = JITBuffer.new 4096
 
@@ -160,12 +169,7 @@ class TenderJIT
     end
 
     def disasm buf
-      # Now disassemble the instructions with Hatstone
-      hs = Hatstone.new(Hatstone::ARCH_ARM64, Hatstone::MODE_ARM)
-
-      hs.disasm(buf[0, buf.pos], 0x0).each do |insn|
-        puts "%#05x %s %s" % [insn.address, insn.mnemonic, insn.op_str]
-      end
+      TenderJIT.disasm buf
     end
   end
 end

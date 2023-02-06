@@ -97,7 +97,29 @@ class TenderJIT
       ra = ARM64::RegisterAllocator.new
       cg = ARM64::CodeGen.new
 
-      cg.assemble ra, self
+      ra.assemble self, cg
+    end
+
+    def to_x86_64
+      require "tenderjit/x86_64/register_allocator"
+      require "tenderjit/x86_64/code_gen"
+
+      ra = X86_64::RegisterAllocator.new
+      cg = X86_64::CodeGen.new
+
+      ra.assemble self, cg
+    end
+
+    def to_binary
+      if Util::PLATFORM == :arm64
+        to_arm64
+      else
+        to_x86_64
+      end
+    end
+
+    def write_to buffer
+      to_binary.write_to buffer
     end
 
     def var
@@ -179,7 +201,7 @@ class TenderJIT
     end
 
     def jmp location
-      push __method__, location, NONE
+      push __method__, location, NONE, NONE
       nil
     end
 

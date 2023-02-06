@@ -58,15 +58,22 @@ class TenderJIT
     ir.return 1
 
     jb.writeable!
-    ir.to_arm64.write_to jb
+    ir.write_to jb
     jb.executable!
     jb
   end
 
   def self.disasm buf
-    # Now disassemble the instructions with Hatstone
-    hs = Hatstone.new(Hatstone::ARCH_ARM64, Hatstone::MODE_ARM)
+    hs = case Util::PLATFORM
+         when :arm64
+           Hatstone.new(Hatstone::ARCH_ARM64, Hatstone::MODE_ARM)
+         when :x86_64
+           Hatstone.new(Hatstone::ARCH_X86, Hatstone::MODE_64)
+         else
+           raise "unknown platform"
+         end
 
+    # Now disassemble the instructions with Hatstone
     hs.disasm(buf[0, buf.pos], 0x0).each do |insn|
       puts "%#05x %s %s" % [insn.address, insn.mnemonic, insn.op_str]
     end

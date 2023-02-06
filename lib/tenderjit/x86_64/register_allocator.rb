@@ -1,13 +1,13 @@
 require "tenderjit/register_allocator"
-require "aarch64"
+require "fisk"
 
 class TenderJIT
-  module ARM64
-    PARAM_REGS = 8.times.map { AArch64::Registers.const_get(:"X#{_1}") }.freeze
+  module X86_64
+    PARAM_REGS = Fisk::Registers::CALLER_SAVED.dup.freeze
 
     FREE_REGS = [
-      AArch64::Registers::X9,
-      AArch64::Registers::X10,
+      Fisk::Registers::R12,
+      Fisk::Registers::R13,
     ].freeze
 
     class RegisterAllocator < TenderJIT::RegisterAllocator

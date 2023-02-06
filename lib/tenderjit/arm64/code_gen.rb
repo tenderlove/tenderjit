@@ -3,50 +3,22 @@ require "aarch64"
 class TenderJIT
   module ARM64
     class CodeGen
-      def assemble ra, ir
+      attr_reader :asm
+
+      def initialize
         @asm = AArch64::Assembler.new
-
         @params = []
+      end
 
-        idx = nil
-        ir.each_instruction do |insn, i|
-          idx = i
-          # vr == "virtual register"
-          # pr == "physical register"
+      def write_to buffer
+        @asm.write_to buffer
+      end
 
-          vr1 = insn.arg1
-          vr2 = insn.arg2
-          vr3 = insn.out
-
-          # ensure we have physical registers for the arguments.
-          # `ensure` may not return a physical register in the case where
-          # the virtual register is actually a label or a literal value
-          pr1 = vr1.ensure(ra)
-          pr2 = vr2.ensure(ra)
-
-          # Free the physical registers if they're not used after this
-          vr2.free(ra, pr2, i)
-          vr1.free(ra, pr1, i)
-
-          # Allocate a physical register for the output virtual register
-          pr3 = vr3.ensure(ra)
-
-          # Free the output register if it's not used after this
-          vr3.free(ra, pr3, i)
-
-          # Convert this SSA instruction to ARM64
-          send insn.op, pr3, pr1, pr2
-        end
-
-        @asm
-      rescue RegisterAllocator::Spill
-        ir.dump_usage
-        raise
+      def handle insn, out, in1, in2
+        send insn.op, out, in1, in2
       end
 
       private
-
-      attr_reader :asm
 
       def set_param _, arg1, _
         @params << arg1
@@ -92,6 +64,18 @@ class TenderJIT
       end
 
       def add out, arg1, arg2
+        if arg1.integer?
+          asm.mov out, arg1
+          asm.add out, out, arg2
+          return
+        end
+
+        if arg2.integer?
+          asm.mov out, arg2
+          asm.add out, out, arg1
+          return
+        end
+
         asm.add out, arg1, arg2
       end
 
@@ -99,8 +83,8 @@ class TenderJIT
         asm.sub out, arg1, arg2
       end
 
-      def return out, arg1, arg2
-        if out != AArch64::Registers::X0 || arg1.integer?
+      def return _, arg1, _
+        if arg1 != AArch64::Registers::X0 || arg1.integer?
           asm.mov AArch64::Registers::X0, arg1
         end
 
