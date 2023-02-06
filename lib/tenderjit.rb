@@ -1,251 +1,18 @@
 # frozen_string_literal: true
 
-require "tenderjit/ruby"
+require "jit_buffer"
 require "tenderjit/fiddle_hacks"
-require "tenderjit/exit_code"
-require "tenderjit/deferred_compilations"
+require "tenderjit/mjit_hacks"
 require "tenderjit/c_funcs"
+require "tenderjit/ir"
 require "fiddle/import"
-require "fisk"
-require "fisk/helpers"
+require "hacks"
+require "hatstone"
 require "etc"
 
 class TenderJIT
-  REG_EC  = Fisk::Registers::R13 # Execution context
-  REG_CFP = Fisk::Registers::R14 # Current control frame
-  REG_BP  = Fisk::Registers::R15 # Base pointer for Stack
-  REG_TOP = Fisk::Registers::R12 # Entry stack location
-
-  Internals = Ruby::INSTANCE
-
-  # Struct layouts
-
-  RBasic                = Internals.struct("RBasic")
-  RArray                = Internals.struct("RArray")
-  RClass                = Internals.struct("RClass")
-
-  RObject               = Internals.struct("RObject")
-  RTypedData            = Internals.struct("RTypedData")
-
-  RData                 = Internals.struct("RData")
-  RbISeqT               = Internals.struct("rb_iseq_t")
-
-  RbProcT               = Internals.struct("rb_proc_t")
-  RbControlFrameStruct  = Internals.struct("rb_control_frame_struct")
-  RbExecutionContextT   = Internals.struct("rb_execution_context_t")
-  RbCallInfo            = Internals.struct("rb_callinfo")
-  RbCallData            = Internals.struct("rb_call_data")
-  RbCallableMethodEntryT = Internals.struct("rb_callable_method_entry_t")
-  RbClassExt             = Internals.struct("rb_classext_struct")
-
-  RbMethodDefinitionStruct = Internals.struct("rb_method_definition_struct")
-  RbIseqConstantBody = Internals.struct("rb_iseq_constant_body")
-
-  IseqInlineConstantCacheEntry = Internals.struct("iseq_inline_constant_cache_entry")
-  IseqInlineConstantCache = Internals.struct("iseq_inline_constant_cache")
-  RbIvIndexTblEntry = Internals.struct("rb_iv_index_tbl_entry")
-
-  RbCallInfo.instance_class.class_eval do
-    CI_EMBED_TAG_bits  = 1
-    CI_EMBED_ARGC_bits = 15
-    CI_EMBED_FLAG_bits = 16
-    CI_EMBED_ID_bits   = 32
-    CI_EMBED_ARGC_SHFT = CI_EMBED_TAG_bits
-    CI_EMBED_ARGC_MASK = (1 << CI_EMBED_ARGC_bits) - 1
-    CI_EMBED_FLAG_SHFT = CI_EMBED_TAG_bits + CI_EMBED_ARGC_bits
-    CI_EMBED_FLAG_MASK = (1 << CI_EMBED_FLAG_bits) - 1
-    CI_EMBED_ID_SHFT   = (CI_EMBED_TAG_bits + CI_EMBED_ARGC_bits + CI_EMBED_FLAG_bits)
-    CI_EMBED_ID_MASK   = (1<<CI_EMBED_ID_bits) - 1
-
-    def vm_ci_packed?
-      to_i & 0x1 != 0
-    end
-
-    def vm_ci_flag
-      if vm_ci_packed?
-        (to_i >> CI_EMBED_FLAG_SHFT) & CI_EMBED_FLAG_MASK
-      else
-        flag
-      end
-    end
-
-    # Return a list of VM_CALL_* flags that are set on this call info object
-    def vm_call_flags
-      ci_flags = vm_ci_flag
-
-      [
-        :VM_CALL_ARGS_SPLAT,
-        :VM_CALL_ARGS_BLOCKARG,
-        :VM_CALL_FCALL,
-        :VM_CALL_VCALL,
-        :VM_CALL_ARGS_SIMPLE,
-        :VM_CALL_BLOCKISEQ,
-        :VM_CALL_KW_SPLAT,
-        :VM_CALL_TAILCALL,
-        :VM_CALL_SUPER,
-        :VM_CALL_ZSUPER,
-        :VM_CALL_OPT_SEND,
-        :VM_CALL_KW_SPLAT_MUT,
-        :VM_CALL_KWARG
-      ].find_all { |n| ci_flags & TenderJIT.const_get(n) == TenderJIT.const_get(n) }
-    end
-
-    # Can we support this type of call in the JIT?
-    def supported_call?
-      unhandled = [#VM_CALL_ARGS_SPLAT,
-                   #VM_CALL_ARGS_BLOCKARG,
-                   #VM_CALL_FCALL,
-                   #VM_CALL_VCALL,
-                   #VM_CALL_ARGS_SIMPLE,
-                   #VM_CALL_BLOCKISEQ,
-                   VM_CALL_KW_SPLAT,
-                   VM_CALL_TAILCALL,
-                   VM_CALL_SUPER,
-                   VM_CALL_ZSUPER,
-                   #VM_CALL_OPT_SEND,
-                   VM_CALL_KW_SPLAT_MUT,
-                   VM_CALL_KWARG
-      ].inject(0) { |acc, bit| acc | bit }
-
-      vm_ci_flag & unhandled == 0
-    end
-
-    def splat?
-      vm_ci_flag & VM_CALL_ARGS_SPLAT == VM_CALL_ARGS_SPLAT
-    end
-
-    def vm_ci_mid
-      if vm_ci_packed?
-        (to_i >> CI_EMBED_ID_SHFT) & CI_EMBED_ID_MASK
-      else
-        mid
-      end
-    end
-
-    def vm_ci_argc
-      if vm_ci_packed?
-        (to_i >> CI_EMBED_ARGC_SHFT) & CI_EMBED_ARGC_MASK
-      else
-        argc
-      end
-    end
-
-    def is_args_kw_splat?
-      (vm_ci_flag & VM_CALL_KWARG) != 0
-    end
-  end
-
-  # Global Variables
-
-  MJIT_CALL_P = Fiddle::Pointer.new(Fiddle::Handle::DEFAULT["mjit_call_p"])
-
-  ## FIXME: These addresses are sometimes different.  Why???
-  # p Fiddle::Handle::DEFAULT["mjit_opts"].to_s(16)
-  # p Internals.symbol_address("mjit_opts").to_s(16)
-  MJIT_OPTIONS = Internals.struct("mjit_options").new(Fiddle::Handle::DEFAULT["mjit_opts"])
-
-  MJIT_OPTIONS.min_calls = 5
-  MJIT_OPTIONS.wait = 0
-
-  # Important Addresses
-
-  VM_EXEC_CORE = Internals.symbol_address("vm_exec_core")
-
-  # Important Constants
-
-  Qtrue  = Internals.c "Qtrue"
-  Qfalse = Internals.c "Qfalse"
-  Qundef = Internals.c "Qundef"
-  Qnil   = Internals.c "Qnil"
-
-  T_FIXNUM = Internals.c "T_FIXNUM"
-  T_ARRAY  = Internals.c "T_ARRAY"
-  T_NIL    = Internals.c "T_NIL"
-  T_CLASS  = Internals.c "T_CLASS"
-  T_OBJECT = Internals.c "T_OBJECT"
-  T_SYMBOL = Internals.c "T_SYMBOL"
-  T_DATA   = Internals.c "T_DATA"
-  ROBJECT_EMBED = Internals.c("ROBJECT_EMBED")
-
-  Internals.constants.each do |x|
-    case x
-    when /^(VM_CALL_.*)_bit$/
-      const_set $1, 1 << Internals.c(x)
-    when /^VM_(?:FRAME|ENV|METHOD).*$/
-      const_set x, Internals.c(x)
-    when /^RUBY_.*$/
-      const_set x, Internals.c(x)
-    end
-  end
-
-  ALL_TYPES = [
-    RUBY_T_NONE,
-    RUBY_T_OBJECT,
-    RUBY_T_CLASS,
-    RUBY_T_MODULE,
-    RUBY_T_FLOAT,
-    RUBY_T_STRING,
-    RUBY_T_REGEXP,
-    RUBY_T_ARRAY,
-    RUBY_T_HASH,
-    RUBY_T_STRUCT,
-    RUBY_T_BIGNUM,
-    RUBY_T_FILE,
-    RUBY_T_DATA,
-    RUBY_T_MATCH,
-    RUBY_T_COMPLEX,
-    RUBY_T_RATIONAL,
-    RUBY_T_NIL,
-    RUBY_T_TRUE,
-    RUBY_T_FALSE,
-    RUBY_T_SYMBOL,
-    RUBY_T_FIXNUM,
-    RUBY_T_UNDEF,
-    RUBY_T_IMEMO,
-    RUBY_T_NODE,
-    RUBY_T_ICLASS,
-    RUBY_T_ZOMBIE,
-    RUBY_T_MOVED,
-  ]
-
-  HEAP_TYPES = [
-    RUBY_T_NONE,
-    RUBY_T_OBJECT,
-    RUBY_T_CLASS,
-    RUBY_T_MODULE,
-    RUBY_T_FLOAT,
-    RUBY_T_STRING,
-    RUBY_T_REGEXP,
-    RUBY_T_ARRAY,
-    RUBY_T_HASH,
-    RUBY_T_STRUCT,
-    RUBY_T_BIGNUM,
-    RUBY_T_FILE,
-    RUBY_T_DATA,
-    RUBY_T_MATCH,
-    RUBY_T_COMPLEX,
-    RUBY_T_RATIONAL,
-    #RUBY_T_NIL,
-    #RUBY_T_TRUE,
-    #RUBY_T_FALSE,
-    #RUBY_T_SYMBOL,
-    #RUBY_T_FIXNUM,
-    #RUBY_T_UNDEF,
-    RUBY_T_IMEMO,
-    RUBY_T_NODE,
-    RUBY_T_ICLASS,
-    RUBY_T_ZOMBIE,
-    RUBY_T_MOVED,
-  ]
-
-  SPECIAL_TYPES = ALL_TYPES - HEAP_TYPES
-
-  VM_ENV_DATA_INDEX_ME_CREF    = -2 # /* ep[-2] */
-  VM_ENV_DATA_INDEX_SPECVAL    = -1 # /* ep[-1] */
-  VM_ENV_DATA_INDEX_FLAGS      =  0 # /* ep[ 0] */
-  VM_ENV_DATA_INDEX_ENV        =  1 # /* ep[ 1] */
-
-  VM_BLOCK_HANDLER_NONE        =  0
+  C = RubyVM::MJIT.const_get(:C)
+  INSNS = RubyVM::MJIT.const_get(:INSNS)
 
   extend Fiddle::Importer
 
@@ -256,231 +23,93 @@ class TenderJIT
     "uint64_t exits",
   ]
 
-  ExitStats = struct RubyVM::INSTRUCTION_NAMES.map { |n|
-    "uint64_t #{n}"
-  } + [
-    "uint64_t temporary_exit",
-    "uint64_t method_missing",
-    "uint64_t complex_method",
-    "uint64_t unknown_method_type",
-    "uint64_t optimized_method_type_send",
-  ] + constants.grep(/^VM_METHOD/).map { |n| "uint64_t #{n.to_s.downcase}" }
-
-  attr_reader :jit_buffer, :exit_code
-
-  # Returns true if the method has been compiled, otherwise false
-  def self.compiled? method
-    rb_iseq = RubyVM::InstructionSequence.of(method)
-    return false unless rb_iseq
-    addr = RTypedData.new(Fiddle.dlwrap(rb_iseq)).data.to_i
-    rb_iseq = RbISeqT.new(addr)
-    rb_iseq.body.jit_func.to_i != 0
-  end
-
-  # Throw away any compiled code associated with the method
-  def self.uncompile method
-    rb_iseq = RubyVM::InstructionSequence.of(method)
-    return false unless rb_iseq
-    uncompile_iseq_t RTypedData.data(Fiddle.dlwrap(rb_iseq)).to_i
-  end
-
-  def self.uncompile_iseq_t addr
-    rb_iseq = RbISeqT.new(addr)
-    rb_iseq.body.jit_func = 0
-    cov_ptr = rb_iseq.body.variable.coverage.to_i
-    return if cov_ptr == 0
-    rb_iseq.body.variable.coverage = 0
-  end
-
-  DEFAULT_ALLOCATED_MEMORY = (4096 * 10) * 3
-
-  CACHE_BUSTERS = Fisk::Helpers.jitbuffer(4096)
-
-  def self.print_str fisk, string, jit_buffer
-    fisk.jmp(fisk.label(:after_bytes))
-    pos = nil
-    fisk.lazy { |x| pos = x; string.bytes.each { |b| jit_buffer.putc b } }
-    fisk.put_label(:after_bytes)
-    fisk.mov fisk.rdi, fisk.uimm(1)
-    fisk.lazy { |x|
-      fisk.mov fisk.rsi, fisk.uimm(jit_buffer.memory + pos)
-    }
-    fisk.mov fisk.rdx, fisk.uimm(string.bytesize)
-    fisk.mov fisk.rax, fisk.uimm(0x02000004)
-    fisk.syscall
-  end
-
-  # This will keep a list of ISeqs that are interested in
-  # `rb_clear_constant_cache` getting called
-  CONST_WATCHERS = Fiddle.malloc(4096)
-
   STATS = Stats.malloc(Fiddle::RUBY_FREE)
 
-  # Any time `ruby_vm_global_constant_state` changes, we need to invalidate
-  # any JIT code that cares about that value.  This method monkey patches
-  # `rb_clear_constant_cache` because it is the only thing that mutates the
-  # `ruby_vm_global_constant_state` global.
-  def self.install_const_state_change_handler
-    # This function will invalidate JIT code on any iseq that needs to be
-    # invalidated when ruby_vm_global_constant_state changes.
-    fisk = Fisk.new { |__|
-      __.push(__.rbp)
-        .mov(__.rbp, __.rsp)
+  def self.make_exit_function
+    jb = JITBuffer.new 4096
+    ir = IR.new
 
-      # Increment the global constant state
-      __.mov(__.rax, __.uimm(Fiddle::Handle::DEFAULT["ruby_vm_global_constant_state"]))
-        .inc(__.m64(__.rax))
+    ec        = ir.param(0)
+    cfp       = ir.param(1)
+    sp_depth  = ir.param(2)
+    jit_pc    = ir.param(3)
 
-      # This patches jump instructions inside "getinlinecache" to continue
-      # which will cause it to jump back to the interpreter.  Later runs of
-      # the instruction will recompile with the updated constant information
-      __.with_register("ary ptr") do |ary_ptr|
-        __.with_register("int i") do |i|
-          __.with_register("int x = *ptr") do |x|
-            __.with_register("jump") do |jump|
-              __.mov(ary_ptr, __.uimm(CONST_WATCHERS.to_i))
-                .xor(i, i)
-                .xor(__.rax, __.rax)
-                .mov(x, __.m64(ary_ptr))
-                .put_label(:loop)
-                .add(ary_ptr, __.uimm(Fiddle::SIZEOF_VOIDP))
-                .cmp(i, x)
-                .jge(__.label(:done))
-                .mov(__.rax, __.m64(ary_ptr))
-                .test(__.rax, __.rax)
-                .jz(__.label(:body_is_null))
+    # Increment the exit locations
+    stats_location = ir.write(ir.var, STATS.to_i)
+    stat = ir.load(stats_location, Stats.offsetof("exits"))
+    inc = ir.add(stat, 0x1)
+    ir.store(inc, stats_location, Stats.offsetof("exits"))
 
-              __.with_register("mask") do |mask|
-                __.mov(mask, __.imm64(0xFFFFFF00000000FF))
-                  .and(mask, __.m64(__.rax))
-                  .mov(__.m64(__.rax), mask)
-              end
+    iseq_offset = C.rb_iseq_t.offsetof(:body) +
+      C.rb_iseq_constant_body.offsetof(:iseq_encoded)
 
-              __.put_label(:body_is_null)
-                .inc(i)
-                .jmp(__.label(:loop))
-                .put_label(:done)
-            end
-          end
-        end
-      end
+    # flush the PC to the frame
+    iseq = ir.load(cfp, C.rb_control_frame_t.offsetof(:iseq))
+    body = ir.load(iseq, C.rb_iseq_t.offsetof(:body))
+    pc   = ir.load(body, C.rb_iseq_constant_body.offsetof(:iseq_encoded))
+    pc   = ir.add(pc, jit_pc)
+    ir.store(pc, cfp, C.rb_control_frame_t.offsetof(:pc))
 
-      __.pop(__.rbp)
-        .ret
-    }
+    # flush the SP to the frame
+    sp = ir.load(cfp, C.rb_control_frame_t.offsetof(:sp))
+    sp = ir.add(sp, sp_depth)
+    ir.store(sp, cfp, C.rb_control_frame_t.offsetof(:sp))
 
-    buffer_pos = CACHE_BUSTERS.pos
-    fisk.assign_registers(Fisk::Registers::CALLER_SAVED, local: true)
-    fisk.write_to(CACHE_BUSTERS)
+    ir.return 1
 
-    monkey_patch = StringIO.new
+    jb.writeable!
+    ir.to_arm64.write_to jb
+    jb.executable!
+    jb
+  end
 
-    Fisk.new { |__|
-      __.mov(__.rax, __.uimm(CACHE_BUSTERS.memory.to_i + buffer_pos))
-        .jmp(__.rax)
-    }.write_to(monkey_patch)
+  def self.disasm buf
+    # Now disassemble the instructions with Hatstone
+    hs = Hatstone.new(Hatstone::ARCH_ARM64, Hatstone::MODE_ARM)
 
-    monkey_patch = monkey_patch.string
-
-    addr = Ruby::SYMBOLS["rb_clear_constant_cache"]
-
-    func_memory = Fiddle::Pointer.new addr
-    page_size = Etc.sysconf(Etc::SC_PAGE_SIZE)
-    page_head = addr & ~(0xFFF)
-    if CFuncs.mprotect(page_head, page_size, 0x1 | 0x4 | 0x2) != 0
-      raise NotImplementedError, "couldn't make function writeable"
+    hs.disasm(buf[0, buf.pos], 0x0).each do |insn|
+      puts "%#05x %s %s" % [insn.address, insn.mnemonic, insn.op_str]
     end
-    func_memory[0, monkey_patch.bytesize] = monkey_patch
   end
 
-  def self.interpreter_call
-    buf = StringIO.new(''.b)
+  EXIT = make_exit_function
 
-    Fisk.new { |__|
-      # We're using caller-saved registers for REG_*, so we need to push
-      # them to save a copy before returning.
-      __.push(REG_EC) # Pushing twice for alignment
-        .push(REG_EC)
-        .push(REG_CFP)
-        .push(REG_TOP)
-        .push(REG_BP)
-
-      # This pushes the address of the label "return" on the stack.  The idea
-      # is that a call to `ret` will jump to the "return" label and pop the
-      # caller saved registers.
-      __.lea(__.rax, __.rip(__.label(:return)))
-        .push(__.rax)
-        .mov(REG_TOP, __.rsp)
-        .jmp(__.label(:skip_return))
-
-      # We want to jump here on `ret`
-      __.put_label(:return)
-        .pop(REG_BP)
-        .pop(REG_TOP)
-        .pop(REG_CFP)
-        .pop(REG_EC)
-        .pop(REG_EC)
-        .ret
-
-      __.put_label(:skip_return)
-      __.mov(REG_EC, __.rdi)
-        .mov(REG_CFP, __.rsi)
-    }.write_to(buf)
-
-    buf.string
-  end
-
-  INTERPRETER_CALL = interpreter_call.freeze
-
-  install_const_state_change_handler
-
-  attr_reader :stats
-  attr_reader :interpreter_call
-
-  # @param allocated_memory [Integer] Memory, in bytes, allocated in total to the
-  #   JIT.
-  #
-  def initialize(allocated_memory: DEFAULT_ALLOCATED_MEMORY)
+  def initialize
     @stats = STATS
     @stats.compiled_methods = 0
     @stats.executed_methods = 0
     @stats.recompiles       = 0
     @stats.exits            = 0
-
-    @exit_stats   = ExitStats.malloc(Fiddle::RUBY_FREE)
-
-    memory        = Fisk::Helpers.mmap_jit(allocated_memory)
-    CFuncs.memset(memory, 0xCC, allocated_memory)
-    @jit_buffer   = Fisk::Helpers::JITBuffer.new memory, allocated_memory / 3
-
-    @interpreter_call = INTERPRETER_CALL
-
-    memory += allocated_memory / 3
-    @deferred_calls = DeferredCompilations.new(Fisk::Helpers::JITBuffer.new(memory, allocated_memory / 3))
-
-    memory += allocated_memory / 3
-    exit_buffer   = Fisk::Helpers::JITBuffer.new(memory, allocated_memory / 3)
-    @exit_code    = ExitCode.new exit_buffer, @stats.to_i, @exit_stats.to_i
-    @compiled_iseq_addrs = []
+    @compiled_iseq_addrs    = []
   end
 
-  def print_disasm binary
-    cs = Crabstone::Disassembler.new(Crabstone::ARCH_X86, Crabstone::MODE_64)
-    cs.disasm(binary, 0x0000).each {|i|
-      printf("0x%x:\t%s\t\t%s\n",i.address, i.mnemonic, i.op_str)
-    }
+  # Entry point for manually compiling a method
+  def compile method
+    rb_iseq = RubyVM::InstructionSequence.of(method)
+    return unless rb_iseq # it's a C func
+
+    iseq = method_to_iseq_t(rb_iseq)
+    jit_addr = compile_iseq iseq
+    iseq.body.jit_func = jit_addr
   end
 
-  def disasm
-    print_disasm @jit_buffer.memory[0, @jit_buffer.pos]
+  # Entry point for compiling an iseq, use this with MJIT
+  def compile_iseq iseq
+    @compiled_iseq_addrs << iseq.to_i
+    Compiler.new.compile(iseq)
   end
 
-  def deferred_call temp_stack, &block
-    @deferred_calls.deferred_call(temp_stack, &block)
+  def uncompile_iseqs
+    @compiled_iseq_addrs.each do |addr|
+      C.rb_iseq_t.new(addr).body.jit_func = 0
+    end
   end
 
-  def exit_stats
-    @exit_stats.to_h
+  def method_to_iseq_t method
+    addr = Fiddle.dlwrap(method)
+    offset = Hacks::STRUCTS["RTypedData"]["data"][0]
+    addr = Fiddle.read_ptr addr, offset
+    C.rb_iseq_t.new addr
   end
 
   def compiled_methods
@@ -491,105 +120,189 @@ class TenderJIT
     @stats.executed_methods
   end
 
-  def recompiles
-    @stats.recompiles
-  end
-
   def exits
     @stats.exits
   end
 
-  def compile method
-    rb_iseq = RubyVM::InstructionSequence.of(method)
-    return unless rb_iseq # it's a C func
-
-    addr = method_to_iseq_t(rb_iseq)
-    compile_iseq_t addr
-  end
-
-  def uncompile method
-    self.class.uncompile method
-  end
-
   def enable!
-    MJIT_OPTIONS.on = 1
-    MJIT_CALL_P[0] = 1
+    RubyVM::MJIT.resume
   end
 
   def disable!
-    MJIT_OPTIONS.on = 0
-    MJIT_CALL_P[0] = 0
+    RubyVM::MJIT.pause(wait: false)
   end
 
-  def code_blocks iseq
-    rb_iseq = RubyVM::InstructionSequence.of(iseq)
-    addr = method_to_iseq_t(rb_iseq)
-    ptr = RbISeqT.new(addr).body.variable.coverage
-    if ptr == 0
-      nil
-    else
-      # COVERAGE_INDEX_LINES is 0
-      # COVERAGE_INDEX_BRANCHES is 1
-      # 2 is unused so we'll use it. :D
-      Fiddle.dlunwrap(ptr)[2]&.blocks
-    end
-  end
+  class Compiler
+    class Context
+      attr_reader :buff, :ec, :cfp, :sp, :ep
 
-  def uncompile_iseqs
-    while addr = @compiled_iseq_addrs.shift
-      self.class.uncompile_iseq_t addr
-    end
-  end
+      def initialize buff, ec, cfp, sp, ep
+        @ec = ec
+        @cfp = cfp
+        @sp = sp
+        @ep = ep
+        @stack = []
+      end
 
-  # rdi, rsi, rdx, rcx, r8 - r15
-  #
-  # Caller saved regs:
-  #    rdi, rsi, rdx, rcx, r8 - r10
+      def stack_depth
+        @stack.length
+      end
 
-  def compile_iseq_t addr
-    body = RbISeqT.new(addr).body
-    ptr = body.variable.coverage.to_i
+      def stack_depth_b
+        stack_depth * Fiddle::SIZEOF_VOIDP
+      end
 
-    ary = nil
-    if ptr == 0 || ptr == Qnil
-      ary = []
-      ary_addr = Fiddle.dlwrap(ary)
-      body.variable.coverage = ary_addr
-      CFuncs.rb_gc_writebarrier(addr, ary_addr)
-    else
-      ary = Fiddle.dlunwrap(ptr)
+      def push type
+        @stack.push type
+      end
+
+      def pop
+        @stack.pop
+      end
     end
 
-    # COVERAGE_INDEX_LINES is 0
-    # COVERAGE_INDEX_BRANCHES is 1
-    # 2 is unused so we'll use it. :D
+    def compile iseq
+      # method name
+      label = iseq.body.location.label
 
-    # Cache the iseq compiler for this iseq inside the code coverage array.
-    if ary[2]
-      iseq_compiler = ary[2]
-    else
-      iseq_compiler = ISEQCompiler.new(self, addr)
-      ary[2] = iseq_compiler
+      STATS.compiled_methods += 1
+
+      ir = IR.new
+
+      ec  = ir.param(0)
+      cfp = ir.param(1)
+      sp  = ir.param(2)
+      ep  = ir.param(3)
+
+      buff = JITBuffer.new 4096
+      ctx = Context.new(buff, ec, cfp, sp, ep)
+
+      # Load the ep and the sp because we'll probably use them
+      ir.write(sp, ir.load(cfp, ir.uimm(C.rb_control_frame_t.offsetof(:sp))))
+      ir.write(ep, ir.load(cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep))))
+
+      # Increment executed method count
+      stats_location = ir.write(ir.var, ir.uimm(STATS.to_i))
+      stat = ir.load(stats_location, ir.uimm(Stats.offsetof("executed_methods")))
+      inc = ir.add(stat, ir.uimm(0x1))
+      ir.store(inc, stats_location, ir.uimm(Stats.offsetof("executed_methods")))
+
+      each_insn(iseq) do |insn, operands|
+        send insn.name, ctx, ir, *operands
+      end
+
+      buff.writeable!
+      ir.to_arm64.write_to buff
+      buff.executable!
+
+      buff.to_i
     end
 
-    @compiled_iseq_addrs << addr
+    private
 
-    iseq_compiler.compile
-    iseq_compiler
-  end
+    def each_insn iseq
+      @jit_pc = 0
 
-  private
+      # Size of the ISEQ buffer
+      iseq_size = iseq.body.iseq_size
 
-  # Convert a method to an rb_iseq_t *address* (so, just the memory location
-  # where the iseq exists)
-  def method_to_iseq_t method
-    addr = Fiddle.dlwrap(method)
-    RTypedData.data(addr)
-  end
+      # ISEQ buffer
+      iseq_buf = iseq.body.iseq_encoded
 
-  def self.member_size struct, member
-    struct.member_size member
+      while @jit_pc < iseq_size
+        insn = INSNS.fetch(C.rb_vm_insn_decode(iseq.body.iseq_encoded[@jit_pc]))
+        operands = insn.opes.map.with_index { |operand,  i|
+          case operand[:type]
+          when "lindex_t" then iseq_buf[@jit_pc + i + 1]
+          when "rb_num_t" then iseq_buf[@jit_pc + i + 1]
+          when "CALL_DATA" then C.rb_call_data.new(iseq_buf[@jit_pc + i + 1])
+          when "VALUE" then Fiddle.dlunwrap(iseq_buf[@jit_pc + i + 1])
+          else
+            raise operand[:type]
+          end
+        }
+        yield insn, operands
+        @jit_pc += insn.len
+      end
+    end
+
+    def putobject ctx, ir, obj
+      out = ir.write(ir.var, Fiddle.dlwrap(obj))
+      ir.store(out, ctx.sp, ir.uimm(ctx.stack_depth_b))
+      ctx.push Hacks.basic_type(obj)
+    end
+
+    def putobject_INT2FIX_1_ ctx, ir
+      putobject ctx, ir, 1
+    end
+
+    def putobject_INT2FIX_0_ ctx, ir
+      putobject ctx, ir, 0
+    end
+
+    def opt_plus ctx, ir, cd
+      sdb = ctx.stack_depth_b
+      # check right is an int
+      r_type = ctx.pop
+      right = ir.load(ctx.sp, ir.uimm(ctx.stack_depth_b))
+
+      # Only test the type at runtime if we don't know for sure
+      if r_type != :T_FIXNUM
+        mask = ir.and right, ir.uimm(0x1) # FIXNUM flag
+        ir.je mask, ir.uimm(0x1), ir.label(:continue)
+        ir.set_param ctx.ec
+        ir.set_param ctx.cfp
+        ir.set_param sdb
+        ir.set_param @jit_pc * Fiddle::SIZEOF_VOIDP
+        ir.call ir.write(ir.var, EXIT.to_i), 4
+        ir.return Fiddle::Qundef
+        ir.put_label :continue
+      end
+
+      # subtract the mask from one side
+      right = ir.sub right, ir.uimm(0x1)
+
+      # Add them
+      l_type = ctx.pop
+      left = ir.load(ctx.sp, ir.uimm(ctx.stack_depth_b))
+      result = ir.add(left, right)
+
+      if l_type != :T_FIXNUM
+        # If the result doesn't have the flag, then the LHS wasn't a fixnum
+        mask = ir.and result, ir.uimm(0x1) # FIXNUM flag
+        ir.je mask, ir.uimm(0x1), ir.label(:done)
+        ir.brk # FIXME we need to exit or call a method here
+        ir.put_label :done
+      end
+
+      ir.store(result, ctx.sp, ir.uimm(ctx.stack_depth_b))
+      ctx.push :unknown
+    end
+
+    def getlocal_WC_0 ctx, ir, index
+      local = ir.load(ctx.ep, ir.imm(-index * Fiddle::SIZEOF_VOIDP))
+      ir.store(local, ctx.sp, ir.uimm(ctx.stack_depth_b))
+      ctx.push :unknown
+    end
+
+    def leave ctx, ir
+      prev_frame = ir.add ctx.cfp, ir.uimm(C.rb_control_frame_t.sizeof)
+      ir.store(prev_frame, ctx.ec, ir.uimm(C.rb_execution_context_t.offsetof(:cfp)))
+
+      ctx.pop
+      local = ir.load(ctx.sp, ir.imm(ctx.stack_depth_b))
+      ir.return local
+    end
+
+    def disasm buf
+      TenderJIT.disasm buf
+    end
   end
 end
 
-require "tenderjit/iseq_compiler"
+class << RubyVM::MJIT
+  def compile iseq
+    compiler = TenderJIT::Compiler.new
+    compiler.compile iseq
+  end
+end

@@ -6,7 +6,11 @@ class TenderJIT
       def assemble ra, ir
         @asm = AArch64::Assembler.new
 
+        @params = []
+
+        idx = nil
         ir.each_instruction do |insn, i|
+          idx = i
           # vr == "virtual register"
           # pr == "physical register"
 
@@ -35,19 +39,52 @@ class TenderJIT
         end
 
         @asm
+      rescue RegisterAllocator::Spill
+        ir.dump_usage
+        raise
       end
 
       private
 
       attr_reader :asm
 
+      def set_param _, arg1, _
+        @params << arg1
+      end
+
       def jle dest, arg1, arg2
         asm.cmp arg1, arg2
         asm.b dest, cond: :le
       end
 
+      def jne dest, arg1, arg2
+        asm.cmp arg1, arg2
+        asm.b dest, cond: :ne
+      end
+
+      def tbnz dest, arg1, arg2
+        asm.tbz arg1, arg2, dest
+      end
+
+      def je dest, arg1, arg2
+        asm.cmp arg1, arg2
+        asm.b dest, cond: :eq
+      end
+
       def neg out, arg1, _
         asm.neg out, arg1
+      end
+
+      def call _, location, arity
+        @params.pop(arity).each_with_index do |param, i|
+          param_reg = PARAM_REGS[i]
+          if param != param_reg
+            asm.mov param_reg, param
+          end
+        end
+        asm.stur AArch64::Registers::X30, [AArch64::Registers::SP, -16]
+        asm.blr location
+        asm.ldur AArch64::Registers::X30, [AArch64::Registers::SP, -16]
       end
 
       def and out, arg1, arg2
@@ -58,6 +95,10 @@ class TenderJIT
         asm.add out, arg1, arg2
       end
 
+      def sub out, arg1, arg2
+        asm.sub out, arg1, arg2
+      end
+
       def return out, arg1, arg2
         if out != AArch64::Registers::X0 || arg1.integer?
           asm.mov AArch64::Registers::X0, arg1
@@ -66,7 +107,7 @@ class TenderJIT
         asm.ret
       end
 
-      def store val, dst, offset
+      def store offset, val, dst
         asm.stur val, [dst, offset]
       end
 
@@ -74,8 +115,19 @@ class TenderJIT
         asm.ldur out, [src, offset]
       end
 
-      def write out, m, val
-        asm.mov out, val
+      def write out, _, val
+        if val.integer?
+          asm.movz out, val & 0xFFFF
+          val >>= 16
+          shift = 16
+          while val > 0
+            asm.movk out, val & 0xFFFF, lsl: shift
+            val >>= 16
+            shift <<= 1
+          end
+        else
+          asm.mov out, val
+        end
       end
 
       def brk _, _, _

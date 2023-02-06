@@ -1,32 +1,10 @@
 ENV["MT_NO_PLUGINS"] = "1"
 
 require "minitest/autorun"
-require "make_warnings_errors"
 require "tenderjit"
-require "rbconfig"
-require "registers_saving_buffer"
-require "fisk"
-require "fisk/helpers"
 
 class TenderJIT
   class Test < Minitest::Test
-    include Fiddle
-
-    module Hacks
-      fisk = Fisk.new
-
-      jitbuf = Fisk::Helpers.jitbuffer 4096
-
-      fisk.asm(jitbuf) do
-        push rbp
-        mov rbp, rsp
-        int lit(3)
-        pop rbp
-        ret
-      end
-
-      define_singleton_method :halt!, &jitbuf.to_function([], Fiddle::TYPE_VOID)
-    end
   end
 
   class JITTest < Test

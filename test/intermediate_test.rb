@@ -84,7 +84,7 @@ class TenderJIT
       ir = IR.new
       a = ir.param(0)
       b = ir.write(ir.var, ir.uimm(val))
-      c = ir.store(a, ir.uimm(0), b)
+      c = ir.store(b, a, ir.uimm(0))
       ir.return a
 
       buf = assemble ir

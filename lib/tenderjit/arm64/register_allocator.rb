@@ -1,4 +1,5 @@
 require "aarch64"
+require "set"
 
 class TenderJIT
   module ARM64
@@ -12,9 +13,16 @@ class TenderJIT
     # allocation across basic blocks.  Also it won't spill registers, it
     # just crashes
     class RegisterAllocator
+      class Error < StandardError; end
+      class Spill < Error; end
+      class DoubleFree < Error; end
+
+      attr_reader :scratch_regs
+
       def initialize
         @parameter_registers = ARM64::PARAM_REGS
-        @freelist            = ARM64::FREE_REGS.dup
+        @scratch_regs        = Set.new(ARM64::FREE_REGS)
+        @freelist            = @scratch_regs.to_a
       end
 
       def ensure virt
@@ -34,13 +42,15 @@ class TenderJIT
         if phys
           r.physical_register = phys
         else
-          raise "Spill!"
+          raise Spill, "Spill!"
         end
       end
 
       def free phys
-        raise "Don't free registers twice!" if @freelist.include?(phys)
-        @freelist.push phys
+        raise DoubleFree, "Don't free registers twice!" if @freelist.include?(phys)
+        if @scratch_regs.include? phys
+          @freelist.push phys
+        end
       end
     end
   end

@@ -8,12 +8,31 @@ class TenderJIT
       1 + 2
     end
 
+    def add_lits_zero
+      1 + 0
+    end
+
     def add_params a, b
       a + b
     end
 
     def add_lit_and_param a
       a + 2
+    end
+
+    def test_add_lits_zero
+      jit.compile method(:add_lits_zero)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      v = add_lits_zero
+      jit.disable!
+      assert_equal 1, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 0, jit.exits
     end
 
     def test_add_lits
