@@ -10,6 +10,88 @@ class TenderJIT
   class IRTest < Test
     include Fiddle::Types
 
+    def test_sub
+      ir = IR.new
+      a = ir.param(0)
+      b = ir.param(1)
+
+      t = ir.sub(a, b) # t = a - b
+      ir.return t      # return t
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 3, func.call(4, 1)
+    end
+
+    def test_sub_lit
+      ir = IR.new
+      a = ir.param(0)
+      t = ir.sub(a, 1) # t = a - b
+      ir.return t      # return t
+      buf = assemble ir
+      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 3, func.call(4)
+    end
+
+    def test_sub_lit2
+      ir = IR.new
+      a = ir.param(0)
+      t = ir.sub(4, a) # t = a - b
+      ir.return t      # return t
+      buf = assemble ir
+      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 3, func.call(1)
+    end
+
+    def test_sub_lit3
+      ir = IR.new
+      ir.return ir.sub(4, 1) # t = a - b
+      buf = assemble ir
+      func = buf.to_function([], Fiddle::TYPE_INT)
+      assert_equal 3, func.call()
+    end
+
+    def test_bitwise_lit_r
+      ir = IR.new
+      a = ir.param(0)
+      t = ir.and(a, 1) # t = a & b
+      ir.return t      # return t
+      buf = assemble ir
+      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 1, func.call(3)
+    end
+
+    def test_bitwise_lit_l
+      ir = IR.new
+      a = ir.param(0)
+      t = ir.and(1, a) # t = a & b
+      ir.return t      # return t
+      buf = assemble ir
+      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 1, func.call(3)
+    end
+
+    def test_bitwise
+      ir = IR.new
+      a = ir.param(0)
+      b = ir.param(1)
+      t = ir.and(a, b) # t = a & b
+      ir.return t      # return t
+      buf = assemble ir
+      func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 1, func.call(3, 1)
+    end
+
+    def test_bitwise_lit_lit
+      ir = IR.new
+      t = ir.and(3, 1) # t = a & b
+      ir.return t      # return t
+      buf = assemble ir
+      func = buf.to_function([], Fiddle::TYPE_INT)
+      assert_equal 1, func.call()
+    end
+
     def test_ir
       ir = IR.new
       a = ir.param(0)
@@ -105,6 +187,36 @@ class TenderJIT
       assert_equal val, Fiddle::Pointer.new(mem)[0, Fiddle::SIZEOF_INT].unpack1("L")
     ensure
       Fiddle.free mem
+    end
+
+    def test_je
+      ir = IR.new
+      a = ir.param(0)
+      ir.je a, ir.uimm(0x1), ir.label(:continue)
+      ir.return 0
+      ir.put_label :continue
+      ir.return 1
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 1, func.call(1)
+      assert_equal 0, func.call(2)
+    end
+
+    def test_je_reg
+      ir = IR.new
+      a = ir.param(0)
+      ir.je a, ir.param(1), ir.label(:continue)
+      ir.return 0
+      ir.put_label :continue
+      ir.return 1
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 1, func.call(1, 1)
+      assert_equal 0, func.call(1, 2)
     end
 
     def test_jump_forward

@@ -199,7 +199,7 @@ class TenderJIT
       end
 
       buff.writeable!
-      ir.to_arm64.write_to buff
+      ir.write_to buff
       buff.executable!
 
       buff.to_i

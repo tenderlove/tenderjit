@@ -60,7 +60,21 @@ class TenderJIT
       end
 
       def and out, arg1, arg2
-        asm.and out, arg1, arg2
+        if arg1.integer? && arg2.integer?
+          asm.movk(out, arg1 & arg2)
+        else
+          if arg1.integer?
+            asm.movk(out, arg1)
+            arg1 = out
+          end
+
+          if arg2.integer?
+            asm.movk(out, arg2)
+            arg2 = out
+          end
+
+          asm.and out, arg1, arg2
+        end
       end
 
       def add out, arg1, arg2
@@ -80,6 +94,21 @@ class TenderJIT
       end
 
       def sub out, arg1, arg2
+        if arg1.integer? && arg2.integer?
+          asm.movz out, arg1 - arg2
+          return
+        else
+          if arg1.integer?
+            asm.mov out, arg1
+            arg1 = out
+          end
+
+          if arg2.integer?
+            asm.mov out, arg2
+            arg2 = out
+          end
+        end
+
         asm.sub out, arg1, arg2
       end
 

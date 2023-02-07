@@ -20,6 +20,21 @@ class TenderJIT
 
       private
 
+      def set_param _, arg1, _
+        @params << arg1
+      end
+
+      def call _, location, arity
+        @params.pop(arity).each_with_index do |param, i|
+          param_reg = PARAM_REGS[i]
+          if param != param_reg
+            param = @asm.uimm(param) if param.integer?
+            asm.mov param_reg, param
+          end
+        end
+        asm.call location
+      end
+
       def neg out, arg1, _
         if out != arg1
           @asm.mov out, arg1
@@ -29,6 +44,9 @@ class TenderJIT
       end
 
       def and out, arg1, arg2
+        arg1 = @asm.uimm(arg1) if arg1.integer?
+        arg2 = @asm.uimm(arg2) if arg2.integer?
+
         case out
         when arg1
           @asm.and out, arg2
@@ -38,6 +56,17 @@ class TenderJIT
           @asm.mov out, arg1
           @asm.and out, arg2
         end
+      end
+
+      def sub out, arg1, arg2
+        arg1 = @asm.uimm(arg1) if arg1.integer?
+        arg2 = @asm.uimm(arg2) if arg2.integer?
+
+        if out != arg1
+          @asm.mov out, arg1
+        end
+
+        @asm.sub out, arg2
       end
 
       def add out, arg1, arg2
@@ -79,6 +108,14 @@ class TenderJIT
         end
       end
 
+      def je dest, arg1, arg2
+        arg2 = @asm.uimm(arg2) if arg2.integer?
+        arg1 = @asm.uimm(arg1) if arg1.integer?
+
+        asm.cmp arg1, arg2
+        asm.je asm.label(dest.name)
+      end
+
       def put_label _, label, _
         @asm.put_label label.name
       end
@@ -98,6 +135,10 @@ class TenderJIT
         end
 
         asm.ret
+      end
+
+      def brk _, _, _
+        asm.int asm.lit(3)
       end
     end
   end
