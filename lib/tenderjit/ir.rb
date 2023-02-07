@@ -157,6 +157,7 @@ class TenderJIT
     end
 
     def sub arg1, arg2
+      raise ArgumentError, "First parameter must be a register" if arg1.integer?
       push __method__, arg1, arg2
     end
 

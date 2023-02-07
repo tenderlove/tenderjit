@@ -59,7 +59,6 @@ class TenderJIT
       end
 
       def sub out, arg1, arg2
-        arg1 = @asm.uimm(arg1) if arg1.integer?
         arg2 = @asm.uimm(arg2) if arg2.integer?
 
         if out != arg1

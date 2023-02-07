@@ -34,24 +34,6 @@ class TenderJIT
       assert_equal 3, func.call(4)
     end
 
-    def test_sub_lit2
-      ir = IR.new
-      a = ir.param(0)
-      t = ir.sub(4, a) # t = a - b
-      ir.return t      # return t
-      buf = assemble ir
-      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
-      assert_equal 3, func.call(1)
-    end
-
-    def test_sub_lit3
-      ir = IR.new
-      ir.return ir.sub(4, 1) # t = a - b
-      buf = assemble ir
-      func = buf.to_function([], Fiddle::TYPE_INT)
-      assert_equal 3, func.call()
-    end
-
     def test_bitwise_lit_r
       ir = IR.new
       a = ir.param(0)

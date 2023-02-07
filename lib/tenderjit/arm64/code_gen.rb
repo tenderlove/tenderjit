@@ -79,15 +79,7 @@ class TenderJIT
 
       def add out, arg1, arg2
         if arg1.integer?
-          asm.mov out, arg1
-          asm.add out, out, arg2
-          return
-        end
-
-        if arg2.integer?
-          asm.mov out, arg2
-          asm.add out, out, arg1
-          return
+          arg1, arg2 = arg2, arg1
         end
 
         asm.add out, arg1, arg2
@@ -99,13 +91,7 @@ class TenderJIT
           return
         else
           if arg1.integer?
-            asm.mov out, arg1
-            arg1 = out
-          end
-
-          if arg2.integer?
-            asm.mov out, arg2
-            arg2 = out
+            raise
           end
         end
 
