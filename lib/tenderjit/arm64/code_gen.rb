@@ -3,6 +3,8 @@ require "aarch64"
 class TenderJIT
   module ARM64
     class CodeGen
+      include AArch64::Registers
+
       attr_reader :asm
 
       def initialize
@@ -48,15 +50,37 @@ class TenderJIT
       end
 
       def call _, location, arity
-        @params.pop(arity).each_with_index do |param, i|
+        save_regs = [ X30 ]
+        params = @params.pop arity
+
+        mov_regs = []
+
+        params.each_with_index do |param, i|
           param_reg = PARAM_REGS[i]
-          if param != param_reg
-            asm.mov param_reg, param
+          if param == param_reg
+            # great, don't need to save
+          else
+            save_regs << param_reg
+            mov_regs << [param_reg, param]
           end
         end
-        asm.stur AArch64::Registers::X30, [AArch64::Registers::SP, -16]
+
+        # Save these regs
+        save_regs.each_slice(2) do |a, b|
+          b ||= XZR
+          asm.stp a, b, [SP, -16], :!
+        end
+
+        # Write the params
+        mov_regs.each do |a|
+          asm.mov a.first, a.last
+        end
+
         asm.blr location
-        asm.ldur AArch64::Registers::X30, [AArch64::Registers::SP, -16]
+        save_regs.each_slice(2).to_a.reverse.each do |a, b|
+          b ||= XZR
+          asm.ldp a, b, [SP], 16
+        end
       end
 
       def and out, arg1, arg2
@@ -82,7 +106,7 @@ class TenderJIT
           arg1, arg2 = arg2, arg1
         end
 
-        asm.add out, arg1, arg2
+        asm.adds out, arg1, arg2
       end
 
       def sub out, arg1, arg2
@@ -118,11 +142,11 @@ class TenderJIT
         if val.integer?
           asm.movz out, val & 0xFFFF
           val >>= 16
-          shift = 16
+          shift = 1
           while val > 0
-            asm.movk out, val & 0xFFFF, lsl: shift
+            asm.movk out, val & 0xFFFF, lsl: (shift * 16)
             val >>= 16
-            shift <<= 1
+            shift += 1
           end
         else
           asm.mov out, val
@@ -139,6 +163,10 @@ class TenderJIT
 
       def jmp out, arg1, _
         asm.b arg1
+      end
+
+      def jo _, dest, _
+        asm.b dest, cond: :vs
       end
 
       def put_label _, label, _

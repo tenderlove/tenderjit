@@ -206,6 +206,11 @@ class TenderJIT
       nil
     end
 
+    def jo location
+      push __method__, location, NONE, NONE
+      nil
+    end
+
     def brk
       push __method__, NONE, NONE, NONE
       nil

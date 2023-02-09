@@ -94,5 +94,39 @@ class TenderJIT
       assert_equal 1, jit.executed_methods
       assert_equal 1, jit.exits
     end
+
+    def test_add_strings_bails_lhs
+      jit.compile method(:add_params)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      v = begin
+            add_params("foo", 1)
+          rescue TypeError => e
+            e
+          end
+      jit.disable!
+      assert_kind_of TypeError, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 1, jit.exits
+    end
+
+    def test_overflow
+      jit.compile method(:add_params)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+
+      jit.enable!
+      v = add_params((1 << 62) - 1, 1)
+      jit.disable!
+      assert_equal((1 << 62), v)
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 1, jit.exits
+    end
   end
 end

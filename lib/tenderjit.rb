@@ -112,6 +112,14 @@ class TenderJIT
     end
   end
 
+  def uncompile method
+    rb_iseq = RubyVM::InstructionSequence.of(method)
+    return unless rb_iseq # it's a C func
+
+    iseq = method_to_iseq_t(rb_iseq)
+    iseq.body.jit_func = 0
+  end
+
   def method_to_iseq_t method
     addr = Fiddle.dlwrap(method)
     offset = Hacks::STRUCTS["RTypedData"]["data"][0]
@@ -253,16 +261,24 @@ class TenderJIT
       r_type = ctx.pop
       right = ir.load(ctx.sp, ir.uimm(ctx.stack_depth_b))
 
+      exit_label = ir.label(:exit)
+
+      # Generate an exit
+      ir.jmp ir.label(:pass)
+      ir.put_label :exit
+      ir.set_param ctx.ec
+      ir.set_param ctx.cfp
+      ir.set_param sdb
+      ir.set_param @jit_pc * Fiddle::SIZEOF_VOIDP
+      ir.call ir.write(ir.var, EXIT.to_i), 4
+      ir.return Fiddle::Qundef
+      ir.put_label :pass
+
       # Only test the type at runtime if we don't know for sure
       if r_type != :T_FIXNUM
         mask = ir.and right, ir.uimm(0x1) # FIXNUM flag
         ir.je mask, ir.uimm(0x1), ir.label(:continue)
-        ir.set_param ctx.ec
-        ir.set_param ctx.cfp
-        ir.set_param sdb
-        ir.set_param @jit_pc * Fiddle::SIZEOF_VOIDP
-        ir.call ir.write(ir.var, EXIT.to_i), 4
-        ir.return Fiddle::Qundef
+        ir.jmp exit_label
         ir.put_label :continue
       end
 
@@ -273,17 +289,18 @@ class TenderJIT
       l_type = ctx.pop
       left = ir.load(ctx.sp, ir.uimm(ctx.stack_depth_b))
       result = ir.add(left, right)
+      ir.jo exit_label
 
       if l_type != :T_FIXNUM
         # If the result doesn't have the flag, then the LHS wasn't a fixnum
         mask = ir.and result, ir.uimm(0x1) # FIXNUM flag
         ir.je mask, ir.uimm(0x1), ir.label(:done)
-        ir.brk # FIXME we need to exit or call a method here
+        ir.jmp exit_label
         ir.put_label :done
       end
 
       ir.store(result, ctx.sp, ir.uimm(ctx.stack_depth_b))
-      ctx.push :unknown
+      ctx.push :T_FIXNUM
     end
 
     def getlocal_WC_0 ctx, ir, index
@@ -293,11 +310,12 @@ class TenderJIT
     end
 
     def leave ctx, ir
+      ctx.pop
+      local = ir.load(ctx.sp, ir.imm(ctx.stack_depth_b))
+
       prev_frame = ir.add ctx.cfp, ir.uimm(C.rb_control_frame_t.sizeof)
       ir.store(prev_frame, ctx.ec, ir.uimm(C.rb_execution_context_t.offsetof(:cfp)))
 
-      ctx.pop
-      local = ir.load(ctx.sp, ir.imm(ctx.stack_depth_b))
       ir.return local
     end
 

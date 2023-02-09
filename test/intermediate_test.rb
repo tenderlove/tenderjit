@@ -10,6 +10,24 @@ class TenderJIT
   class IRTest < Test
     include Fiddle::Types
 
+    def test_jo
+      ir = IR.new
+      a = ir.param(0)
+      b = ir.write(ir.var, 0xFFFF_FFFF_FFFF_FFFF >> 1)
+
+      t = ir.add(a, b) # t = a + b
+      ir.jo ir.label(:overflow)
+      ir.return t      # return t
+      ir.put_label :overflow
+      ir.return 1
+
+      buf = assemble ir
+      disasm buf
+
+      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 1, func.call(1)
+    end
+
     def test_sub
       ir = IR.new
       a = ir.param(0)
