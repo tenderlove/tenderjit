@@ -236,16 +236,7 @@ class TenderJIT
 
       unless l_type.fixnum? && r_type.fixnum?
         # Generate an exit
-        pass = ir.label :pass
-        ir.jmp pass
-        ir.put_label exit_label
-        ir.set_param ctx.ec
-        ir.set_param ctx.cfp
-        ir.set_param ctx.stack_depth_b
-        ir.set_param @jit_pc * Fiddle::SIZEOF_VOIDP
-        ir.call ir.write(ir.var, EXIT.to_i), 4
-        ir.return Fiddle::Qundef
-        ir.put_label pass
+        generate_exit ctx, ctx.stack_depth_b, ir, exit_label
       end
 
       # check right is an int
@@ -287,16 +278,7 @@ class TenderJIT
       exit_label = ir.label(:exit)
 
       # Generate an exit
-      pass = ir.label(:pass)
-      ir.jmp pass
-      ir.put_label exit_label
-      ir.set_param ctx.ec
-      ir.set_param ctx.cfp
-      ir.set_param sdb
-      ir.set_param @jit_pc * Fiddle::SIZEOF_VOIDP
-      ir.call ir.write(ir.var, EXIT.to_i), 4
-      ir.return Fiddle::Qundef
-      ir.put_label pass
+      generate_exit ctx, sdb, ir, exit_label
 
       # Only test the type at runtime if we don't know for sure
       unless right_item.fixnum?
@@ -345,6 +327,19 @@ class TenderJIT
 
     def disasm buf
       TenderJIT.disasm buf
+    end
+
+    def generate_exit ctx, depth, ir, label
+      pass = ir.label :pass
+      ir.jmp pass
+      ir.put_label label
+      ir.set_param ctx.ec
+      ir.set_param ctx.cfp
+      ir.set_param depth
+      ir.set_param @jit_pc * Fiddle::SIZEOF_VOIDP
+      ir.call ir.write(ir.var, EXIT.to_i), 4
+      ir.return Fiddle::Qundef
+      ir.put_label pass
     end
   end
 end
