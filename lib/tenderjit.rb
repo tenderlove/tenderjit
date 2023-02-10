@@ -239,27 +239,13 @@ class TenderJIT
         generate_exit ctx, ctx.stack_depth_b, ir, exit_label
       end
 
-      # check right is an int
       right = ir.load(ctx.sp, r_type.depth_b)
 
-      # Only test the type at runtime if we don't know for sure
-      unless r_type.fixnum?
-        continue = ir.label :continue
-        ir.tbnz right, 0, continue # continue if bottom bit is 1
-        ir.jmp exit_label
-        ir.put_label continue
-      end
+      guard_fixnum ir, right, exit_label unless r_type.fixnum?
 
-      # check left is an int
       left = ir.load(ctx.sp, l_type.depth_b)
 
-      # Only test the type at runtime if we don't know for sure
-      unless l_type.fixnum?
-        continue = ir.label :continue
-        ir.tbnz left, 0, continue # continue if bottom bit is 1
-        ir.jmp exit_label
-        ir.put_label continue
-      end
+      guard_fixnum ir, left, exit_label unless l_type.fixnum?
 
       ir.cmp left, right
       out = ir.csel_lt ir.write(ir.var, Fiddle::Qtrue), ir.write(ir.var, Fiddle::Qfalse)
@@ -270,43 +256,34 @@ class TenderJIT
     end
 
     def opt_plus ctx, ir, cd
-      sdb = ctx.stack_depth_b
-      # check right is an int
-      right_item = ctx.pop
-      right = ir.load(ctx.sp, ir.uimm(right_item.depth_b))
+      r_type = ctx.peek(0)
+      l_type = ctx.peek(1)
 
       exit_label = ir.label(:exit)
 
       # Generate an exit
-      generate_exit ctx, sdb, ir, exit_label
+      generate_exit ctx, ctx.stack_depth_b, ir, exit_label
+
+      right = ir.load(ctx.sp, r_type.depth_b)
 
       # Only test the type at runtime if we don't know for sure
-      unless right_item.fixnum?
-        continue = ir.label :continue
-        ir.tbnz right, 0, continue # continue if bottom bit is 1
-        ir.jmp exit_label
-        ir.put_label continue
-      end
+      guard_fixnum ir, right, exit_label unless r_type.fixnum?
+
+      left = ir.load(ctx.sp, l_type.depth_b)
+
+      # Only test the type at runtime if we don't know for sure
+      guard_fixnum ir, left, exit_label unless l_type.fixnum?
 
       # subtract the mask from one side
       right = ir.sub right, ir.uimm(0x1)
 
       # Add them
-      left_item = ctx.pop
-      left = ir.load(ctx.sp, left_item.depth_b)
-      result = ir.add(left, right)
+      out = ir.add(left, right)
       ir.jo exit_label
 
-      unless left_item.fixnum?
-        # If the result doesn't have the flag, then the LHS wasn't a fixnum
-        continue = ir.label :continue
-        ir.tbnz result, 0, continue # continue if bottom bit is 1
-        ir.jmp exit_label
-        ir.put_label continue
-      end
-
-      ir.store(result, ctx.sp, ir.uimm(ctx.stack_depth_b))
-      ctx.push :T_FIXNUM, result
+      ctx.pop
+      ctx.pop
+      ir.store out, ctx.sp, ctx.push(:T_FIXNUM, out).depth_b
     end
 
     def getlocal_WC_0 ctx, ir, index
@@ -340,6 +317,13 @@ class TenderJIT
       ir.call ir.write(ir.var, EXIT.to_i), 4
       ir.return Fiddle::Qundef
       ir.put_label pass
+    end
+
+    def guard_fixnum ir, reg, exit_label
+      continue = ir.label :continue
+      ir.tbnz reg, 0, continue # continue if bottom bit is 1
+      ir.jmp exit_label
+      ir.put_label continue
     end
   end
 end
