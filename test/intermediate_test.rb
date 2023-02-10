@@ -10,15 +10,85 @@ class TenderJIT
   class IRTest < Test
     include Fiddle::Types
 
+    # Test and branch if not zero
+    def test_tbnz
+      ir = IR.new
+      a = ir.param(0)
+
+      not_zero = ir.label :not_zero
+      ir.tbnz a, 0, not_zero
+      ir.return 0
+      ir.put_label not_zero
+      ir.return 1
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 1, func.call(1)
+      assert_equal 0, func.call(2)
+    end
+
+    # Test and branch if zero
+    def test_tbz
+      ir = IR.new
+      a = ir.param(0)
+
+      is_zero = ir.label(:is_zero)
+      ir.tbz a, 0, is_zero
+      ir.return 0
+      ir.put_label is_zero
+      ir.return 1
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 0, func.call(1)
+      assert_equal 1, func.call(2)
+    end
+
+    def test_csel_lt_0
+      ir = IR.new
+      a = ir.param(0)
+      b = ir.param(1)
+
+      ir.cmp a, b
+      z = ir.write(ir.var, 0)
+      t = ir.csel_lt(a, z) # t = a < b ? a : b
+      ir.return t
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 1, func.call(1, 2)
+      assert_equal 0, func.call(2, 1)
+    end
+
+    def test_csel_lt
+      ir = IR.new
+      a = ir.param(0)
+      b = ir.param(1)
+
+      ir.cmp a, b
+      t = ir.csel_lt(a, b) # t = a < b ? a : b
+      ir.return t
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 1, func.call(1, 2)
+      assert_equal 1, func.call(2, 1)
+    end
+
     def test_jo
       ir = IR.new
       a = ir.param(0)
       b = ir.write(ir.var, 0xFFFF_FFFF_FFFF_FFFF >> 1)
 
       t = ir.add(a, b) # t = a + b
-      ir.jo ir.label(:overflow)
+      overflow = ir.label(:overflow)
+      ir.jo overflow
       ir.return t      # return t
-      ir.put_label :overflow
+      ir.put_label overflow
       ir.return 1
 
       buf = assemble ir
@@ -190,10 +260,11 @@ class TenderJIT
 
     def test_je
       ir = IR.new
+      continue = ir.label :continue
       a = ir.param(0)
-      ir.je a, ir.uimm(0x1), ir.label(:continue)
+      ir.je a, ir.uimm(0x1), continue
       ir.return 0
-      ir.put_label :continue
+      ir.put_label continue
       ir.return 1
 
       buf = assemble ir
@@ -205,10 +276,11 @@ class TenderJIT
 
     def test_je_reg
       ir = IR.new
+      continue = ir.label :continue
       a = ir.param(0)
-      ir.je a, ir.param(1), ir.label(:continue)
+      ir.je a, ir.param(1), continue
       ir.return 0
-      ir.put_label :continue
+      ir.put_label continue
       ir.return 1
 
       buf = assemble ir
@@ -222,13 +294,14 @@ class TenderJIT
       ir = IR.new
       a = ir.param(0)
 
-      ir.jmp ir.label(:foo)
+      foo = ir.label :foo
+      ir.jmp foo
 
       # Write a value to x0 but jump over it, making sure the jmp works
       ir.return ir.write(a, ir.uimm(32))
       b = ir.load(a, ir.uimm(0))
 
-      ir.put_label(:foo)
+      ir.put_label(foo)
       ir.return a
 
       buf = assemble ir
@@ -245,9 +318,10 @@ class TenderJIT
 
       b = ir.neg a
       c = ir.and a, b
-      ir.jle c, ir.uimm(4), ir.label(:foo)
+      foo = ir.label(:foo)
+      ir.jle c, ir.uimm(4), foo
       ir.return ir.uimm(0)
-      ir.put_label(:foo)
+      ir.put_label(foo)
       ir.return ir.uimm(1)
 
       buf = assemble ir

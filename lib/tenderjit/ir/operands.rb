@@ -91,6 +91,7 @@ class TenderJIT
       class Param < VirtualRegister
         def param? = true
         def to_s; "PARAM(#{name})"; end
+        def free _, _, _; end
       end
 
       class Label < Util::ClassGen.pos(:name, :offset)

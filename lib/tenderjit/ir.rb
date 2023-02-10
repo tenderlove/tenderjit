@@ -174,12 +174,24 @@ class TenderJIT
     end
 
     def write arg1, arg2
-      push __method__, NONE, arg2, arg1
+      push __method__, arg1, arg2, arg1
       arg1
     end
 
     def add arg1, arg2
       push __method__, arg1, arg2
+    end
+
+    def tbz reg, bit_no, dest
+      raise ArgumentError unless bit_no.integer?
+      push __method__, reg, bit_no, dest
+      nil
+    end
+
+    def tbnz reg, bit_no, dest
+      raise ArgumentError unless bit_no.integer?
+      push __method__, reg, bit_no, dest
+      nil
     end
 
     def sub arg1, arg2
@@ -203,8 +215,18 @@ class TenderJIT
       push __method__, arg1, arg2
     end
 
+    def cmp arg1, arg2
+      push __method__, arg1, arg2, NONE
+      nil
+    end
+
     def label name
-      @labels[name] ||= Operands::Label.new(name)
+      Operands::Label.new(name)
+    end
+
+    def csel_lt arg1, arg2
+      raise ArgumentError if arg1.integer? || arg2.integer?
+      push __method__, arg1, arg2
     end
 
     def jle arg1, arg2, dest
@@ -213,11 +235,6 @@ class TenderJIT
     end
 
     def jne arg1, arg2, dest
-      push __method__, arg1, arg2, dest
-      nil
-    end
-
-    def tbnz arg1, arg2, dest
       push __method__, arg1, arg2, dest
       nil
     end
@@ -251,7 +268,8 @@ class TenderJIT
     end
 
     def put_label name
-      push __method__, @labels.fetch(name), NONE, NONE
+      raise unless name.is_a?(Operands::Label)
+      push __method__, name, NONE, NONE
       nil
     end
 

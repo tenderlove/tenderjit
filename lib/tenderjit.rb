@@ -228,6 +228,56 @@ class TenderJIT
       putobject ctx, ir, 0
     end
 
+    def opt_lt ctx, ir, cd
+      r_type = ctx.peek(0)
+      l_type = ctx.peek(1)
+
+      exit_label = ir.label(:exit)
+
+      unless l_type.fixnum? && r_type.fixnum?
+        # Generate an exit
+        pass = ir.label :pass
+        ir.jmp pass
+        ir.put_label exit_label
+        ir.set_param ctx.ec
+        ir.set_param ctx.cfp
+        ir.set_param ctx.stack_depth_b
+        ir.set_param @jit_pc * Fiddle::SIZEOF_VOIDP
+        ir.call ir.write(ir.var, EXIT.to_i), 4
+        ir.return Fiddle::Qundef
+        ir.put_label pass
+      end
+
+      # check right is an int
+      right = ir.load(ctx.sp, r_type.depth_b)
+
+      # Only test the type at runtime if we don't know for sure
+      unless r_type.fixnum?
+        continue = ir.label :continue
+        ir.tbnz right, 0, continue # continue if bottom bit is 1
+        ir.jmp exit_label
+        ir.put_label continue
+      end
+
+      # check left is an int
+      left = ir.load(ctx.sp, l_type.depth_b)
+
+      # Only test the type at runtime if we don't know for sure
+      unless l_type.fixnum?
+        continue = ir.label :continue
+        ir.tbnz left, 0, continue # continue if bottom bit is 1
+        ir.jmp exit_label
+        ir.put_label continue
+      end
+
+      ir.cmp left, right
+      out = ir.csel_lt ir.write(ir.var, Fiddle::Qtrue), ir.write(ir.var, Fiddle::Qfalse)
+
+      ctx.pop
+      ctx.pop
+      ir.store out, ctx.sp, ctx.push(Hacks.basic_type(true), out).depth_b
+    end
+
     def opt_plus ctx, ir, cd
       sdb = ctx.stack_depth_b
       # check right is an int
@@ -237,22 +287,23 @@ class TenderJIT
       exit_label = ir.label(:exit)
 
       # Generate an exit
-      ir.jmp ir.label(:pass)
-      ir.put_label :exit
+      pass = ir.label(:pass)
+      ir.jmp pass
+      ir.put_label exit_label
       ir.set_param ctx.ec
       ir.set_param ctx.cfp
       ir.set_param sdb
       ir.set_param @jit_pc * Fiddle::SIZEOF_VOIDP
       ir.call ir.write(ir.var, EXIT.to_i), 4
       ir.return Fiddle::Qundef
-      ir.put_label :pass
+      ir.put_label pass
 
       # Only test the type at runtime if we don't know for sure
       unless right_item.fixnum?
-        mask = ir.and right, ir.uimm(0x1) # FIXNUM flag
-        ir.je mask, ir.uimm(0x1), ir.label(:continue)
+        continue = ir.label :continue
+        ir.tbnz right, 0, continue # continue if bottom bit is 1
         ir.jmp exit_label
-        ir.put_label :continue
+        ir.put_label continue
       end
 
       # subtract the mask from one side
@@ -266,10 +317,10 @@ class TenderJIT
 
       unless left_item.fixnum?
         # If the result doesn't have the flag, then the LHS wasn't a fixnum
-        mask = ir.and result, ir.uimm(0x1) # FIXNUM flag
-        ir.je mask, ir.uimm(0x1), ir.label(:done)
+        continue = ir.label :continue
+        ir.tbnz result, 0, continue # continue if bottom bit is 1
         ir.jmp exit_label
-        ir.put_label :done
+        ir.put_label continue
       end
 
       ir.store(result, ctx.sp, ir.uimm(ctx.stack_depth_b))

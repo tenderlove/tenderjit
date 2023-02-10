@@ -1,0 +1,51 @@
+require "tenderjit/util"
+
+class TenderJIT
+  class Compiler
+    class Context
+      class StackItem < Util::ClassGen.pos(:type, :depth, :reg)
+        def depth_b; depth * Fiddle::SIZEOF_VOIDP; end
+
+        def fixnum?
+          type == :T_FIXNUM
+        end
+      end
+
+      attr_reader :buff, :ec, :cfp, :sp, :ep
+
+      def initialize buff, ec, cfp, sp, ep
+        @ec = ec
+        @cfp = cfp
+        @sp = sp
+        @ep = ep
+        @stack = []
+      end
+
+      def stack_depth
+        @stack.length
+      end
+
+      def push type, register
+        item = StackItem.new(type, @stack.length, register)
+        @stack.push item
+        item
+      end
+
+      def stack_depth_b
+        stack_depth * Fiddle::SIZEOF_VOIDP
+      end
+
+      # Returns the info stored for stack location +idx+.  0 is the TOP of the
+      # stack, or the last thing pushed.
+      def peek idx
+        idx = @stack.length - idx - 1
+        raise IndexError if idx < 0
+        @stack.fetch(idx)
+      end
+
+      def pop
+        @stack.pop
+      end
+    end
+  end
+end

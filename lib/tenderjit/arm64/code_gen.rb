@@ -26,6 +26,10 @@ class TenderJIT
         @params << arg1
       end
 
+      def tbz dest, reg, bit
+        asm.tbz reg, bit, dest
+      end
+
       def jle dest, arg1, arg2
         asm.cmp arg1, arg2
         asm.b dest, cond: :le
@@ -37,7 +41,7 @@ class TenderJIT
       end
 
       def tbnz dest, arg1, arg2
-        asm.tbz arg1, arg2, dest
+        asm.tbnz arg1, arg2, dest
       end
 
       def je dest, arg1, arg2
@@ -140,13 +144,17 @@ class TenderJIT
 
       def write out, _, val
         if val.integer?
-          asm.movz out, val & 0xFFFF
-          val >>= 16
-          shift = 1
-          while val > 0
-            asm.movk out, val & 0xFFFF, lsl: (shift * 16)
+          if val == 0
+            asm.mov out, XZR
+          else
+            asm.movz out, val & 0xFFFF
             val >>= 16
-            shift += 1
+            shift = 1
+            while val > 0
+              asm.movk out, val & 0xFFFF, lsl: (shift * 16)
+              val >>= 16
+              shift += 1
+            end
           end
         else
           asm.mov out, val
@@ -167,6 +175,15 @@ class TenderJIT
 
       def jo _, dest, _
         asm.b dest, cond: :vs
+      end
+
+      def cmp _, in1, in2
+        asm.cmp in1, in2
+      end
+
+      def csel_lt out, in1, in2
+        in2 = XZR if in2 == 0
+        asm.csel out, in1, in2, :lt
       end
 
       def put_label _, label, _
