@@ -65,20 +65,37 @@ class TenderJIT
       puts sorted_regs.map { _1.name.to_s.ljust(3) }.join
       insn_strs = instructions.map.with_index do |insn, j|
         start = ""
+
         if highlight_insn
           if j == highlight_insn
-            start = "-> "
+            bold = 1
+            start += "-> "
           else
-            start = "   "
+            start += "   "
           end
         end
+
+        if j.even?
+          if j == highlight_insn
+            start += "\033[30;1m"
+          else
+            start += "\033[30;0;0m"
+          end
+        else
+          if j == highlight_insn
+            start += "\033[30;1;107m"
+          else
+            start += "\033[30;0;107m"
+          end
+        end
+
         start + insn.op.to_s.ljust(maxwidth[0] + 1) +
           "#{insn.arg1.to_s}".ljust(maxwidth[1] + 1) +
           "#{insn.arg2.to_s}".ljust(maxwidth[2] + 1) +
           "#{insn.out.to_s}".ljust(maxwidth[3] + 1) +
           sorted_regs.map { |r|
             r.first_use == j ? "O  " : r.used_at?(j) ? "X  " : "   "
-          }.join
+          }.join + "\033[0m"
       end
       insn_strs.each { puts _1 }
     end
