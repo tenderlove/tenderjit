@@ -42,7 +42,7 @@ class TenderJIT
 
     def instructions; @insn_head; end
 
-    def dump_usage
+    def dump_usage highlight_insn = nil
       virt_regs = instructions.flat_map { |insn|
         [insn.arg1, insn.arg2, insn.out]
       }.select(&:register?).uniq
@@ -57,13 +57,22 @@ class TenderJIT
 
       sorted_regs = regs.sort_by(&:name)
       first = sorted_regs.first
+      print "   " if highlight_insn
       print " " * (maxwidth[0] + 1)
       print "IN1".ljust(maxwidth[1] + 1)
       print "IN2".ljust(maxwidth[2] + 1)
       print "OUT".ljust(maxwidth[3] + 1)
       puts sorted_regs.map { _1.name.to_s.ljust(3) }.join
       insn_strs = instructions.map.with_index do |insn, j|
-        insn.op.to_s.ljust(maxwidth[0] + 1) +
+        start = ""
+        if highlight_insn
+          if j == highlight_insn
+            start = "-> "
+          else
+            start = "   "
+          end
+        end
+        start + insn.op.to_s.ljust(maxwidth[0] + 1) +
           "#{insn.arg1.to_s}".ljust(maxwidth[1] + 1) +
           "#{insn.arg2.to_s}".ljust(maxwidth[2] + 1) +
           "#{insn.out.to_s}".ljust(maxwidth[3] + 1) +

@@ -3,6 +3,7 @@
 require "jit_buffer"
 require "tenderjit/fiddle_hacks"
 require "tenderjit/mjit_hacks"
+require "tenderjit/compiler/context"
 require "tenderjit/c_funcs"
 require "tenderjit/ir"
 require "fiddle/import"
@@ -148,34 +149,6 @@ class TenderJIT
   end
 
   class Compiler
-    class Context
-      attr_reader :buff, :ec, :cfp, :sp, :ep
-
-      def initialize buff, ec, cfp, sp, ep
-        @ec = ec
-        @cfp = cfp
-        @sp = sp
-        @ep = ep
-        @stack = []
-      end
-
-      def stack_depth
-        @stack.length
-      end
-
-      def stack_depth_b
-        stack_depth * Fiddle::SIZEOF_VOIDP
-      end
-
-      def push type
-        @stack.push type
-      end
-
-      def pop
-        @stack.pop
-      end
-    end
-
     def compile iseq
       # method name
       label = iseq.body.location.label
@@ -244,7 +217,7 @@ class TenderJIT
     def putobject ctx, ir, obj
       out = ir.write(ir.var, Fiddle.dlwrap(obj))
       ir.store(out, ctx.sp, ir.uimm(ctx.stack_depth_b))
-      ctx.push Hacks.basic_type(obj)
+      ctx.push Hacks.basic_type(obj), out
     end
 
     def putobject_INT2FIX_1_ ctx, ir
@@ -258,8 +231,8 @@ class TenderJIT
     def opt_plus ctx, ir, cd
       sdb = ctx.stack_depth_b
       # check right is an int
-      r_type = ctx.pop
-      right = ir.load(ctx.sp, ir.uimm(ctx.stack_depth_b))
+      right_item = ctx.pop
+      right = ir.load(ctx.sp, ir.uimm(right_item.depth_b))
 
       exit_label = ir.label(:exit)
 
@@ -275,7 +248,7 @@ class TenderJIT
       ir.put_label :pass
 
       # Only test the type at runtime if we don't know for sure
-      if r_type != :T_FIXNUM
+      unless right_item.fixnum?
         mask = ir.and right, ir.uimm(0x1) # FIXNUM flag
         ir.je mask, ir.uimm(0x1), ir.label(:continue)
         ir.jmp exit_label
@@ -286,12 +259,12 @@ class TenderJIT
       right = ir.sub right, ir.uimm(0x1)
 
       # Add them
-      l_type = ctx.pop
-      left = ir.load(ctx.sp, ir.uimm(ctx.stack_depth_b))
+      left_item = ctx.pop
+      left = ir.load(ctx.sp, left_item.depth_b)
       result = ir.add(left, right)
       ir.jo exit_label
 
-      if l_type != :T_FIXNUM
+      unless left_item.fixnum?
         # If the result doesn't have the flag, then the LHS wasn't a fixnum
         mask = ir.and result, ir.uimm(0x1) # FIXNUM flag
         ir.je mask, ir.uimm(0x1), ir.label(:done)
@@ -300,13 +273,13 @@ class TenderJIT
       end
 
       ir.store(result, ctx.sp, ir.uimm(ctx.stack_depth_b))
-      ctx.push :T_FIXNUM
+      ctx.push :T_FIXNUM, result
     end
 
     def getlocal_WC_0 ctx, ir, index
       local = ir.load(ctx.ep, ir.imm(-index * Fiddle::SIZEOF_VOIDP))
       ir.store(local, ctx.sp, ir.uimm(ctx.stack_depth_b))
-      ctx.push :unknown
+      ctx.push :unknown, local
     end
 
     def leave ctx, ir

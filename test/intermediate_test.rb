@@ -22,7 +22,6 @@ class TenderJIT
       ir.return 1
 
       buf = assemble ir
-      disasm buf
 
       func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
       assert_equal 1, func.call(1)

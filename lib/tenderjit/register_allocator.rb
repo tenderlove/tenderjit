@@ -55,26 +55,28 @@ class TenderJIT
         # ensure we have physical registers for the arguments.
         # `ensure` may not return a physical register in the case where
         # the virtual register is actually a label or a literal value
-        pr1 = vr1.ensure(self)
-        pr2 = vr2.ensure(self)
+        begin
+          pr1 = vr1.ensure(self)
+          pr2 = vr2.ensure(self)
 
-        # Free the physical registers if they're not used after this
-        vr2.free(self, pr2, i)
-        vr1.free(self, pr1, i)
+          # Free the physical registers if they're not used after this
+          vr2.free(self, pr2, i)
+          vr1.free(self, pr1, i)
 
-        # Allocate a physical register for the output virtual register
-        pr3 = vr3.ensure(self)
+          # Allocate a physical register for the output virtual register
+          pr3 = vr3.ensure(self)
 
-        # Free the output register if it's not used after this
-        vr3.free(self, pr3, i)
+          # Free the output register if it's not used after this
+          vr3.free(self, pr3, i)
+        rescue RegisterAllocator::Spill, FrozenError
+          ir.dump_usage i
+          raise
+        end
 
         # Convert this SSA instruction to machine code
         asm.handle insn, pr3, pr1, pr2
       end
       asm
-    rescue RegisterAllocator::Spill
-      ir.dump_usage
-      raise
     end
   end
 end
