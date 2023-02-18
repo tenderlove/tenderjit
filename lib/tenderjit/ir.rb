@@ -1,52 +1,30 @@
 require "tenderjit/util"
 require "tenderjit/ir/operands"
+require "tenderjit/ir/instruction"
+require "tenderjit/ir/basic_block"
 
 class TenderJIT
   class IR
     NONE = Operands::None.new
 
-    class Head < Util::ClassGen.pos(:_next, :prev)
-      include Enumerable
-
-      def append node
-        @_next = node
-        node.prev = self
-        node
-      end
-
-      def each
-        node = @_next
-        while node
-          yield node
-          node = node._next
-        end
-      end
-    end
-
-    class Instruction < Util::ClassGen.pos(:op, :arg1, :arg2, :out, :_next, :prev)
-      attr_writer :prev
-
-      def append node
-        @_next = node
-        node.prev = self
-        node
-      end
-    end
-
     def initialize
       @insn_head = Head.new
       @instructions = @insn_head
-      @labels = {}
       @virtual_register_name = 0
     end
 
     def instructions; @insn_head; end
 
     def dump_usage highlight_insn = nil
+      self.class.dump_insns instructions, highlight_insn
+    end
+
+    def self.dump_insns instructions, highlight_insn: nil, ansi: true
       virt_regs = instructions.flat_map { |insn|
         [insn.arg1, insn.arg2, insn.out]
       }.select(&:register?).uniq
       params, regs = virt_regs.partition(&:param?)
+      regs = regs.select(&:usage_assigned?)
       maxwidth = [0, 0, 0, 0]
       instructions.each do |insn|
         maxwidth[0] = insn.op.to_s.length if insn.op.to_s.length > maxwidth[0]
@@ -57,12 +35,13 @@ class TenderJIT
 
       sorted_regs = regs.sort_by(&:name)
       first = sorted_regs.first
-      print "   " if highlight_insn
-      print " " * (maxwidth[0] + 1)
-      print "IN1".ljust(maxwidth[1] + 1)
-      print "IN2".ljust(maxwidth[2] + 1)
-      print "OUT".ljust(maxwidth[3] + 1)
-      puts sorted_regs.map { _1.name.to_s.ljust(3) }.join
+      buff = "".dup
+      buff << "   " if highlight_insn
+      buff << " " * (maxwidth[0] + 1)
+      buff << "IN1".ljust(maxwidth[1] + 1)
+      buff << "IN2".ljust(maxwidth[2] + 1)
+      buff << "OUT".ljust(maxwidth[3] + 1)
+      buff << sorted_regs.map { _1.name.to_s.ljust(3) }.join + "\n"
       insn_strs = instructions.map.with_index do |insn, j|
         start = ""
 
@@ -75,17 +54,19 @@ class TenderJIT
           end
         end
 
-        if j.even?
-          if j == highlight_insn
-            start += "\033[30;1m"
+        if ansi
+          if j.even?
+            if j == highlight_insn
+              start += "\033[30;1m"
+            else
+              start += "\033[30;0;0m"
+            end
           else
-            start += "\033[30;0;0m"
-          end
-        else
-          if j == highlight_insn
-            start += "\033[30;1;107m"
-          else
-            start += "\033[30;0;107m"
+            if j == highlight_insn
+              start += "\033[30;1;107m"
+            else
+              start += "\033[30;0;107m"
+            end
           end
         end
 
@@ -95,9 +76,10 @@ class TenderJIT
           "#{insn.out.to_s}".ljust(maxwidth[3] + 1) +
           sorted_regs.map { |r|
             r.first_use == j ? "O  " : r.used_at?(j) ? "X  " : "   "
-          }.join + "\033[0m"
+          }.join + (ansi ? "\033[0m" : "")
       end
-      insn_strs.each { puts _1 }
+      insn_strs.each { buff << _1 + "\n" }
+      buff
     end
 
     def each_instruction
@@ -134,6 +116,51 @@ class TenderJIT
       cg = X86_64::CodeGen.new
 
       ra.assemble self, cg
+    end
+
+    def basic_blocks
+      bbs = []
+      insn = @insn_head._next
+      i = 0
+      wants_label = []
+      has_label = {}
+
+      while insn
+        start = finish = insn
+        while finish._next && !finish._next.put_label?
+          finish = finish._next
+          break if finish.jump?
+        end
+
+        jumps_back = if finish.jump? && finish.has_jump_target?
+          has_label.key?(finish.target_label)
+        else
+          false
+        end
+
+        bb = BasicBlock.new(i, start, finish, jumps_back)
+
+        wants_label << bb if bb.has_jump_target?
+
+        has_label[bb.label] = bb if bb.labeled_entry?
+
+        if bbs.last && bbs.last.falls_through?
+          bbs.last.fall_through = bb
+          bb.predecessors << bbs.last
+        end
+
+        bbs << bb
+        i += 1
+        insn = finish._next
+      end
+
+      while bb = wants_label.pop
+        jump_target = has_label.fetch(bb.jump_target_label)
+        bb.jump_target = jump_target
+        jump_target.predecessors << bb
+      end
+
+      bbs
     end
 
     def to_binary
@@ -245,12 +272,12 @@ class TenderJIT
     end
 
     def jmp location
-      push __method__, location, NONE, NONE
+      push __method__, NONE, NONE, location
       nil
     end
 
     def jo location
-      push __method__, location, NONE, NONE
+      push __method__, NONE, NONE, location
       nil
     end
 
@@ -269,7 +296,7 @@ class TenderJIT
 
     def put_label name
       raise unless name.is_a?(Operands::Label)
-      push __method__, name, NONE, NONE
+      push __method__, NONE, NONE, name
       nil
     end
 
@@ -282,6 +309,7 @@ class TenderJIT
     def push name, a, b, out = self.var
       a = uimm(a) if a.integer?
       b = uimm(b) if b.integer?
+      raise if a.label? || b.label?
 
       @instructions = @instructions.append Instruction.new(name, a, b, out)
       out

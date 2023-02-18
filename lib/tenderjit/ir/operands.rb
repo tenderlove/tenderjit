@@ -7,6 +7,7 @@ class TenderJIT
         def register?; false; end
         def integer?; false; end
         def none?; true; end
+        def label? = false
         def ensure ra; self; end
         def free _, _, _; self; end
         def set_first_use _ ; end
@@ -19,6 +20,7 @@ class TenderJIT
         def immediate? = true
         def none? = false
         def integer? = false
+        def label? = false
 
         def ensure ra
           value
@@ -38,6 +40,7 @@ class TenderJIT
         attr_writer :physical_register
 
         def integer? = false
+        def label? = false
 
         def initialize name, physical_register = nil, last_use = 0, first_use = nil
           super
@@ -58,6 +61,10 @@ class TenderJIT
 
         def used_at? i
           i > @first_use && i <= @last_use
+        end
+
+        def usage_assigned?
+          @first_use
         end
 
         def ensure ra
@@ -98,6 +105,7 @@ class TenderJIT
         def register? = false
         def integer? = false
         def immediate? = false
+        def label? = true
 
         def set_offset offset
           @offset = offset

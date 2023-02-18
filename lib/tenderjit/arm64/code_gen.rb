@@ -169,11 +169,11 @@ class TenderJIT
         asm.nop
       end
 
-      def jmp out, arg1, _
-        asm.b arg1
+      def jmp out, _, _
+        asm.b out
       end
 
-      def jo _, dest, _
+      def jo dest, _, _
         asm.b dest, cond: :vs
       end
 
@@ -186,7 +186,7 @@ class TenderJIT
         asm.csel out, in1, in2, :lt
       end
 
-      def put_label _, label, _
+      def put_label label, _, _
         asm.put_label label
       end
     end
