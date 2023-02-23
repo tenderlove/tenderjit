@@ -16,23 +16,12 @@ class TenderJIT
     end
 
     def tsort
-      tsort_each_node.to_a
-    end
-
-    def tsort_each_node &blk
-      return enum_for(:tsort_each_node) unless block_given?
-
-      @basic_blocks.each &blk
-    end
-
-    def tsort_each_child node, &blk
-      yield node.out2 if node.out2
-      yield node.out1 if node.out1
+      @basic_blocks.to_a
     end
 
     def number_instructions!
       i = 0
-      tsort_each_node do |basic_block|
+      @basic_blocks.each do |basic_block|
         basic_block.each_instruction do |insn|
           insn.number = i
           i += 1
