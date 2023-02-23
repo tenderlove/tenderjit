@@ -6,6 +6,7 @@ require "tenderjit/mjit_hacks"
 require "tenderjit/compiler/context"
 require "tenderjit/c_funcs"
 require "tenderjit/ir"
+require "tenderjit/yarv"
 require "fiddle/import"
 require "hacks"
 require "hatstone"
@@ -197,21 +198,34 @@ class TenderJIT
       # ISEQ buffer
       iseq_buf = iseq.body.iseq_encoded
 
+      yarv = YARV.new
+
       while @jit_pc < iseq_size
         insn = INSNS.fetch(C.rb_vm_insn_decode(iseq.body.iseq_encoded[@jit_pc]))
         operands = insn.opes.map.with_index { |operand,  i|
           case operand[:type]
           when "lindex_t" then iseq_buf[@jit_pc + i + 1]
           when "rb_num_t" then iseq_buf[@jit_pc + i + 1]
+          when "OFFSET" then
+            # OFFSET is signed
+            Fiddle::Pointer.new(iseq_buf.to_i + ((@jit_pc + i + 1) * 8))[0, 8].unpack1("q")
           when "CALL_DATA" then C.rb_call_data.new(iseq_buf[@jit_pc + i + 1])
           when "VALUE" then Fiddle.dlunwrap(iseq_buf[@jit_pc + i + 1])
           else
             raise operand[:type]
           end
         }
-        yield insn, operands
+        yarv.handle @jit_pc, insn, operands
+
         @jit_pc += insn.len
       end
+
+      #yarv.peephole_optimize!
+      cfg = yarv.cfg
+      cfg.number_instructions!
+      cfg.to_dot YARV
+
+      #yield insn, operands
     end
 
     def putobject ctx, ir, obj

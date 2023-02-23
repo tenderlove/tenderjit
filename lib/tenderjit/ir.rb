@@ -1,14 +1,15 @@
 require "tenderjit/util"
 require "tenderjit/ir/operands"
 require "tenderjit/ir/instruction"
-require "tenderjit/ir/basic_block"
+require "tenderjit/basic_block"
+require "tenderjit/linked_list"
 
 class TenderJIT
   class IR
     NONE = Operands::None.new
 
     def initialize
-      @insn_head = Head.new
+      @insn_head = LinkedList::Head.new
       @instructions = @insn_head
       @virtual_register_name = 0
     end
@@ -94,6 +95,14 @@ class TenderJIT
       end
     end
 
+    def basic_blocks
+      BasicBlock.build @insn_head, self
+    end
+
+    def insert_jump node, label
+      node.insert new_insn :jmp, NONE, NONE, label
+    end
+
     def insn_str insn
       "#{insn.op} #{insn.arg1.to_s}, #{insn.arg2.to_s}, #{insn.out.to_s}"
     end
@@ -116,51 +125,6 @@ class TenderJIT
       cg = X86_64::CodeGen.new
 
       ra.assemble self, cg
-    end
-
-    def basic_blocks
-      bbs = []
-      insn = @insn_head._next
-      i = 0
-      wants_label = []
-      has_label = {}
-
-      while insn
-        start = finish = insn
-        while finish._next && !finish._next.put_label?
-          finish = finish._next
-          break if finish.jump?
-        end
-
-        jumps_back = if finish.jump? && finish.has_jump_target?
-          has_label.key?(finish.target_label)
-        else
-          false
-        end
-
-        bb = BasicBlock.new(i, start, finish, jumps_back)
-
-        wants_label << bb if bb.has_jump_target?
-
-        has_label[bb.label] = bb if bb.labeled_entry?
-
-        if bbs.last && bbs.last.falls_through?
-          bbs.last.fall_through = bb
-          bb.predecessors << bbs.last
-        end
-
-        bbs << bb
-        i += 1
-        insn = finish._next
-      end
-
-      while bb = wants_label.pop
-        jump_target = has_label.fetch(bb.jump_target_label)
-        bb.jump_target = jump_target
-        jump_target.predecessors << bb
-      end
-
-      bbs
     end
 
     def to_binary
@@ -311,8 +275,12 @@ class TenderJIT
       b = uimm(b) if b.integer?
       raise if a.label? || b.label?
 
-      @instructions = @instructions.append Instruction.new(name, a, b, out)
+      @instructions = @instructions.append new_insn(name, a, b, out)
       out
+    end
+
+    def new_insn name, a, b, out
+      Instruction.new name, a, b, out
     end
   end
 end

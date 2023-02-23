@@ -1,16 +1,12 @@
 require "tenderjit/util"
+require "tenderjit/linked_list"
 
 class TenderJIT
   class IR
-    class Instruction < Util::ClassGen.pos(:op, :arg1, :arg2, :out, :_next, :prev, :number)
-      attr_writer :prev
-      attr_writer :number
+    class Instruction < Util::ClassGen.pos(:op, :arg1, :arg2, :out, :number)
+      include LinkedList::Element
 
-      def append node
-        @_next = node
-        node.prev = self
-        node
-      end
+      attr_writer :number
 
       def put_label?
         op == :put_label
@@ -36,24 +32,6 @@ class TenderJIT
       def target_label
         return out if out.label?
         raise "not a jump instruction"
-      end
-    end
-
-    class Head < Util::ClassGen.pos(:_next, :prev)
-      include Enumerable
-
-      def append node
-        @_next = node
-        node.prev = self
-        node
-      end
-
-      def each
-        node = @_next
-        while node
-          yield node
-          node = node._next
-        end
       end
     end
   end
