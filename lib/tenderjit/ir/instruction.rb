@@ -8,6 +8,12 @@ class TenderJIT
 
       attr_writer :number
 
+      def phi?; false; end
+
+      def registers
+        [arg1, arg2, out].select(&:register?)
+      end
+
       def put_label?
         op == :put_label
       end
@@ -24,6 +30,16 @@ class TenderJIT
         out.label?
       end
 
+      def used_variables
+        [arg1, arg2].select(&:register?)
+      end
+
+      def set_variable
+        if out.register?
+          out
+        end
+      end
+
       def label
         raise unless put_label?
         out
@@ -32,6 +48,12 @@ class TenderJIT
       def target_label
         return out if out.label?
         raise "not a jump instruction"
+      end
+
+      def used_at i
+        arg1.set_last_use i
+        arg2.set_last_use i
+        out.set_first_use i
       end
     end
   end

@@ -30,6 +30,16 @@ class TenderJIT
         op == :leave || op == :jump
       end
 
+      def used_variables
+        return unless op == :getlocal
+        [opnds]
+      end
+
+      def set_variable
+        return unless op == :setlocal
+        opnds
+      end
+
       def target_label
         out = opnds.first
         return out if out.label?
@@ -53,6 +63,10 @@ class TenderJIT
       insns.map { |insn| insn.to_s }.join("\\l") + "\\l"
     end
 
+    def self.vars set
+      set.to_a.inspect
+    end
+
     def initialize
       @insn_head = LinkedList::Head.new
       @instructions = @insn_head
@@ -60,11 +74,11 @@ class TenderJIT
     end
 
     def basic_blocks
-      BasicBlock.build @insn_head, self
+      BasicBlock.build @insn_head, self, false
     end
 
     def cfg
-      CFG.new basic_blocks
+      CFG.new basic_blocks, YARV
     end
 
     def insert_jump node, label
@@ -118,6 +132,10 @@ class TenderJIT
       add_insn __method__, pc, insn, ops
     end
 
+    def opt_minus pc, insn, ops
+      add_insn __method__, pc, insn, ops
+    end
+
     def leave pc, insn, ops
       add_insn __method__, pc, insn, ops
     end
@@ -139,6 +157,10 @@ class TenderJIT
     end
 
     def opt_lt pc, insn, ops
+      add_insn __method__, pc, insn, ops
+    end
+
+    def opt_gt pc, insn, ops
       add_insn __method__, pc, insn, ops
     end
 

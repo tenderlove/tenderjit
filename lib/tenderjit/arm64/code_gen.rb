@@ -142,7 +142,7 @@ class TenderJIT
         asm.ldur out, [src, offset]
       end
 
-      def write out, _, val
+      def write out, val, _
         if val.integer?
           if val == 0
             asm.mov out, XZR

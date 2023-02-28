@@ -28,6 +28,7 @@ class TenderJIT
   STATS = Stats.malloc(Fiddle::RUBY_FREE)
 
   def self.make_exit_function
+    return
     jb = JITBuffer.new 4096
     ir = IR.new
 
@@ -220,10 +221,9 @@ class TenderJIT
         @jit_pc += insn.len
       end
 
-      #yarv.peephole_optimize!
+      yarv.peephole_optimize!
       cfg = yarv.cfg
       cfg.number_instructions!
-      cfg.to_dot YARV
 
       #yield insn, operands
     end

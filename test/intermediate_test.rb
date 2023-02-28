@@ -10,6 +10,32 @@ class TenderJIT
   class IRTest < Test
     include Fiddle::Types
 
+    def test_lifetime_holes_use_borrowed_regs
+      ir = IR.new
+      _else = ir.label :else
+      _end = ir.label :end
+
+      a = ir.param(0)
+      z = ir.loadi(123)
+      ir.jle a, ir.param(1), _else  # if param(0) > param(1)
+      b1 = ir.loadi(5)             #   c = 5
+      ir.jmp _end
+
+      ir.put_label _else         # else
+      c  = ir.loadi(10)            #   b = 10
+      b2 = ir.add(c, z)            #   b = c + z
+
+      ir.put_label _end          # end
+      d = ir.add(a, ir.phi(b1, b2)) # d = param(0) + b
+      ir.ret d
+
+      cfg = ir.cfg
+
+      cfg.assign_registers ir
+
+      puts ir.dump_usage
+    end
+
     # Test and branch if not zero
     def test_tbnz
       ir = IR.new
@@ -336,15 +362,20 @@ class TenderJIT
     private
 
     def assemble ir
-      asm = ir.to_binary
+      cfg = ir.cfg
 
-      buf = JITBuffer.new 4096
+      cfg.assign_registers ir
 
-      buf.writeable!
-      asm.write_to buf
-      buf.executable!
+      puts ir.dump_usage
+      #asm = ir.to_binary
 
-      buf
+      #buf = JITBuffer.new 4096
+
+      #buf.writeable!
+      #asm.write_to buf
+      #buf.executable!
+
+      #buf
     end
 
     def ra64 ptr

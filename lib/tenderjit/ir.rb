@@ -17,33 +17,55 @@ class TenderJIT
     def instructions; @insn_head; end
 
     def dump_usage highlight_insn = nil
-      self.class.dump_insns instructions, highlight_insn
+      self.class.dump_insns instructions, highlight_insn: highlight_insn
+    end
+
+    def self.vars set
+      set.map(&:to_s).join(", ")
     end
 
     def self.dump_insns instructions, highlight_insn: nil, ansi: true
       virt_regs = instructions.flat_map { |insn|
-        [insn.arg1, insn.arg2, insn.out]
-      }.select(&:register?).uniq
+        insn.registers
+      }.uniq
       params, regs = virt_regs.partition(&:param?)
       regs = regs.select(&:usage_assigned?)
+
+      physical_regs = regs.map(&:physical_register).map(&:unwrap).uniq.sort_by(&:to_i)
+
+      phys_reg_names = physical_regs.map { |x| "R#{x.to_i}" }
+      phys_reg_name_max_width = 3
+
+      if phys_reg_names.any?
+        phys_reg_name_max_width = phys_reg_names.sort_by(&:length).last.length + 1
+      end
+
       maxwidth = [0, 0, 0, 0]
+      num = 0
       instructions.each do |insn|
         maxwidth[0] = insn.op.to_s.length if insn.op.to_s.length > maxwidth[0]
         maxwidth[1] = insn.arg1.to_s.length if insn.arg1.to_s.length > maxwidth[1]
         maxwidth[2] = insn.arg2.to_s.length if insn.arg2.to_s.length > maxwidth[2]
         maxwidth[3] = insn.out.to_s.length if insn.out.to_s.length > maxwidth[3]
+        num = insn.number
       end
 
+      num_width = num.to_s.length
       sorted_regs = regs.sort_by(&:name)
       first = sorted_regs.first
       buff = "".dup
       buff << "   " if highlight_insn
-      buff << " " * (maxwidth[0] + 1)
+      buff << " " * (maxwidth[0] + num_width + 2)
+      buff << "OUT".ljust(maxwidth[3] + 1)
       buff << "IN1".ljust(maxwidth[1] + 1)
       buff << "IN2".ljust(maxwidth[2] + 1)
-      buff << "OUT".ljust(maxwidth[3] + 1)
-      buff << sorted_regs.map { _1.name.to_s.ljust(3) }.join + "\n"
+
+      buff << sorted_regs.map { _1.name.to_s.ljust(phys_reg_name_max_width) }.join
+
+      buff << "\n"
+
       insn_strs = instructions.map.with_index do |insn, j|
+        j = insn.number
         start = ""
 
         if highlight_insn
@@ -71,32 +93,57 @@ class TenderJIT
           end
         end
 
-        start + insn.op.to_s.ljust(maxwidth[0] + 1) +
+        start + insn.number.to_s.ljust(num_width) + " " + insn.op.to_s.ljust(maxwidth[0] + 1) +
+          "#{insn.out.to_s}".ljust(maxwidth[3] + 1) +
           "#{insn.arg1.to_s}".ljust(maxwidth[1] + 1) +
           "#{insn.arg2.to_s}".ljust(maxwidth[2] + 1) +
-          "#{insn.out.to_s}".ljust(maxwidth[3] + 1) +
           sorted_regs.map { |r|
-            r.first_use == j ? "O  " : r.used_at?(j) ? "X  " : "   "
+            label = if r.physical_register
+                      if r.used_at?(j)
+                        "R#{r.physical_register.unwrap.to_i}"
+                      else
+                        " "
+                      end
+                    else
+                      if r.first_use == j
+                        "A"
+                      else
+                        if r.last_use == j
+                          "V"
+                        else
+                          if r.used_at?(j)
+                            "X"
+                          else
+                            " "
+                          end
+                        end
+                      end
+                    end
+            label.ljust(phys_reg_name_max_width)
           }.join + (ansi ? "\033[0m" : "")
       end
       insn_strs.each { buff << _1 + "\n" }
       buff
     end
 
-    def each_instruction
+    def set_last_use
       @insn_head.each_with_index do |insn, i|
-        insn.arg1.set_last_use i
-        insn.arg2.set_last_use i
-        insn.out.set_first_use i
+        insn.used_at i
       end
+    end
 
+    def each_instruction
       @insn_head.each_with_index do |insn, i|
         yield insn, i
       end
     end
 
     def basic_blocks
-      BasicBlock.build @insn_head, self
+      BasicBlock.build @insn_head, self, true
+    end
+
+    def cfg
+      CFG.new basic_blocks, IR
     end
 
     def insert_jump node, label
@@ -114,7 +161,7 @@ class TenderJIT
       ra = ARM64::RegisterAllocator.new
       cg = ARM64::CodeGen.new
 
-      ra.assemble self, cg
+      ra.assemble cfg, cg
     end
 
     def to_x86_64
@@ -156,6 +203,10 @@ class TenderJIT
       Operands::SignedInt.new(int)
     end
 
+    def loadi imm
+      push __method__, self.imm(imm), NONE
+    end
+
     def set_param arg1
       push __method__, arg1, NONE, NONE
     end
@@ -165,7 +216,7 @@ class TenderJIT
     end
 
     def write arg1, arg2
-      push __method__, arg1, arg2, arg1
+      push __method__, arg2, NONE, arg1
       arg1
     end
 
@@ -201,6 +252,47 @@ class TenderJIT
       push __method__, arg1, NONE, NONE
       nil
     end
+
+    class Phi
+      include LinkedList::Element
+
+      attr_reader :out, :vars
+      attr_accessor :number
+
+      def initialize out, vars
+        @out = out
+        @vars = vars
+        @number = nil
+      end
+
+      def arg1; NONE; end
+      def arg2; NONE; end
+
+      def op; :phi; end
+
+      def registers
+        [@out] + @vars
+      end
+
+      def used_at i
+        @vars.each { _1.set_last_use i }
+      end
+
+      def put_label?; false; end
+      def jump?; false; end
+      def phi?; true; end
+
+      def used_variables; []; end
+      def set_variable; @out; end
+    end
+
+    def phi *args
+      out = var
+      @instructions = @instructions.append Phi.new(out, args)
+      out
+    end
+
+    alias :ret :return
 
     def load arg1, arg2
       push __method__, arg1, arg2
