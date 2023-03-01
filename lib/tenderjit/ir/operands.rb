@@ -18,6 +18,7 @@ class TenderJIT
         def to_s; "NONE"; end
         def add_range _, _; end
         def set_from _; end
+        def pr; self; end
       end
 
       class Immediate < Util::ClassGen.pos(:value)
@@ -31,6 +32,7 @@ class TenderJIT
           value
         end
 
+        def pr; value; end
         def free _, _; true end
         def add_range _, _; end
         def set_from _; end
@@ -55,6 +57,12 @@ class TenderJIT
         def immediate? = false
         def register? = true
         def none? = false
+
+        ##
+        # Unwrapped physical register
+        def pr
+          physical_register.unwrap
+        end
 
         def add_range from, to
           if from > to
@@ -171,6 +179,8 @@ class TenderJIT
         def ensure _, _
           self
         end
+
+        def pr; self; end
 
         def free _, _; true; end
         def set_from _; end

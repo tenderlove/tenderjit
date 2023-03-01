@@ -16,24 +16,27 @@ class TenderJIT
       _end = ir.label :end
 
       a = ir.param(0)
-      z = ir.loadi(123)
+      z = ir.loadi(123)             # z = 123
       ir.jle a, ir.param(1), _else  # if param(0) > param(1)
-      b1 = ir.loadi(5)             #   c = 5
+      b1 = ir.loadi(5)              #   b.1 = 5
       ir.jmp _end
 
-      ir.put_label _else         # else
-      c  = ir.loadi(10)            #   b = 10
-      b2 = ir.add(c, z)            #   b = c + z
+      ir.put_label _else            # else
+      c  = ir.loadi(10)             #   c  = 10
+      b2 = ir.add(c, z)             #   b.2 = c + z
 
-      ir.put_label _end          # end
+      ir.put_label _end             # end
       d = ir.add(a, ir.phi(b1, b2)) # d = param(0) + b
       ir.ret d
 
-      cfg = ir.cfg
+      buf = assemble ir
 
-      cfg.assign_registers ir
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT, INT], INT)
+      assert_equal 10, func.call(5, 3)
+      assert_equal 123 + 10 + 3, func.call(3, 5)
 
-      puts ir.dump_usage
+      #puts cfg.dump_usage
     end
 
     # Test and branch if not zero
@@ -46,6 +49,12 @@ class TenderJIT
       ir.return 0
       ir.put_label not_zero
       ir.return 1
+
+      cfg = ir.cfg
+      assert_equal 3, cfg.to_a.length
+
+      ops = cfg.map { |block| block.each_instruction.to_a.last.op }
+      assert_equal [:tbnz, :return, :return], ops
 
       buf = assemble ir
 
@@ -364,18 +373,15 @@ class TenderJIT
     def assemble ir
       cfg = ir.cfg
 
-      cfg.assign_registers ir
+      asm = cfg.to_binary
 
-      puts ir.dump_usage
-      #asm = ir.to_binary
+      buf = JITBuffer.new 4096
 
-      #buf = JITBuffer.new 4096
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
 
-      #buf.writeable!
-      #asm.write_to buf
-      #buf.executable!
-
-      #buf
+      buf
     end
 
     def ra64 ptr

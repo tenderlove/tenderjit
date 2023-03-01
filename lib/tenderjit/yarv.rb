@@ -1,6 +1,7 @@
 require "tenderjit/util"
 require "tenderjit/linked_list"
 require "tenderjit/basic_block"
+require "tenderjit/cfg"
 
 class TenderJIT
   class YARV

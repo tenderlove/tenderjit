@@ -56,7 +56,10 @@ class TenderJIT
     def free phys
       return true if phys.borrowed?
 
-      raise DoubleFree, "Don't free registers twice!" if @freelist.include?(phys)
+      if @freelist.include?(phys)
+        msg = "Physical register #{phys.unwrap.to_i} freed twice"
+        raise DoubleFree, msg
+      end
 
       if @scratch_regs.include? phys
         @freelist.push phys
@@ -65,7 +68,7 @@ class TenderJIT
       true
     end
 
-    def allocate ir, thing
+    def allocate ir
       i = 0
 
       active = Set.new
@@ -86,9 +89,9 @@ class TenderJIT
           active.delete vr2
           active.delete vr3
 
-          active.each do |var|
-            if var.free(self, i)
-              active.delete(var)
+          active.each do |vr|
+            if vr.free(self, i)
+              active.delete(vr)
             end
           end
 
@@ -96,8 +99,12 @@ class TenderJIT
           pr2 = vr2.ensure(self, i)
 
           # Free the physical registers if they're not used after this
-          active << vr2 unless vr2.free(self, i)
-          active << vr1 unless vr1.free(self, i)
+          if vr1 == vr2
+            active << vr1 unless vr1.free(self, i)
+          else
+            active << vr2 unless vr2.free(self, i)
+            active << vr1 unless vr1.free(self, i)
+          end
 
           # Allocate a physical register for the output virtual register
           pr3 = vr3.ensure(self, i)
@@ -105,21 +112,13 @@ class TenderJIT
           # Free the output register if it's not used after this
           active << vr3 unless vr3.free(self, i)
         rescue TenderJIT::Error
-          puts thing.dump_usage i
+          puts
+          puts ir.dump_usage i
           raise
         end
 
         i += 1
       end
-
-      #ir.each_instruction do |insn|
-      #  vr1 = insn.arg1
-      #  vr2 = insn.arg2
-      #  vr3 = insn.out
-
-      #  # Convert this SSA instruction to machine code
-      #  #asm.handle insn, vr3.physical_register, vr1.physical_register, vr2.physical_register
-      #end
     end
 
     private

@@ -2,6 +2,7 @@ require "tenderjit/util"
 require "tenderjit/ir/operands"
 require "tenderjit/ir/instruction"
 require "tenderjit/basic_block"
+require "tenderjit/cfg"
 require "tenderjit/linked_list"
 
 class TenderJIT
@@ -31,7 +32,7 @@ class TenderJIT
       params, regs = virt_regs.partition(&:param?)
       regs = regs.select(&:usage_assigned?)
 
-      physical_regs = regs.map(&:physical_register).map(&:unwrap).uniq.sort_by(&:to_i)
+      physical_regs = regs.map(&:physical_register).compact.map(&:unwrap).uniq.sort_by(&:to_i)
 
       phys_reg_names = physical_regs.map { |x| "R#{x.to_i}" }
       phys_reg_name_max_width = 3
@@ -175,11 +176,7 @@ class TenderJIT
     end
 
     def to_binary
-      if Util::PLATFORM == :arm64
-        to_arm64
-      else
-        to_x86_64
-      end
+      cfg.to_binary
     end
 
     def write_to buffer
@@ -284,6 +281,8 @@ class TenderJIT
 
       def used_variables; []; end
       def set_variable; @out; end
+
+      def return?; false; end
     end
 
     def phi *args

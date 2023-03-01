@@ -19,11 +19,15 @@ class TenderJIT
       end
 
       def jump?
-        !put_label? && (out.label? || op == :return)
+        !put_label? && out.label?
+      end
+
+      def return?
+        op == :return
       end
 
       def unconditional_jump?
-        op == :return || op == :jmp
+        op == :jmp
       end
 
       def has_jump_target?

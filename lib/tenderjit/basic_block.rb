@@ -1,94 +1,16 @@
 require "tenderjit/util"
 
 class TenderJIT
-  class CFG
-    attr_reader :type
-
-    def initialize basic_blocks, type
-      @basic_blocks = clean(basic_blocks)
-      @basic_blocks.live_ranges!
-      @type = type
-    end
-
-    def clean blocks
-      blocks.each do |blk|
-        blk.remove if blk.empty?
-      end
-
-      blocks
-    end
-
-    def each &blk
-      @basic_blocks.each &blk
-    end
-
-    def reverse_each &blk
-      @basic_blocks.reverse_each &blk
-    end
-
-    def each_instruction &blk
-      @basic_blocks.each_instruction &blk
-    end
-
-    def assign_registers ir
-      ra.allocate @basic_blocks, ir
-    end
-
-    def ra
-      if Util::PLATFORM == :arm64
-        require "tenderjit/arm64/register_allocator"
-        ARM64::RegisterAllocator.new
-      else
-        require "tenderjit/x86_64/register_allocator"
-        X86_64::RegisterAllocator.new
-      end
-    end
-
-    def to_dot
-      $stderr.puts "digraph {"
-      $stderr.puts "rankdir=TD; ordering=out;"
-      $stderr.puts "node[shape=box fontname=\"Comic Code\"];"
-      $stderr.puts "edge[fontname=\"Comic Code\"];"
-      @basic_blocks.each do |block|
-        $stderr.print block.name
-        $stderr.print "[label=\"BB#{block.name}\\l"
-        $stderr.print "UE:       #{type.vars block.ue_vars}\\l"
-        $stderr.print "Killed:   #{type.vars block.killed_vars}\\l"
-        $stderr.print "Live Out: #{type.vars block.live_out}\\l"
-        if block.phis.any?
-          block.phis.each do |phi|
-            $stderr.print "Phi: #{type.vars [phi.out]} = "
-            $stderr.print "#{type.vars phi.vars}\\l"
-          end
-        end
-        $stderr.print "Dom:      #{block.dominators.map(&:name).join(",")}\\l"
-        $stderr.print type.dump_insns block.each_instruction.to_a, ansi: false
-        $stderr.puts "\"];"
-        if bb = block.out1
-          $stderr.puts "#{block.name} -> #{bb.name} [label=\"out1\"];"
-        end
-        if bb = block.out2
-          $stderr.puts "#{block.name} -> #{bb.name} [label=\"out2\"];"
-        end
-
-        #block.predecessors.each do |pred|
-        #  next if pred.head?
-        #  $stderr.puts "#{block.name} -> #{pred.name} [color=grey style=dotted arrowhead=empty];"
-        #end
-      end
-      $stderr.puts "}"
-    end
-  end
-
   class BasicBlockHead
     include Enumerable
 
     attr_accessor :out1
     attr_reader :dominators
 
-    def initialize ssa
+    def initialize ssa, ir
       @out1 = nil
       @ssa = ssa
+      @ir = ir
       @dominators = Set.new
     end
 
@@ -96,6 +18,10 @@ class TenderJIT
 
     def name; :HEAD; end
     def predecessors; []; end
+
+    def dump_usage highlight_insn = nil
+      @ir.dump_usage highlight_insn
+    end
 
     def head?; true; end
 
@@ -176,7 +102,7 @@ class TenderJIT
 
   class BasicBlock < Util::ClassGen.pos(:name, :start, :finish, :phis, :ue_vars, :killed_vars)
     def self.build insn_head, ir, ssa
-      head = last_bb = BasicBlockHead.new ssa
+      head = last_bb = BasicBlockHead.new ssa, ir
       insn = insn_head._next
       i = 0
       wants_label = []
@@ -200,13 +126,10 @@ class TenderJIT
 
           killed_vars << finish.set_variable if finish.set_variable
 
-          break if finish.jump?
+          break if finish.jump? || finish.return?
           break if finish._next.put_label?
           _next = finish._next
-          if finish.phi?
-            phis << finish
-            #finish.unlink
-          end
+          phis << finish if finish.phi?
           finish = _next
         end
 
@@ -222,7 +145,7 @@ class TenderJIT
           bb.predecessors << last_bb
         end
 
-        unless last_bb.jumps?
+        unless last_bb.jumps? || last_bb.returns?
           last_bb.add_jump ir, bb.label
         end
 
@@ -299,6 +222,27 @@ class TenderJIT
     end
 
     def head?; false; end
+
+    def assemble asm
+      each_instruction do |insn|
+        next if insn.phi?
+
+        if insn == finish
+          write_phis asm, out1
+          write_phis asm, out2
+        end
+
+        # If the last instruction is an unconditional jump and the following
+        # block is the jump target, don't bother writing the jump.
+        if insn == finish &&
+            finish.unconditional_jump? &&
+            insn._next.put_label? &&
+            insn._next.out == finish.out
+          next
+        end
+        write_instruction asm, insn
+      end
+    end
 
     def live_in predecessor
       used_phis = Set.new(phis.flat_map(&:vars).uniq)
@@ -378,7 +322,7 @@ class TenderJIT
     def to; finish.number; end
 
     def falls_through?
-      !finish.unconditional_jump?
+      !(finish.unconditional_jump? || finish.return?)
     end
 
     def has_jump_target?
@@ -387,6 +331,10 @@ class TenderJIT
 
     def jumps?
       finish.jump?
+    end
+
+    def returns?
+      finish.return?
     end
 
     def jump_target_label
@@ -403,6 +351,32 @@ class TenderJIT
 
     def successors
       [out1, out2].compact
+    end
+
+    private
+
+    def write_instruction asm, insn
+      vr1 = insn.arg1
+      vr2 = insn.arg2
+      vr3 = insn.out
+
+      # Convert this SSA instruction to machine code
+      asm.handle insn, vr3.pr, vr1.pr, vr2.pr
+    end
+
+    def write_phis asm, successor
+      return unless successor
+
+      successor.phis.each do |phi|
+        phi.vars.each do |transfer|
+          if live_out.include?(transfer)
+            if phi.out.pr != transfer.pr
+              write = IR::Instruction.new(:write, transfer, IR::NONE, phi.out)
+              write_instruction asm, write
+            end
+          end
+        end
+      end
     end
   end
 end

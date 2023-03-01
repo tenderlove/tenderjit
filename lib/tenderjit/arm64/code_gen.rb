@@ -142,20 +142,24 @@ class TenderJIT
         asm.ldur out, [src, offset]
       end
 
+      def loadi out, val, _
+        if val == 0
+          asm.mov out, XZR
+        else
+          asm.movz out, val & 0xFFFF
+          val >>= 16
+          shift = 1
+          while val > 0
+            asm.movk out, val & 0xFFFF, lsl: (shift * 16)
+            val >>= 16
+            shift += 1
+          end
+        end
+      end
+
       def write out, val, _
         if val.integer?
-          if val == 0
-            asm.mov out, XZR
-          else
-            asm.movz out, val & 0xFFFF
-            val >>= 16
-            shift = 1
-            while val > 0
-              asm.movk out, val & 0xFFFF, lsl: (shift * 16)
-              val >>= 16
-              shift += 1
-            end
-          end
+          loadi out, val, _
         else
           asm.mov out, val
         end
