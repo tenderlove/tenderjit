@@ -7,6 +7,7 @@ class TenderJIT
       class FreedBeforeUsed < TenderJIT::Error; end
       class FreedAfterHandled < TenderJIT::Error; end
       class UnknownState < TenderJIT::Error; end
+      class UnusedOperand < TenderJIT::Error; end
 
       class None
         def register?; false; end
@@ -79,6 +80,9 @@ class TenderJIT
         end
 
         def set_from from
+          if @ranges.empty?
+            raise UnusedOperand, "Operand #{to_s} is unused"
+          end
           @ranges.last[0] = from
         end
 

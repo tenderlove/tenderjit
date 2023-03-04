@@ -40,8 +40,7 @@ class TenderJIT
       refute_predicate bb, :has_jump_target? # no jump label for return
       refute_predicate bb, :labeled_entry? # no label on entry
       refute_predicate bb, :falls_through? # returns don't fall through
-      assert_predicate finish, :jump? # returns are jumps
-      assert_predicate finish, :unconditional_jump? # returns are unconditional jumps
+      assert_predicate finish, :return? # returns are returns
       assert_nil bb.out1
       assert_nil bb.out2
       assert_equal [], bb.successors
@@ -125,7 +124,8 @@ class TenderJIT
       ir.je(d, b, last_block)
 
       # mid block
-      d = ir.add(d, c)
+      ir.nop
+      ir.nop
       ir.jmp(block_2)
 
       # last_block
@@ -135,8 +135,8 @@ class TenderJIT
       blocks = ir.basic_blocks.to_a.sort_by(&:name)
       assert_equal 4, blocks.length
 
-      cfg = CFG.new blocks
-      assert_equal [0, 1, 2, 3], cfg.tsort.map(&:name)
+      cfg = ir.cfg
+      assert_equal [0, 1, 2, 3], cfg.to_a.map(&:name)
     end
 
     def test_tsort_cfg_diamond
@@ -149,7 +149,7 @@ class TenderJIT
       finish = ir.label :finish
       left = ir.label :left
       ir.jne(a, b, left)  # if a != b
-      d = ir.add(b, c)    #   d = b + c
+      ir.nop
       ir.jmp finish       #   jmp finish
       ir.put_label left   # else
       d = ir.add(c, a)    #   e = c + a
@@ -163,14 +163,11 @@ class TenderJIT
       assert_equal [bbs.last], bbs[2].successors
       assert_equal [], bbs[3].successors
 
-      cfg = CFG.new bbs
-      assert_equal [0, 1, 2, 3], cfg.tsort.map(&:name)
-
-      # make sure instructions are numbered in topo sort order
-      cfg.number_instructions!
+      cfg = ir.cfg
+      assert_equal [0, 1, 2, 3], cfg.to_a.map(&:name)
 
       i = 0
-      cfg.tsort.map(&:name).each do |idx|
+      cfg.to_a.map(&:name).each do |idx|
         bb = bbs[idx]
         bb.each_instruction do |insn|
           assert_equal i, insn.number
