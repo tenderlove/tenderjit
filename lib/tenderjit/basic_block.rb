@@ -211,10 +211,28 @@ class TenderJIT
       bbs
     end
 
+    # Compute the dominance frontiers for this cfg
+    # Engineering a Compiler 2ed, Figure 9.8
+    def self.dominance_frontiers head
+      null = [].freeze
+      head.each { _1.df = null }
+
+      head.each do |block|
+        if block.predecessors.length > 1
+          block.predecessors.each do |runner|
+            while runner != block.idom
+              runner.df = (runner.df | [block]).freeze
+              runner = runner.idom
+            end
+          end
+        end
+      end
+    end
+
     include Enumerable
 
     attr_reader :predecessors
-    attr_accessor :out1, :out2, :live_out, :dominators
+    attr_accessor :out1, :out2, :live_out, :dominators, :df
 
     def self.empty name
       new name, nil, nil, nil, nil, nil
@@ -227,6 +245,7 @@ class TenderJIT
       @out2         = nil
       @live_out     = Set.new
       @dominators   = nil
+      @df           = nil
     end
 
     def head?; false; end

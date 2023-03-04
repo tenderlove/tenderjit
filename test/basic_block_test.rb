@@ -6,6 +6,23 @@ require "helper"
 
 class TenderJIT
   class BasicBlockTest < Test
+    def test_dominance_frontier
+      head, bbs = example_bbs
+
+      BasicBlock.dominators head
+      BasicBlock.dominance_frontiers head
+
+      assert_equal [],  bbs[0].df
+      assert_equal [1], bbs[1].df.map(&:name)
+      assert_equal [3], bbs[2].df.map(&:name)
+      assert_equal [1], bbs[3].df.map(&:name)
+      assert_equal [],  bbs[4].df.map(&:name)
+      assert_equal [3], bbs[5].df.map(&:name)
+      assert_equal [7], bbs[6].df.map(&:name)
+      assert_equal [3], bbs[7].df.map(&:name)
+      assert_equal [7], bbs[8].df.map(&:name)
+    end
+
     def test_dominators
       head, bbs = example_bbs
 
