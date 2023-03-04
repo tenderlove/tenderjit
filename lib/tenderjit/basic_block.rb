@@ -212,6 +212,10 @@ class TenderJIT
     attr_reader :predecessors
     attr_accessor :out1, :out2, :live_out, :dominators
 
+    def self.empty name
+      new name, nil, nil, nil, nil, nil
+    end
+
     def initialize name, start, finish, phis, ue_vars, killed_vars
       super
       @predecessors = []
@@ -282,7 +286,11 @@ class TenderJIT
       start == finish && start.unconditional_jump?
     end
 
-    def each &blk
+    ###
+    # Iterate each block, breadth first
+    def bfs &blk
+      return enum_for(__method__) unless block_given?
+
       seen = {}
       worklist = [self]
       while item = worklist.pop
@@ -291,6 +299,25 @@ class TenderJIT
           seen[item] = true
           worklist.unshift item.out1 if item.out1
           worklist.unshift item.out2 if item.out2
+        end
+      end
+    end
+
+    alias :each :bfs
+
+    ###
+    # Iterate each block depth first
+    def dfs &blk
+      return enum_for(__method__) unless block_given?
+
+      seen = {}
+      worklist = [self]
+      while item = worklist.pop
+        unless seen[item]
+          yield item
+          seen[item] = true
+          worklist.push item.out1 if item.out1
+          worklist.push item.out2 if item.out2
         end
       end
     end

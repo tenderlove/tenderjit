@@ -6,6 +6,46 @@ require "helper"
 
 class TenderJIT
   class BasicBlockTest < Test
+    def test_breadth_first_search
+      parent = BasicBlock.empty :top
+      left = BasicBlock.empty :left
+      right = BasicBlock.empty :right
+      bottom = BasicBlock.empty :bottom
+
+      parent.out1 = left
+      parent.out2 = right
+
+      left.out1 = bottom
+      right.out1 = bottom
+
+      names = []
+      parent.each { |bb| names << bb.name }
+      # We don't care about the order of left or right, just that
+      # top and bottom are above them
+      assert_equal :top, names.first
+      assert_equal :bottom, names.last
+    end
+
+    def test_depth_first_search
+      parent = BasicBlock.empty :top
+      left = BasicBlock.empty :left
+      right = BasicBlock.empty :right
+      bottom = BasicBlock.empty :bottom
+
+      parent.out1 = left
+      parent.out2 = right
+
+      left.out1 = bottom
+      right.out1 = bottom
+
+      names = []
+      parent.dfs { |bb| names << bb.name }
+      # We don't care about the order of left or right, just that
+      # top is above, and bottom is visited before one branch
+      assert_equal :top, names.first
+      assert_equal :bottom, names[2]
+    end
+
     def test_jump_start_has_own_bb
       ir = IR.new
       a = ir.param(0)
