@@ -6,6 +6,40 @@ require "helper"
 
 class TenderJIT
   class BasicBlockTest < Test
+    def test_dominators
+      head, bbs = example_bbs
+
+      BasicBlock.dominators head
+
+      assert_equal [0],          bbs[0].dominators.map(&:name).reverse
+      assert_equal [0, 1],       bbs[1].dominators.map(&:name).reverse
+      assert_equal [0, 1, 2],    bbs[2].dominators.map(&:name).reverse
+      assert_equal [0, 1, 3],    bbs[3].dominators.map(&:name).reverse
+      assert_equal [0, 1, 3, 4], bbs[4].dominators.map(&:name).reverse
+      assert_equal [0, 1, 5],    bbs[5].dominators.map(&:name).reverse
+      assert_equal [0, 1, 5, 6], bbs[6].dominators.map(&:name).reverse
+      assert_equal [0, 1, 5, 7], bbs[7].dominators.map(&:name).reverse
+      assert_equal [0, 1, 5, 8], bbs[8].dominators.map(&:name).reverse
+
+      assert_equal 9.times.to_a, head.dfs.map { _1.name }
+    end
+
+    def test_idom
+      head, bbs = example_bbs
+
+      BasicBlock.dominators head
+
+      assert_nil bbs[0].idom
+      assert_equal 0, bbs[1].idom.name
+      assert_equal 1, bbs[2].idom.name
+      assert_equal 1, bbs[3].idom.name
+      assert_equal 3, bbs[4].idom.name
+      assert_equal 1, bbs[5].idom.name
+      assert_equal 5, bbs[6].idom.name
+      assert_equal 5, bbs[7].idom.name
+      assert_equal 5, bbs[8].idom.name
+    end
+
     def test_breadth_first_search
       parent = BasicBlock.empty :top
       left = BasicBlock.empty :left
@@ -214,6 +248,36 @@ class TenderJIT
           i += 1
         end
       end
+    end
+
+    private
+
+    def add_child parent, where, child
+      parent.send(:"#{where}=", child)
+      child.predecessors << parent
+    end
+
+    def example_bbs
+      # set up a cfg similar to the one in 9.3.2 from Engineering a Compiler
+      bbs = 9.times.map { |i| BasicBlock.empty i }
+
+      add_child bbs[0], :out1, bbs[1]
+      add_child bbs[1], :out1, bbs[2]
+      add_child bbs[1], :out2, bbs[5]
+      add_child bbs[2], :out1, bbs[3]
+      add_child bbs[3], :out1, bbs[4]
+      add_child bbs[3], :out2, bbs[1]
+      add_child bbs[5], :out1, bbs[6]
+      add_child bbs[5], :out2, bbs[8]
+      add_child bbs[6], :out1, bbs[7]
+      add_child bbs[8], :out1, bbs[7]
+      add_child bbs[7], :out1, bbs[3]
+
+      head = BasicBlockHead.new true, nil
+      head.out1 = bbs[0]
+      bbs[0].predecessors << head
+
+      [head, bbs]
     end
   end
 end

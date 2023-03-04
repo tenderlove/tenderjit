@@ -11,7 +11,7 @@ class TenderJIT
       @out1 = nil
       @ssa = ssa
       @ir = ir
-      @dominators = Set.new
+      @dominators = [].freeze
     end
 
     def ssa?; @ssa; end
@@ -43,6 +43,10 @@ class TenderJIT
 
     def reverse_each &blk
       @out1.reverse_each &blk
+    end
+
+    def dfs &blk
+      @out1.dfs &blk
     end
 
     def each_instruction &blk
@@ -179,12 +183,12 @@ class TenderJIT
 
     def self.dominators bbs
       all_bbs = bbs.to_a
-      all_bb_set = Set.new(all_bbs)
+      all_bb_set = all_bbs
 
       # Initialize dominance sets
       all_bbs.each_with_index do |bb, i|
         if i == 0
-          bb.dominators = Set.new(bb)
+          bb.dominators = [bb]
         else
           bb.dominators = all_bb_set
         end
@@ -194,8 +198,8 @@ class TenderJIT
       while changed
         changed = false
 
-        bbs.each do |bb|
-          temp = Set.new([bb]) | bb.predecessors.drop(1).inject(bb.predecessors.first.dominators) { |set, pred|
+        bbs.dfs do |bb|
+          temp = [bb] | bb.predecessors.drop(1).inject(bb.predecessors.first.dominators) { |set, pred|
             set & pred.dominators
           }
           if temp != bb.dominators
@@ -226,6 +230,11 @@ class TenderJIT
     end
 
     def head?; false; end
+
+    # Immediate dominator for this block
+    def idom
+      dominators[1]
+    end
 
     def assemble asm
       each_instruction do |insn|
@@ -316,8 +325,8 @@ class TenderJIT
         unless seen[item]
           yield item
           seen[item] = true
-          worklist.push item.out1 if item.out1
           worklist.push item.out2 if item.out2
+          worklist.push item.out1 if item.out1
         end
       end
     end
