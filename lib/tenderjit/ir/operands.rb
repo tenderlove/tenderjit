@@ -12,6 +12,7 @@ class TenderJIT
       class None
         def register?; false; end
         def integer?; false; end
+        def variable?; false; end
         def none?; true; end
         def label? = false
         def ensure _, _; self; end
@@ -28,6 +29,7 @@ class TenderJIT
         def none? = false
         def integer? = false
         def label? = false
+        def variable?; false; end
 
         def ensure _, _
           value
@@ -49,6 +51,7 @@ class TenderJIT
 
         def integer? = false
         def label? = false
+        def variable?; true; end
 
         def initialize name, physical_register = nil, ranges = []
           super
@@ -172,6 +175,7 @@ class TenderJIT
         def integer? = false
         def immediate? = false
         def label? = true
+        def variable?; false; end
 
         def set_offset offset
           @offset = offset

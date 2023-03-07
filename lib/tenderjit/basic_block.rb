@@ -14,9 +14,12 @@ class TenderJIT
       @dominators = [].freeze
     end
 
+    def empty?; false; end
+
     def ssa?; @ssa; end
 
     def name; :HEAD; end
+
     def predecessors; []; end
 
     def dump_usage highlight_insn = nil
@@ -169,7 +172,13 @@ class TenderJIT
       # sweep unreachable blocks
       all_bbs.each { |x| x.remove unless mark_set.include?(x) }
 
-      dominators number head
+      head = dominators number head
+
+      unless ssa
+        head = dominance_frontiers head
+        head = place_phi head
+      end
+      head
     end
 
     ##
@@ -227,6 +236,50 @@ class TenderJIT
           end
         end
       end
+
+      head
+    end
+
+    # Place phi functions based on the dominance frontiers we calculated
+    def self.place_phi head
+      globals = Set.new
+      name_to_blocks = Hash.new { |h,k| h[k] = Set.new }
+
+      # Engineering a Compiler Figure 9.9a
+      head.each do |block|
+        varkill = Set.new
+
+        block.each_instruction do |insn|
+          unless insn.put_label?
+            if insn.arg1.variable? && !varkill.include?(insn.arg1)
+              globals << insn.arg1
+            end
+            if insn.arg2.variable? && !varkill.include?(insn.arg2)
+              globals << insn.arg2
+            end
+            if insn.out.variable?
+              varkill << insn.out
+              name_to_blocks[insn.out] << block
+            end
+          end
+        end
+      end
+
+      # Engineering a Compiler Figure 9.9b
+      globals.each do |x|
+        worklist = name_to_blocks[x].to_a
+        while b = worklist.shift
+          b.df.each do |d|
+            phi = d.phis.find { |phi| phi.vars.include?(x) }
+            puts "hi"
+            unless phi
+              d.phis << IR::Phi.new(x, [x])
+              worklist << d
+            end
+          end
+        end
+      end
+      head
     end
 
     include Enumerable

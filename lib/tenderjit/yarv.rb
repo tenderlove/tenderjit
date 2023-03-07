@@ -1,14 +1,23 @@
 require "tenderjit/util"
 require "tenderjit/linked_list"
+require "tenderjit/ir/operands"
 require "tenderjit/basic_block"
 require "tenderjit/cfg"
 
 class TenderJIT
   class YARV
-    class Instruction < Util::ClassGen.pos(:op, :pc, :insn, :opnds, :number)
+    class Local < Util::ClassGen.pos(:name, :ops)
+      def variable?; true; end
+    end
+
+    class Instruction < Util::ClassGen.pos(:op, :pc, :insn, :opnds, :stack_pos, :number)
       include LinkedList::Element
 
+      NONE = IR::Operands::None.new
+
       attr_writer :number
+
+      def phi?; false; end
 
       def put_label?
         op == :put_label
@@ -20,7 +29,7 @@ class TenderJIT
       end
 
       def jump?
-        op == :leave || op == :branchunless || op == :branchif || op == :jump
+        op == :branchunless || op == :branchif || op == :jump
       end
 
       def has_jump_target?
@@ -28,7 +37,11 @@ class TenderJIT
       end
 
       def unconditional_jump?
-        op == :leave || op == :jump
+        op == :jump
+      end
+
+      def return?
+        op == :leave
       end
 
       def used_variables
@@ -41,6 +54,26 @@ class TenderJIT
         opnds
       end
 
+      def arg1
+        if op == :getlocal
+          opnds
+        else
+          NONE
+        end
+      end
+
+      def arg2
+        NONE
+      end
+
+      def out
+        if op == :setlocal
+          opnds
+        else
+          NONE
+        end
+      end
+
       def target_label
         out = opnds.first
         return out if out.label?
@@ -48,7 +81,11 @@ class TenderJIT
       end
 
       def to_s
-        "#{number} #{op}\t#{opnds.map(&:to_s).join("\t")}"
+        if op == :getlocal || op == :setlocal
+          "#{number} #{op}\t#{opnds.name}"
+        else
+          "#{number} #{op}\t#{opnds.map(&:to_s).join("\t")}"
+        end
       end
     end
 
@@ -65,13 +102,15 @@ class TenderJIT
     end
 
     def self.vars set
-      set.to_a.inspect
+      set.to_a.map(&:name).inspect
     end
 
-    def initialize
+    def initialize iseq, locals
       @insn_head = LinkedList::Head.new
       @instructions = @insn_head
       @label_map = {}
+      @locals = locals.reverse
+      @local_names = {}
     end
 
     def basic_blocks
@@ -82,8 +121,10 @@ class TenderJIT
       CFG.new basic_blocks, YARV
     end
 
+    JUMP = RubyVM::MJIT::INSNS.values.find { |insn| insn.name == :jump }
+
     def insert_jump node, label
-      jump = new_insn :jump, node.pc, Object.new, [label]
+      jump = new_insn :jump, node.pc, JUMP, [label]
       node.insert jump
     end
 
@@ -114,7 +155,7 @@ class TenderJIT
     end
 
     def getlocal pc, insn, ops
-      add_insn __method__, pc, insn, ops
+      add_insn __method__, pc, insn, local_name(ops)
     end
 
     def opt_eq pc, insn, ops
@@ -126,7 +167,7 @@ class TenderJIT
     end
 
     def setlocal pc, insn, ops
-      add_insn __method__, pc, insn, ops
+      add_insn __method__, pc, insn, local_name(ops)
     end
 
     def opt_plus pc, insn, ops
@@ -162,6 +203,10 @@ class TenderJIT
     end
 
     def opt_gt pc, insn, ops
+      add_insn __method__, pc, insn, ops
+    end
+
+    def newarray pc, insn, ops
       add_insn __method__, pc, insn, ops
     end
 
@@ -231,6 +276,18 @@ class TenderJIT
 
     def new_insn name, pc, insn, opnds
       Instruction.new name, pc, insn, opnds
+    end
+
+    def local_name ops
+      unless @local_names[ops]
+        idx, env = *ops
+        if env == 0
+          @local_names[ops] = Local.new(@locals[idx - 3], ops)
+        else
+          @local_names[ops] = Local.new(@local_names.size, ops)
+        end
+      end
+      @local_names[ops]
     end
   end
 end

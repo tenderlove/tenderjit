@@ -1,8 +1,5 @@
-ENV["MT_NO_PLUGINS"] = "1"
-
-require "minitest/autorun"
-require "tenderjit/ir"
 require "helper"
+require "tenderjit/ir"
 
 class TenderJIT
   class BasicBlockTest < Test
