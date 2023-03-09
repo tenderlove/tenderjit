@@ -27,6 +27,8 @@ class TenderJIT
       C.rb_iseq_t.new addr
     end
 
+    attr_reader :iseq
+
     def initialize iseq
       @iseq = iseq
     end
@@ -35,7 +37,7 @@ class TenderJIT
       yarv_ir(@iseq)
     end
 
-    def compile iseq
+    def compile
       # method name
       label = iseq.body.location.label
 
@@ -83,9 +85,14 @@ class TenderJIT
       # ISEQ buffer
       iseq_buf = iseq.body.iseq_encoded
 
-      list = Fiddle::CArray.unpack Fiddle::Pointer.new(Fiddle.read_ptr(iseq.body[:local_table].to_i, 0)),
-        iseq.body.local_table_size,
-        Fiddle::TYPE_UINTPTR_T
+      local_table_head = Fiddle.read_ptr iseq.body[:local_table].to_i, 0
+      list = if local_table_head == 0
+        []
+      else
+        Fiddle::CArray.unpack Fiddle::Pointer.new(local_table_head),
+          iseq.body.local_table_size,
+          Fiddle::TYPE_UINTPTR_T
+      end
 
       locals = list.map { Hacks.rb_id2sym _1 }
 

@@ -8,6 +8,7 @@ class TenderJIT
       class FreedAfterHandled < TenderJIT::Error; end
       class UnknownState < TenderJIT::Error; end
       class UnusedOperand < TenderJIT::Error; end
+      class ArgumentError < TenderJIT::Error; end
 
       class None
         def register?; false; end
@@ -69,16 +70,9 @@ class TenderJIT
         end
 
         def add_range from, to
-          if from > to
-            raise ArgumentError, "From must be less than or equal to to"
-          end
-
-          if ranges.last && ranges.last.first < from
-            raise ArgumentError, "Ranges must be added in reverse"
-          end
-
           unless ranges.last && ranges.last.first == from
             ranges << [from, to]
+            ranges.sort_by! { |from, to| from.number }.reverse!
           end
         end
 
@@ -90,15 +84,16 @@ class TenderJIT
         end
 
         def first_use
-          @ranges.last.first
+          @ranges.last.first.number
         end
 
         def last_use
-          @ranges.first.last
+          @ranges.first.last.number
         end
 
         def used_at? i
-          @ranges.any? { |(from, to)| i >= from && i <= to }
+          return false unless i
+          @ranges.any? { |(from, to)| i >= from.number && i <= to.number }
         end
 
         def usage_assigned?
@@ -106,19 +101,19 @@ class TenderJIT
         end
 
         def ensure ra, i
-          raise unless used_at?(i)
+          raise TenderJIT::Error unless used_at?(i)
 
           ra.ensure self, i, last_use
         end
 
         def state_at i
-          if i < @ranges.last.first
+          if i < first_use
             :unhandled
           else
             if used_at?(i)
               :active
             else
-              if @ranges.first.last < i
+              if last_use < i
                 :handled
               else
                 :inactive
@@ -130,14 +125,14 @@ class TenderJIT
         def next_use from
           r = nil
           @ranges.reverse_each { |range|
-            if range.first > from
+            if range.first.number > from
               r = range
               break
             end
           }
 
           raise ArgumentError unless r
-          r.first
+          r.first.number
         end
 
         def free ra, i
@@ -147,7 +142,7 @@ class TenderJIT
           when :active
             case state_at(i + 1)
             when :active
-            when :handled  then ra.free physical_register
+            when :handled  then ra.free self, physical_register
             when :inactive then ra.lend_until(physical_register, next_use(i + 1))
             when :unhandled then raise TenderJIT::Error
             end
@@ -163,6 +158,13 @@ class TenderJIT
       class InOut < VirtualRegister
         def to_s; "TMP(#{name})"; end
       end
+
+      class SP < VirtualRegister
+        def stack_pointer?; true; end
+        def to_s; "SP"; end
+      end
+
+      SP = SP.new "SP"
 
       class Param < VirtualRegister
         def param? = true

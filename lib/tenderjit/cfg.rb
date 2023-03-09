@@ -1,14 +1,14 @@
 # frozen_string_literal: true
 class TenderJIT
   class CFG
-    attr_reader :type
+    attr_reader :ir, :basic_blocks
 
     include Enumerable
 
-    def initialize basic_blocks, type
+    def initialize basic_blocks, ir
       @basic_blocks = clean(basic_blocks)
       @basic_blocks.live_ranges!
-      @type = type
+      @ir = ir
     end
 
     def dump_usage highlight_insn = nil
@@ -36,7 +36,7 @@ class TenderJIT
     end
 
     def assign_registers platform = Util::PLATFORM
-      ra(platform).allocate @basic_blocks
+      ra(platform).allocate @basic_blocks, @ir
     end
 
     def ra platform

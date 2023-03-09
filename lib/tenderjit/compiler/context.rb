@@ -11,7 +11,10 @@ class TenderJIT
         end
       end
 
-      attr_reader :buff, :ec, :cfp, :sp, :ep
+      include Enumerable
+
+      attr_reader :buff, :ec, :cfp, :sp
+      attr_accessor :ep
 
       def initialize buff, ec, cfp, sp, ep
         @ec = ec
@@ -19,6 +22,19 @@ class TenderJIT
         @sp = sp
         @ep = ep
         @stack = []
+        @locals = {}
+      end
+
+      def each &blk
+        @stack.each(&blk)
+      end
+
+      def get_local name
+        @locals[name]
+      end
+
+      def set_local name, var
+        @locals[name] = var
       end
 
       def stack_depth

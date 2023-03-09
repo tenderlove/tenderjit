@@ -53,7 +53,9 @@ class TenderJIT
       false
     end
 
-    def free phys
+    def free r, phys
+      @active.delete r
+
       return true if phys.borrowed?
 
       if @freelist.include?(phys)

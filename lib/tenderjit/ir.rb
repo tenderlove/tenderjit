@@ -9,13 +9,22 @@ class TenderJIT
   class IR
     NONE = Operands::None.new
 
-    def initialize
-      @insn_head = LinkedList::Head.new
+    attr_reader :counter
+
+    def initialize insn = LinkedList::Head.new, counter = 0
+      @insn_head = insn
       @instructions = @insn_head
-      @virtual_register_name = 0
+      @counter = counter
     end
 
     def instructions; @insn_head; end
+
+    def insert_at insn
+      old, @instructions = @instructions, insn
+      yield self
+    ensure
+      @instructions = old
+    end
 
     def dump_usage highlight_insn = nil
       self.class.dump_insns instructions, highlight_insn: highlight_insn
@@ -66,11 +75,10 @@ class TenderJIT
       buff << "\n"
 
       insn_strs = instructions.map.with_index do |insn, j|
-        j = insn.number
         start = ""
 
         if highlight_insn
-          if j == highlight_insn
+          if insn.number == highlight_insn
             bold = 1
             start += "-> "
           else
@@ -80,13 +88,13 @@ class TenderJIT
 
         if ansi
           if j.even?
-            if j == highlight_insn
+            if insn.number == highlight_insn
               start += "\033[30;1m"
             else
               start += "\033[30;0;0m"
             end
           else
-            if j == highlight_insn
+            if insn.number == highlight_insn
               start += "\033[30;1;107m"
             else
               start += "\033[30;0;107m"
@@ -100,19 +108,19 @@ class TenderJIT
           "#{insn.arg2.to_s}".ljust(maxwidth[2] + 1) +
           sorted_regs.map { |r|
             label = if r.physical_register
-                      if r.used_at?(j)
+                      if r.used_at?(insn.number)
                         "R#{r.physical_register.unwrap.to_i}"
                       else
                         " "
                       end
                     else
-                      if r.first_use == j
+                      if r.first_use == insn.number
                         "A"
                       else
-                        if r.last_use == j
+                        if r.last_use == insn.number
                           "V"
                         else
-                          if r.used_at?(j)
+                          if r.used_at?(insn.number)
                             "X"
                           else
                             " "
@@ -144,7 +152,7 @@ class TenderJIT
     end
 
     def cfg
-      CFG.new basic_blocks, IR
+      CFG.new basic_blocks, self
     end
 
     def insert_jump node, label
@@ -183,9 +191,13 @@ class TenderJIT
       to_binary.write_to buffer
     end
 
+    def sp
+      Operands::SP
+    end
+
     def var
-      @virtual_register_name += 1
-      Operands::InOut.new(@virtual_register_name)
+      @counter += 1
+      Operands::InOut.new(@counter)
     end
 
     def param idx

@@ -121,7 +121,7 @@ class TenderJIT
       CFG.new basic_blocks, YARV
     end
 
-    JUMP = RubyVM::MJIT::INSNS.values.find { |insn| insn.name == :jump }
+    JUMP = RubyVM::RJIT::INSNS.values.find { |insn| insn.name == :jump }
 
     def insert_jump node, label
       jump = new_insn :jump, node.pc, JUMP, [label]
@@ -188,6 +188,10 @@ class TenderJIT
 
     def putobject_INT2FIX_1_ pc, insn, ops
       putobject pc, insn, [1]
+    end
+
+    def putobject_INT2FIX_0_ pc, insn, ops
+      putobject pc, insn, [0]
     end
 
     def putnil pc, insn, ops

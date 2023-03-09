@@ -11,8 +11,8 @@ require "hatstone"
 require "etc"
 
 class TenderJIT
-  C = RubyVM::MJIT.const_get(:C)
-  INSNS = RubyVM::MJIT.const_get(:INSNS)
+  C = RubyVM::RJIT.const_get(:C)
+  INSNS = RubyVM::RJIT.const_get(:INSNS)
 
   extend Fiddle::Importer
 
@@ -124,15 +124,15 @@ class TenderJIT
   end
 
   def enable!
-    RubyVM::MJIT.resume
+    RubyVM::RJIT.resume
   end
 
   def disable!
-    RubyVM::MJIT.pause(wait: false)
+    RubyVM::RJIT.pause(wait: false)
   end
 end
 
-class << RubyVM::MJIT
+class << RubyVM::RJIT
   def compile iseq
     compiler = TenderJIT::Compiler.new
     compiler.compile iseq
