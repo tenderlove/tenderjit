@@ -22,6 +22,12 @@ class TenderJIT
         !put_label? && out.label?
       end
 
+      def replace arg1, arg2
+        insn = self.class.new(op, arg1, arg2, out)
+        append insn
+        unlink
+      end
+
       def return?
         op == :return
       end
@@ -52,6 +58,12 @@ class TenderJIT
       def target_label
         return out if out.label?
         raise "not a jump instruction"
+      end
+
+      def clear_live_ranges!
+        arg1.clear_live_ranges!
+        arg2.clear_live_ranges!
+        out.clear_live_ranges!
       end
 
       def used_at i

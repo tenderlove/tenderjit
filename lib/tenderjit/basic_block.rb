@@ -52,6 +52,26 @@ class TenderJIT
       @out1.dfs &blk
     end
 
+    def reset_live_ranges!
+      i = 0
+      each do |bb|
+        bb.live_out.clear
+        bb.each_instruction do |insn|
+          insn.clear_live_ranges!
+          insn.number = i
+          i += 1
+        end
+      end
+      raise unless ssa?
+      live_ranges!
+    end
+
+    def number!
+      each_instruction.with_index do |insn, i|
+        insn.number = i
+      end
+    end
+
     def each_instruction &blk
       return enum_for(:each_instruction) unless block_given?
 
@@ -82,6 +102,9 @@ class TenderJIT
       else
         live_vars!
       end
+    rescue TenderJIT::Error
+      puts dump_usage
+      raise
     end
 
     private

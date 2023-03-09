@@ -37,6 +37,9 @@ class TenderJIT
 
     def assign_registers platform = Util::PLATFORM
       ra(platform).allocate @basic_blocks, @ir
+      puts @basic_blocks.dump_usage
+    rescue RegisterAllocator::Spill
+      retry
     end
 
     def ra platform
@@ -77,17 +80,17 @@ class TenderJIT
       @basic_blocks.each do |block|
         buf << block.name.to_s
         buf << "[label=\"BB#{block.name}\\l"
-        buf << "UE:       #{type.vars block.ue_vars}\\l"
-        buf << "Killed:   #{type.vars block.killed_vars}\\l"
-        buf << "Live Out: #{type.vars block.live_out}\\l"
+        buf << "UE:       #{ir.vars block.ue_vars}\\l"
+        buf << "Killed:   #{ir.vars block.killed_vars}\\l"
+        buf << "Live Out: #{ir.vars block.live_out}\\l"
         if block.phis.any?
           block.phis.each do |phi|
-            buf << "Phi: #{type.vars [phi.out]} = "
-            buf << "#{type.vars phi.vars}\\l"
+            buf << "Phi: #{ir.vars [phi.out]} = "
+            buf << "#{ir.vars phi.vars}\\l"
           end
         end
         buf << "Dom:      #{block.dominators.map(&:name).join(",")}\\l"
-        buf << type.dump_insns(block.each_instruction.to_a, ansi: false)
+        buf << ir.dump_insns(block.each_instruction.to_a, ansi: false)
         buf << "\"];\n"
         if bb = block.out1
           buf << "#{block.name} -> #{bb.name} [label=\"out1\"];\n"

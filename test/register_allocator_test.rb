@@ -87,7 +87,7 @@ class TenderJIT
       pr1 = reg1.ensure ra, 0
       pr2 = reg2.ensure ra, 0
 
-      reg2.free ra, pr2, 0
+      reg2.free ra, 0
 
       pr3 = reg3.ensure ra, 0
 
@@ -160,8 +160,8 @@ class TenderJIT
           assert_equal pr2.unwrap, reg2.physical_register.unwrap
         end
 
-        l.free ra, pr1, i
-        r.free ra, pr2, i
+        l.free ra, i
+        r.free ra, i
       }
     end
   end

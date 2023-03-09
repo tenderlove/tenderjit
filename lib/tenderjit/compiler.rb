@@ -47,26 +47,23 @@ class TenderJIT
 
       ec  = ir.param(0)
       cfp = ir.param(1)
-      sp  = ir.param(2)
-      ep  = ir.param(3)
 
       buff = JITBuffer.new 4096
-      ctx = Context.new(buff, ec, cfp, sp, ep)
-
-      # Load the ep and the sp because we'll probably use them
-      ir.write(sp, ir.load(cfp, ir.uimm(C.rb_control_frame_t.offsetof(:sp))))
-      ir.write(ep, ir.load(cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep))))
+      ctx = Context.new(buff, ec, cfp, nil, nil)
 
       # Increment executed method count
-      stats_location = ir.write(ir.var, ir.uimm(STATS.to_i))
+      stats_location = ir.loadi(STATS.to_i)
       stat = ir.load(stats_location, ir.uimm(Stats.offsetof("executed_methods")))
       inc = ir.add(stat, ir.uimm(0x1))
       ir.store(inc, stats_location, ir.uimm(Stats.offsetof("executed_methods")))
 
-      each_insn(iseq) do |insn, operands|
-        send insn.name, ctx, ir, *operands
-      end
+      cfg = yarv.cfg
+      translate_cfg cfg, ir, ctx
 
+      #cfg = ir.cfg
+      #puts ir.dump_usage
+      #$stderr.puts cfg.to_dot
+      #exit!
       buff.writeable!
       ir.write_to buff
       buff.executable!
@@ -75,6 +72,34 @@ class TenderJIT
     end
 
     private
+
+    ##
+    # Translate a CFG to IR
+    def translate_cfg cfg, ir, context
+      seen = {}
+      worklist = [[cfg.first, context]]
+      while work = worklist.pop
+        block, context = *work
+        unless seen[block]
+          seen[block] = true
+          translate_block block, ir, context
+          if block.out1
+            worklist.unshift [block.out1, context]
+          end
+          if block.out2
+            puts "duping"
+            # If we have a fork, we need to dup the stack
+            worklist.unshift [block.out2, context.dup]
+          end
+        end
+      end
+    end
+
+    def translate_block block, ir, context
+      block.each_instruction do |insn|
+        send insn.op, context, ir, insn
+      end
+    end
 
     def yarv_ir iseq
       jit_pc = 0
@@ -125,21 +150,13 @@ class TenderJIT
       yarv
     end
 
-    def putobject ctx, ir, obj
-      out = ir.write(ir.var, Fiddle.dlwrap(obj))
-      ir.store(out, ctx.sp, ir.uimm(ctx.stack_depth_b))
+    def putobject ctx, ir, insn
+      obj = insn.opnds.first
+      out = ir.loadi(Fiddle.dlwrap(obj))
       ctx.push Hacks.basic_type(obj), out
     end
 
-    def putobject_INT2FIX_1_ ctx, ir
-      putobject ctx, ir, 1
-    end
-
-    def putobject_INT2FIX_0_ ctx, ir
-      putobject ctx, ir, 0
-    end
-
-    def opt_lt ctx, ir, cd
+    def opt_lt ctx, ir, insn
       r_type = ctx.peek(0)
       l_type = ctx.peek(1)
 
@@ -147,23 +164,23 @@ class TenderJIT
 
       unless l_type.fixnum? && r_type.fixnum?
         # Generate an exit
-        generate_exit ctx, ctx.stack_depth_b, ir, exit_label
+        generate_exit ctx, ir, insn.pc, exit_label
       end
 
-      right = ir.load(ctx.sp, r_type.depth_b)
+      right = r_type.reg
 
       guard_fixnum ir, right, exit_label unless r_type.fixnum?
 
-      left = ir.load(ctx.sp, l_type.depth_b)
+      left = l_type.reg
 
       guard_fixnum ir, left, exit_label unless l_type.fixnum?
 
       ir.cmp left, right
-      out = ir.csel_lt ir.write(ir.var, Fiddle::Qtrue), ir.write(ir.var, Fiddle::Qfalse)
+      out = ir.csel_lt ir.loadi(Fiddle::Qtrue), ir.loadi(Fiddle::Qfalse)
 
       ctx.pop
       ctx.pop
-      ir.store out, ctx.sp, ctx.push(Hacks.basic_type(true), out).depth_b
+      ctx.push(Hacks.basic_type(true), out)
     end
 
     def opt_plus ctx, ir, cd
@@ -197,36 +214,65 @@ class TenderJIT
       ir.store out, ctx.sp, ctx.push(:T_FIXNUM, out).depth_b
     end
 
+    def getlocal ctx, ir, insn
+      local = insn.opnds
+      var = ctx.get_local(local.name)
+      unless var
+        # If the local hasn't been loaded yet, load it
+        ep = ir.load(ctx.cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
+        index, level = local.ops
+        var = ir.load(ep, ir.imm(-index * Fiddle::SIZEOF_VOIDP))
+        ctx.set_local local.name, var
+      end
+      ctx.push :unknown, var
+    end
+
     def getlocal_WC_0 ctx, ir, index
       local = ir.load(ctx.ep, ir.imm(-index * Fiddle::SIZEOF_VOIDP))
       ir.store(local, ctx.sp, ir.uimm(ctx.stack_depth_b))
       ctx.push :unknown, local
     end
 
-    def leave ctx, ir
-      ctx.pop
-      local = ir.load(ctx.sp, ir.imm(ctx.stack_depth_b))
+    def leave ctx, ir, opnds
+      item = ctx.pop
 
-      prev_frame = ir.add ctx.cfp, ir.uimm(C.rb_control_frame_t.sizeof)
+      prev_frame = ir.add ctx.cfp, ir.uimm(C.rb_control_frame_t.size)
       ir.store(prev_frame, ctx.ec, ir.uimm(C.rb_execution_context_t.offsetof(:cfp)))
 
-      ir.return local
+      ir.ret item.reg
     end
 
     def disasm buf
       TenderJIT.disasm buf
     end
 
-    def generate_exit ctx, depth, ir, label
+    def generate_exit ctx, ir, vm_pc, exit_label
       pass = ir.label :pass
       ir.jmp pass
-      ir.put_label label
-      ir.set_param ctx.ec
-      ir.set_param ctx.cfp
-      ir.set_param depth
-      ir.set_param @jit_pc * Fiddle::SIZEOF_VOIDP
-      ir.call ir.write(ir.var, EXIT.to_i), 4
-      ir.return Fiddle::Qundef
+
+      ir.put_label exit_label
+
+      # load the stack pointer
+      sp = ir.load(ctx.cfp, C.rb_control_frame_t.offsetof(:sp))
+
+      # Flush the stack
+      ctx.each_with_index do |item, index|
+        depth = index * Fiddle::SIZEOF_VOIDP
+        ir.store(item.reg, sp, ir.uimm(depth))
+      end
+
+      # Store the new SP on the frame
+      sp = ir.add(sp, ctx.stack_depth_b)
+      ir.store(sp, ctx.cfp, C.rb_control_frame_t.offsetof(:sp))
+
+      # Update the PC
+      iseq = ir.load(ctx.cfp, C.rb_control_frame_t.offsetof(:iseq))
+      body = ir.load(iseq, C.rb_iseq_t.offsetof(:body))
+      pc   = ir.load(body, C.rb_iseq_constant_body.offsetof(:iseq_encoded))
+      pc = ir.add(pc, vm_pc * Fiddle::SIZEOF_VOIDP)
+      ir.store(pc, ctx.cfp, C.rb_control_frame_t.offsetof(:pc))
+
+      ir.ret Fiddle::Qundef
       ir.put_label pass
     end
 

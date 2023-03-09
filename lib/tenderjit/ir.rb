@@ -30,15 +30,19 @@ class TenderJIT
       self.class.dump_insns instructions, highlight_insn: highlight_insn
     end
 
-    def self.vars set
+    def vars set
       set.map(&:to_s).join(", ")
+    end
+
+    def dump_insns instructions, highlight_insn: nil, ansi: true
+      self.class.dump_insns instructions, highlight_insn: highlight_insn, ansi: ansi
     end
 
     def self.dump_insns instructions, highlight_insn: nil, ansi: true
       virt_regs = instructions.flat_map { |insn|
         insn.registers
       }.uniq
-      params, regs = virt_regs.partition(&:param?)
+      regs = virt_regs.select(&:variable?)
       regs = regs.select(&:usage_assigned?)
 
       physical_regs = regs.map(&:physical_register).compact.map(&:unwrap).uniq.sort_by(&:to_i)
