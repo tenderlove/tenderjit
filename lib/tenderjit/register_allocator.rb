@@ -3,15 +3,17 @@ require "tenderjit/error"
 
 class TenderJIT
   class RegisterAllocator
-    class Spill < Error; end
     class DoubleFree < Error; end
     class OutsideLiveRange < Error; end
 
     attr_reader :scratch_regs
 
     class BorrowedRegister
-      def initialize reg
+      attr_reader :info
+
+      def initialize reg, info
         @reg = reg
+        @info = info
       end
 
       def unwrap; @reg; end
@@ -62,7 +64,10 @@ class TenderJIT
     def free r, phys
       @active.delete r
 
-      return true if phys.borrowed?
+      if phys.borrowed?
+        @borrow_list << phys.info
+        return true
+      end
 
       if @freelist.include?(phys)
         msg = "Physical register #{phys.unwrap.to_i} freed twice"
@@ -76,11 +81,12 @@ class TenderJIT
       true
     end
 
+    def spill?; false; end
+
     def allocate cfg, ir
       active = Set.new
 
       cfg.each do |block|
-        spills = 0
         block.each_instruction do |insn|
           # vr == "virtual register"
           # pr == "physical register"
@@ -99,14 +105,15 @@ class TenderJIT
             active.delete vr2
             active.delete vr3
 
-            active.each do |vr|
-              if vr.free(self, i)
-                active.delete(vr)
-              end
-            end
+            active.find_all { |vr|
+              vr.free(self, i)
+            }.each { |mm| active.delete mm }
 
             pr1 = vr1.ensure(self, i)
+            return Spill.new(vr1, insn, block, @active.dup) if pr1 == SPILL
+
             pr2 = vr2.ensure(self, i)
+            return Spill.new(vr2, insn, block, @active.dup) if pr2 == SPILL
 
             # Free the physical registers if they're not used after this
             if vr1 == vr2
@@ -118,55 +125,10 @@ class TenderJIT
 
             # Allocate a physical register for the output virtual register
             pr3 = vr3.ensure(self, i)
+            return Spill.new(vr3, insn, block, @active.dup) if pr3 == SPILL
 
             # Free the output register if it's not used after this
             active << vr3 unless vr3.free(self, i)
-          rescue Spill
-            puts cfg.dump_usage i
-            iter = insn
-            active = @active.dup
-            spill_reg     = nil
-            next_use_insn = nil
-
-            while iter != block.finish
-              break if active.empty?
-
-              if active.include?(iter.arg1)
-                spill_reg = iter.arg1
-                next_use_insn = iter
-                active.delete iter.arg1
-              end
-
-              if active.include?(iter.arg2)
-                spill_reg = iter.arg2
-                next_use_insn = iter
-                active.delete iter.arg2
-              end
-
-              iter = iter._next
-            end
-
-            ir.insert_at(insn.prev) do |ir|
-              ir.store(spill_reg, ir.sp, spills)
-            end
-
-            iter = insn
-            while iter != block.finish
-              if iter.arg1 == spill_reg || iter.arg2 == spill_reg
-                ir.insert_at(iter.prev) do |ir|
-                  var = ir.load(ir.sp, spills)
-                  iter = iter.replace(iter.arg1 == spill_reg ? var : iter.arg1,
-                                      iter.arg2 == spill_reg ? var : iter.arg2)
-                end
-              end
-              iter = iter._next
-            end
-
-            cfg.reset_live_ranges!
-
-            spills += 1
-            p spill_reg.name
-            raise
           rescue TenderJIT::Error
             puts
             puts cfg.dump_usage i
@@ -174,20 +136,25 @@ class TenderJIT
           end
         end
       end
+
+      self
     end
 
     private
 
+    SPILL = Object.new
+    private_constant :SPILL
+
     def alloc r, from, to
       phys = nil
       if !@borrow_list.empty?
-        reg = @borrow_list.find_all { |_, next_use|
+        reg_info = @borrow_list.find_all { |_, next_use|
           next_use > to
         }.sort_by { |reg, next_use| next_use - to }.first
 
-        if reg
-          @borrow_list.delete reg
-          phys = BorrowedRegister.new(reg.first.unwrap)
+        if reg_info
+          @borrow_list.delete reg_info
+          phys = BorrowedRegister.new(reg_info.first.unwrap, reg_info)
         end
       end
 
@@ -198,8 +165,21 @@ class TenderJIT
         @active << r
         phys
       else
-        raise Spill, "Spill!"
+        SPILL
       end
+    end
+
+    class Spill
+      attr_reader :var, :insn, :block, :active
+
+      def initialize var, insn, block, active
+        @var    = var
+        @insn   = insn
+        @block  = block
+        @active = active
+      end
+
+      def spill?; true; end
     end
   end
 end

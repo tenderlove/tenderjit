@@ -73,6 +73,7 @@ class TenderJIT
         end
 
         def clear_live_ranges!
+          @physical_register = nil
           @ranges.clear
         end
 
@@ -168,6 +169,7 @@ class TenderJIT
       class StackPointer < VirtualRegister
         def stack_pointer?; true; end
         def variable?; false; end
+        def free _, _; false; end
         def to_s; "SP"; end
       end
 

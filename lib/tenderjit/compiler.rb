@@ -59,13 +59,10 @@ class TenderJIT
 
       cfg = yarv.cfg
       translate_cfg cfg, ir, ctx
+      asm = ir.assemble
 
-      #cfg = ir.cfg
-      #puts ir.dump_usage
-      #$stderr.puts cfg.to_dot
-      #exit!
       buff.writeable!
-      ir.write_to buff
+      asm.write_to buff
       buff.executable!
 
       buff.to_i
@@ -169,11 +166,11 @@ class TenderJIT
 
       right = r_type.reg
 
-      guard_fixnum ir, right, exit_label unless r_type.fixnum?
+      guard_fixnum ir, right, exit_label, false unless r_type.fixnum?
 
       left = l_type.reg
 
-      guard_fixnum ir, left, exit_label unless l_type.fixnum?
+      guard_fixnum ir, left, exit_label, true unless l_type.fixnum?
 
       ir.cmp left, right
       out = ir.csel_lt ir.loadi(Fiddle::Qtrue), ir.loadi(Fiddle::Qfalse)
@@ -252,6 +249,11 @@ class TenderJIT
 
       ir.put_label exit_label
 
+      stats_location = ir.loadi(STATS.to_i)
+      stat = ir.load(stats_location, Stats.offsetof("exits"))
+      inc = ir.add(stat, 0x1)
+      ir.store(inc, stats_location, Stats.offsetof("exits"))
+
       # load the stack pointer
       sp = ir.load(ctx.cfp, C.rb_control_frame_t.offsetof(:sp))
 
@@ -276,11 +278,9 @@ class TenderJIT
       ir.put_label pass
     end
 
-    def guard_fixnum ir, reg, exit_label
+    def guard_fixnum ir, reg, exit_label, b
       continue = ir.label :continue
-      ir.tbnz reg, 0, continue # continue if bottom bit is 1
-      ir.jmp exit_label
-      ir.put_label continue
+      ir.tbz reg, 0, exit_label # exit if bottom bit is 0
     end
   end
 end

@@ -52,10 +52,10 @@ class TenderJIT
       @out1.dfs &blk
     end
 
-    def reset_live_ranges!
+    def reset!
       i = 0
       each do |bb|
-        bb.live_out.clear
+        bb.reset!
         bb.each_instruction do |insn|
           insn.clear_live_ranges!
           insn.number = i
@@ -142,19 +142,9 @@ class TenderJIT
       while insn
         start = finish = insn
 
-        # UE means "upward exposed"
-        ue_vars = Set.new
-        killed_vars = Set.new
         phis = []
 
         while finish._next
-          if ue = finish.used_variables
-            ue.each do |ue_var|
-              ue_vars << ue_var unless killed_vars.include?(ue_var)
-            end
-          end
-
-          killed_vars << finish.set_variable if finish.set_variable
 
           break if finish.jump? || finish.return?
           break if finish._next.put_label?
@@ -163,7 +153,7 @@ class TenderJIT
           finish = _next
         end
 
-        bb = BasicBlock.new(i, start, finish, phis, ue_vars, killed_vars)
+        bb = BasicBlock.new(i, start, finish, phis)
         all_bbs << bb
 
         has_label[bb.label] = bb if bb.labeled_entry?
@@ -314,7 +304,7 @@ class TenderJIT
       new name, nil, nil, nil, nil, nil
     end
 
-    def initialize name, start, finish, phis, ue_vars, killed_vars
+    def initialize name, start, finish, phis
       super
       @predecessors = []
       @out1         = nil
@@ -322,6 +312,24 @@ class TenderJIT
       @live_out     = Set.new
       @dominators   = nil
       @df           = nil
+      @ue_vars      = nil
+      @killed_vars  = nil
+    end
+
+    def reset!
+      @ue_vars = nil
+      @killed_vars = nil
+      @live_out = Set.new
+    end
+
+    def ue_vars
+      scan_vars unless @ue_vars
+      @ue_vars
+    end
+
+    def killed_vars
+      scan_vars unless @killed_vars
+      @killed_vars
     end
 
     def head?; false; end
@@ -340,14 +348,9 @@ class TenderJIT
           write_phis asm, out2
         end
 
+        # FIXME: we should do this
         # If the last instruction is an unconditional jump and the following
         # block is the jump target, don't bother writing the jump.
-        if insn == finish &&
-            finish.unconditional_jump? &&
-            insn._next.put_label? &&
-            insn._next.out == finish.out
-          next
-        end
         write_instruction asm, insn
       end
     end
@@ -485,6 +488,26 @@ class TenderJIT
     end
 
     private
+
+    def scan_vars
+      # UE means "upward exposed"
+      ue_vars = Set.new
+      killed_vars = Set.new
+      iter = start
+      while iter != finish
+        if ue = iter.used_variables
+          ue.each do |ue_var|
+            ue_vars << ue_var unless killed_vars.include?(ue_var)
+          end
+        end
+
+        killed_vars << iter.set_variable if iter.set_variable
+
+        iter = iter._next
+      end
+      @ue_vars = ue_vars
+      @killed_vars = killed_vars
+    end
 
     def write_instruction asm, insn
       vr1 = insn.arg1

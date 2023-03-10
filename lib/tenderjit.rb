@@ -128,7 +128,7 @@ class TenderJIT
   end
 
   def disable!
-    RubyVM::RJIT.pause
+    #RubyVM::RJIT.pause
   end
 end
 

@@ -68,7 +68,7 @@ class TenderJIT
       sorted_regs = regs.sort_by(&:name)
       first = sorted_regs.first
       buff = "".dup
-      buff << "   " if highlight_insn
+      buff << "   "
       buff << " " * (maxwidth[0] + num_width + 2)
       buff << "OUT".ljust(maxwidth[3] + 1)
       buff << "IN1".ljust(maxwidth[1] + 1)
@@ -88,6 +88,8 @@ class TenderJIT
           else
             start += "   "
           end
+        else
+          start += "   "
         end
 
         if ansi
@@ -187,12 +189,12 @@ class TenderJIT
       ra.assemble self, cg
     end
 
-    def to_binary
-      cfg.to_binary
+    def assemble
+      cfg.assemble
     end
 
     def write_to buffer
-      to_binary.write_to buffer
+      assemble.write_to buffer
     end
 
     def sp

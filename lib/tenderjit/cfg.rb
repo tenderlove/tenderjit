@@ -16,6 +16,7 @@ class TenderJIT
     end
 
     def clean blocks
+      return blocks
       blocks.each do |blk|
         blk.remove if blk.empty?
       end
@@ -36,10 +37,14 @@ class TenderJIT
     end
 
     def assign_registers platform = Util::PLATFORM
-      ra(platform).allocate @basic_blocks, @ir
-      puts @basic_blocks.dump_usage
-    rescue RegisterAllocator::Spill
-      retry
+      result = ra(platform).allocate(@basic_blocks, @ir)
+      spills = 0
+      while result.spill?
+        fix_spill result, @ir, spills
+        spills += 1
+        @basic_blocks.reset!
+        result = ra(platform).allocate(@basic_blocks, @ir)
+      end
     end
 
     def ra platform
@@ -62,10 +67,10 @@ class TenderJIT
       end
     end
 
-    def to_binary platform = Util::PLATFORM
+    def assemble platform = Util::PLATFORM
       assign_registers platform
       asm = self.code_generator platform
-      each do |block|
+      @basic_blocks.dfs do |block|
         block.assemble asm
       end
       asm
@@ -101,6 +106,52 @@ class TenderJIT
       end
       buf << "}\n"
       buf
+    end
+
+    private
+
+    def fix_spill e, ir, spills
+      insn = e.insn
+      active = e.active
+      block = e.block
+      iter          = insn
+      spill_reg     = nil
+      next_use_insn = nil
+
+      # Find spill candidate from the active registers
+      while iter != block.finish
+        break if active.empty?
+
+        if active.include?(iter.arg1)
+          spill_reg = iter.arg1
+          next_use_insn = iter
+          active.delete iter.arg1
+        end
+
+        if active.include?(iter.arg2)
+          spill_reg = iter.arg2
+          next_use_insn = iter
+          active.delete iter.arg2
+        end
+
+        iter = iter._next
+      end
+
+      ir.insert_at(insn.prev) do |ir|
+        ir.store(spill_reg, ir.sp, spills * 8)
+      end
+
+      iter = insn
+      while iter != block.finish
+        if iter.arg1 == spill_reg || iter.arg2 == spill_reg
+          ir.insert_at(iter.prev) do |ir|
+            var = ir.load(ir.sp, spills * 8)
+            iter = iter.replace(iter.arg1 == spill_reg ? var : iter.arg1,
+                                iter.arg2 == spill_reg ? var : iter.arg2)
+          end
+        end
+        iter = iter._next
+      end
     end
   end
 end
