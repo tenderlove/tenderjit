@@ -230,11 +230,6 @@ class TenderJIT
       push __method__, location, arity, param(0)
     end
 
-    def write arg1, arg2
-      push __method__, arg2, NONE, arg1
-      arg1
-    end
-
     def add arg1, arg2
       push __method__, arg1, arg2
     end
