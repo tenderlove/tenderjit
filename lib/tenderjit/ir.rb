@@ -17,6 +17,10 @@ class TenderJIT
       @counter = counter
     end
 
+    def current_instruction
+      @instructions
+    end
+
     def instructions; @insn_head; end
 
     def insert_at insn

@@ -25,6 +25,11 @@ class TenderJIT
         @locals = {}
       end
 
+      def initialize_copy other
+        @stack = @stack.dup
+        @locals = @locals.dup
+      end
+
       def each &blk
         @stack.each(&blk)
       end

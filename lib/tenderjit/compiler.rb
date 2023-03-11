@@ -77,16 +77,26 @@ class TenderJIT
       seen = {}
       worklist = [[cfg.first, context]]
       while work = worklist.pop
-        block, context = *work
-        unless seen[block]
-          seen[block] = true
-          translate_block block, ir, context
-          if block.out1
-            worklist.unshift [block.out1, context]
+        yarv_block, context = *work
+        # Add a phi function for stack items that differ
+        # The stack that went first wins and everyone else needs to copy
+        # in to that "winning" register
+        if seen[yarv_block]
+          prev_context, insns = seen[yarv_block]
+          prev_context.zip(context).reject { |left, right|
+            left.reg == right.reg
+          }.each { |existing, new|
+            insns._next.append IR::Phi.new(existing.reg, [new.reg])
+          }
+        else
+          seen[yarv_block] = [context.dup, ir.current_instruction]
+          translate_block yarv_block, ir, context
+          if yarv_block.out1
+            worklist.unshift [yarv_block.out1, context]
           end
-          if block.out2
+          if yarv_block.out2
             # If we have a fork, we need to dup the stack
-            worklist.unshift [block.out2, context.dup]
+            worklist.unshift [yarv_block.out2, context.dup]
           end
         end
       end
