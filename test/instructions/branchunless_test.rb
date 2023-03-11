@@ -43,5 +43,25 @@ class TenderJIT
       assert_equal 1, jit.executed_methods
       assert_equal 0, jit.exits
     end
+
+    def compare_and_use a, b
+      (a < b ? 5 : 6) + 5
+    end
+
+    def test_phi_function_for_stack
+      jit.compile method(:compare_and_use)
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.executed_methods
+      assert_equal 0, jit.exits
+
+      jit.enable!
+      v = compare(1, 2)
+      jit.disable!
+      assert_equal 10, v
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 1, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
   end
 end

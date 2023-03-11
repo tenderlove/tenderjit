@@ -31,6 +31,7 @@ class TenderJIT
 
     def initialize iseq
       @iseq = iseq
+      @yarv_labels = {}
     end
 
     def yarv
@@ -84,7 +85,6 @@ class TenderJIT
             worklist.unshift [block.out1, context]
           end
           if block.out2
-            puts "duping"
             # If we have a fork, we need to dup the stack
             worklist.unshift [block.out2, context.dup]
           end
@@ -147,6 +147,22 @@ class TenderJIT
       yarv
     end
 
+    def branchunless ctx, ir, insn
+      zero = ir.loadi 0
+      label = yarv_label(ir, insn.opnds.first)
+
+      ir.je ctx.pop.reg, zero, label
+    end
+
+    def jump ctx, ir, insn
+      label = yarv_label(ir, insn.opnds.first)
+      ir.jmp label
+    end
+
+    def put_label ctx, ir, insn
+      ir.put_label yarv_label(ir, insn.opnds.first)
+    end
+
     def putobject ctx, ir, insn
       obj = insn.opnds.first
       out = ir.loadi(Fiddle.dlwrap(obj))
@@ -166,35 +182,35 @@ class TenderJIT
 
       right = r_type.reg
 
-      guard_fixnum ir, right, exit_label, false unless r_type.fixnum?
+      guard_fixnum ir, right, exit_label unless r_type.fixnum?
 
       left = l_type.reg
 
-      guard_fixnum ir, left, exit_label, true unless l_type.fixnum?
+      guard_fixnum ir, left, exit_label unless l_type.fixnum?
 
       ir.cmp left, right
       out = ir.csel_lt ir.loadi(Fiddle::Qtrue), ir.loadi(Fiddle::Qfalse)
 
       ctx.pop
       ctx.pop
-      ctx.push(Hacks.basic_type(true), out)
+      ctx.push(:BOOLEAN, out)
     end
 
-    def opt_plus ctx, ir, cd
+    def opt_plus ctx, ir, insn
       r_type = ctx.peek(0)
       l_type = ctx.peek(1)
 
       exit_label = ir.label(:exit)
 
-      # Generate an exit
-      generate_exit ctx, ctx.stack_depth_b, ir, exit_label
+      # Generate an exit in case of overflow or not fixnums
+      generate_exit ctx, ir, insn.pc, exit_label
 
-      right = ir.load(ctx.sp, r_type.depth_b)
+      right = r_type.reg
 
       # Only test the type at runtime if we don't know for sure
       guard_fixnum ir, right, exit_label unless r_type.fixnum?
 
-      left = ir.load(ctx.sp, l_type.depth_b)
+      left = l_type.reg
 
       # Only test the type at runtime if we don't know for sure
       guard_fixnum ir, left, exit_label unless l_type.fixnum?
@@ -208,7 +224,7 @@ class TenderJIT
 
       ctx.pop
       ctx.pop
-      ir.store out, ctx.sp, ctx.push(:T_FIXNUM, out).depth_b
+      ctx.push(Hacks.basic_type(123), out)
     end
 
     def getlocal ctx, ir, insn
@@ -278,9 +294,15 @@ class TenderJIT
       ir.put_label pass
     end
 
-    def guard_fixnum ir, reg, exit_label, b
+    def guard_fixnum ir, reg, exit_label
       continue = ir.label :continue
       ir.tbz reg, 0, exit_label # exit if bottom bit is 0
+    end
+
+    ##
+    # Look up a yarv label and translate it to an IR label
+    def yarv_label ir, label
+      @yarv_labels[label.name] ||= ir.label("YARV: #{label.name}")
     end
   end
 end

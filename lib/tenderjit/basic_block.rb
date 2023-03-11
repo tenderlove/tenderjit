@@ -175,7 +175,13 @@ class TenderJIT
       end
 
       while bb = wants_label.pop
-        jump_target = has_label.fetch(bb.jump_target_label)
+        jump_target = begin
+                        has_label.fetch(bb.jump_target_label)
+                      rescue KeyError
+                        $stderr.puts ir.dump_usage bb
+                        raise
+                      end
+
         bb.add_edge jump_target
         jump_target.predecessors << bb
       end

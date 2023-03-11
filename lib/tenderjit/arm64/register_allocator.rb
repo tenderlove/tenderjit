@@ -8,6 +8,11 @@ class TenderJIT
     FREE_REGS = [
       AArch64::Registers::X9,
       AArch64::Registers::X10,
+      AArch64::Registers::X11,
+      AArch64::Registers::X12,
+      AArch64::Registers::X13,
+      AArch64::Registers::X14,
+      AArch64::Registers::X15,
     ].freeze
 
     class RegisterAllocator < TenderJIT::RegisterAllocator
