@@ -16,7 +16,6 @@ class TenderJIT
     end
 
     def clean blocks
-      return blocks
       blocks.each do |blk|
         blk.remove if blk.empty?
       end
@@ -25,15 +24,15 @@ class TenderJIT
     end
 
     def each &blk
-      @basic_blocks.each &blk
+      @basic_blocks.each(&blk)
     end
 
     def reverse_each &blk
-      @basic_blocks.reverse_each &blk
+      @basic_blocks.reverse_each(&blk)
     end
 
     def each_instruction &blk
-      @basic_blocks.each_instruction &blk
+      @basic_blocks.each_instruction(&blk)
     end
 
     def assign_registers platform = Util::PLATFORM
@@ -116,7 +115,6 @@ class TenderJIT
       block = e.block
       iter          = insn
       spill_reg     = nil
-      next_use_insn = nil
 
       # Find spill candidate from the active registers
       while iter != block.finish
@@ -124,13 +122,11 @@ class TenderJIT
 
         if active.include?(iter.arg1)
           spill_reg = iter.arg1
-          next_use_insn = iter
           active.delete iter.arg1
         end
 
         if active.include?(iter.arg2)
           spill_reg = iter.arg2
-          next_use_insn = iter
           active.delete iter.arg2
         end
 

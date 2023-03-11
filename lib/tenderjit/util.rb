@@ -22,7 +22,7 @@ class TenderJIT
     module ClassGen
       def self.pos *names
         Class.new do
-          attr_reader *names
+          attr_reader(*names)
           sig = names.map { "#{_1} = nil" }.join(", ")
           init = names.map { "@#{_1} = #{_1}" }.join(";")
           class_eval("def initialize #{sig}; super(); #{init}; end")

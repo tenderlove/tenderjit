@@ -40,7 +40,7 @@ class TenderJIT
 
     def compile
       # method name
-      label = iseq.body.location.label
+      # label = iseq.body.location.label
 
       STATS.compiled_methods += 1
 
@@ -129,8 +129,6 @@ class TenderJIT
       locals = list.map { Hacks.rb_id2sym _1 }
 
       yarv = YARV.new iseq, locals
-
-      stack_size = 0
 
       while jit_pc < iseq_size
         insn = INSNS.fetch(C.rb_vm_insn_decode(iseq.body.iseq_encoded[jit_pc]))
@@ -243,7 +241,7 @@ class TenderJIT
       unless var
         # If the local hasn't been loaded yet, load it
         ep = ir.load(ctx.cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
-        index, level = local.ops
+        index, _ = local.ops
         var = ir.load(ep, ir.imm(-index * Fiddle::SIZEOF_VOIDP))
         ctx.set_local local.name, var
       end
@@ -305,7 +303,6 @@ class TenderJIT
     end
 
     def guard_fixnum ir, reg, exit_label
-      continue = ir.label :continue
       ir.tbz reg, 0, exit_label # exit if bottom bit is 0
     end
 

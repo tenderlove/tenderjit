@@ -41,15 +41,15 @@ class TenderJIT
     def out2; end
 
     def each &blk
-      @out1.each &blk
+      @out1.each(&blk)
     end
 
     def reverse_each &blk
-      @out1.reverse_each &blk
+      @out1.reverse_each(&blk)
     end
 
     def dfs &blk
-      @out1.dfs &blk
+      @out1.dfs(&blk)
     end
 
     def reset!

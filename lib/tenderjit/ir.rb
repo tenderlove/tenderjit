@@ -70,7 +70,6 @@ class TenderJIT
 
       num_width = num.to_s.length
       sorted_regs = regs.sort_by(&:name)
-      first = sorted_regs.first
       buff = "".dup
       buff << "   "
       buff << " " * (maxwidth[0] + num_width + 2)
@@ -87,7 +86,6 @@ class TenderJIT
 
         if highlight_insn
           if insn.number == highlight_insn
-            bold = 1
             start += "-> "
           else
             start += "   "

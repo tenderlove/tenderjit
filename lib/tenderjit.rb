@@ -25,45 +25,6 @@ class TenderJIT
 
   STATS = Stats.malloc(Fiddle::RUBY_FREE)
 
-  def self.make_exit_function
-    return
-    jb = JITBuffer.new 4096
-    ir = IR.new
-
-    ec        = ir.param(0)
-    cfp       = ir.param(1)
-    sp_depth  = ir.param(2)
-    jit_pc    = ir.param(3)
-
-    # Increment the exit locations
-    stats_location = ir.write(ir.var, STATS.to_i)
-    stat = ir.load(stats_location, Stats.offsetof("exits"))
-    inc = ir.add(stat, 0x1)
-    ir.store(inc, stats_location, Stats.offsetof("exits"))
-
-    iseq_offset = C.rb_iseq_t.offsetof(:body) +
-      C.rb_iseq_constant_body.offsetof(:iseq_encoded)
-
-    # flush the PC to the frame
-    iseq = ir.load(cfp, C.rb_control_frame_t.offsetof(:iseq))
-    body = ir.load(iseq, C.rb_iseq_t.offsetof(:body))
-    pc   = ir.load(body, C.rb_iseq_constant_body.offsetof(:iseq_encoded))
-    pc   = ir.add(pc, jit_pc)
-    ir.store(pc, cfp, C.rb_control_frame_t.offsetof(:pc))
-
-    # flush the SP to the frame
-    sp = ir.load(cfp, C.rb_control_frame_t.offsetof(:sp))
-    sp = ir.add(sp, sp_depth)
-    ir.store(sp, cfp, C.rb_control_frame_t.offsetof(:sp))
-
-    ir.return 1
-
-    jb.writeable!
-    ir.write_to jb
-    jb.executable!
-    jb
-  end
-
   def self.disasm buf
     hs = case Util::PLATFORM
          when :arm64
@@ -79,8 +40,6 @@ class TenderJIT
       puts "%#05x %s %s" % [insn.address, insn.mnemonic, insn.op_str]
     end
   end
-
-  EXIT = make_exit_function
 
   def initialize
     @stats = STATS
