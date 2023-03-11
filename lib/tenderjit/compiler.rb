@@ -248,12 +248,6 @@ class TenderJIT
       ctx.push :unknown, var
     end
 
-    def getlocal_WC_0 ctx, ir, index
-      local = ir.load(ctx.ep, ir.imm(-index * Fiddle::SIZEOF_VOIDP))
-      ir.store(local, ctx.sp, ir.uimm(ctx.stack_depth_b))
-      ctx.push :unknown, local
-    end
-
     def leave ctx, ir, opnds
       item = ctx.pop
 
