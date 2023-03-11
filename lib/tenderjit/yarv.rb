@@ -150,6 +150,10 @@ class TenderJIT
       send insn.name, pc, insn, operands
     end
 
+    def dup pc, insn, ops
+      add_insn __method__, pc, insn, ops
+    end
+
     def getlocal_WC_0 pc, insn, ops
       getlocal pc, insn, [ops[0], 0]
     end

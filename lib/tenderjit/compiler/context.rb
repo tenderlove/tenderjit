@@ -52,6 +52,10 @@ class TenderJIT
         item
       end
 
+      def top
+        @stack.last
+      end
+
       def stack_depth_b
         stack_depth * Fiddle::SIZEOF_VOIDP
       end

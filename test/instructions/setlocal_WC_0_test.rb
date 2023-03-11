@@ -24,8 +24,8 @@ class TenderJIT
 
       jit.enable!
       v = setlocal_WC_0
-      jit.disable!
       assert_equal 2, v
+      disasm
 
       assert_equal 1, jit.compiled_methods
       assert_equal 1, jit.executed_methods

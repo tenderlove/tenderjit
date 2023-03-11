@@ -162,6 +162,11 @@ class TenderJIT
       ir.jfalse temp.reg, label
     end
 
+    def dup ctx, ir, insn
+      top = ctx.top
+      ctx.push top.type, top.reg
+    end
+
     def jump ctx, ir, insn
       label = yarv_label(ir, insn.opnds.first)
       ir.jmp label
@@ -233,6 +238,11 @@ class TenderJIT
       ctx.pop
       ctx.pop
       ctx.push(Hacks.basic_type(123), out)
+    end
+
+    def setlocal ctx, ir, insn
+      local = insn.opnds
+      ctx.set_local local.name, ctx.pop.reg
     end
 
     def getlocal ctx, ir, insn
