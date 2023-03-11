@@ -364,6 +364,20 @@ class TenderJIT
       push __method__, arg1, arg2
     end
 
+    ##
+    # Jump if not false or Qnil
+    def jnfalse arg1, dest
+      push __method__, arg1, NONE, dest
+      nil
+    end
+
+    ##
+    # Jump if false or Qnil
+    def jfalse arg1, dest
+      push __method__, arg1, NONE, dest
+      nil
+    end
+
     def put_label name
       raise unless name.is_a?(Operands::Label)
       push __method__, NONE, NONE, name

@@ -26,6 +26,16 @@ class TenderJIT
         @params << arg1
       end
 
+      def jnfalse dest, reg, _
+        asm.tst reg, ~Fiddle::Qnil
+        asm.b dest, cond: :ne
+      end
+
+      def jfalse dest, reg, _
+        asm.tst reg, ~Fiddle::Qnil
+        asm.b dest, cond: :eq
+      end
+
       def tbz dest, reg, bit
         asm.tbz reg, bit, dest
       end

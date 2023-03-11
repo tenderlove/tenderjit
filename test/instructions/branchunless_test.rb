@@ -65,5 +65,28 @@ class TenderJIT
       assert_equal 2, jit.executed_methods
       assert_equal 0, jit.exits
     end
+
+    def check_truth x
+      if x
+        :true
+      else
+        :false
+      end
+    end
+
+    def test_nil_and_false_are_false
+      jit.compile method(:check_truth)
+      assert_equal 1, jit.compiled_methods
+
+      jit.enable!
+      assert_equal :false, check_truth(false)
+      assert_equal :false, check_truth(nil)
+      assert_equal :true, check_truth(true)
+      assert_equal :true, check_truth(Object.new)
+      assert_equal :true, check_truth(Object.new)
+      assert_equal :true, check_truth(0)
+
+      assert_equal 6, jit.executed_methods
+    end
   end
 end

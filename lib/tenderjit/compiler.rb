@@ -156,10 +156,10 @@ class TenderJIT
     end
 
     def branchunless ctx, ir, insn
-      zero = ir.loadi 0
       label = yarv_label(ir, insn.opnds.first)
 
-      ir.je ctx.pop.reg, zero, label
+      temp = ctx.pop
+      ir.jfalse temp.reg, label
     end
 
     def jump ctx, ir, insn

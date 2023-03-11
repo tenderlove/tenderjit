@@ -10,6 +10,44 @@ class TenderJIT
   class IRTest < Test
     include Fiddle::Types
 
+    def test_jfalse
+      ir = IR.new
+      is_false = ir.label :is_false
+      ir.jfalse ir.param(0), is_false
+      ir.return 0
+      ir.put_label is_false
+      ir.return 1
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([VOIDP], INT)
+      assert_equal 1, func.call(Fiddle.dlwrap(nil))
+      assert_equal 1, func.call(Fiddle.dlwrap(false))
+      assert_equal 0, func.call(Fiddle.dlwrap(Object.new))
+      assert_equal 0, func.call(Fiddle.dlwrap(true))
+      assert_equal 0, func.call(Fiddle.dlwrap(2.0))
+    end
+
+    def test_jnfalse
+      ir = IR.new
+      not_false = ir.label :not_false
+      ir.jnfalse ir.param(0), not_false
+      ir.return 0
+      ir.put_label not_false
+      ir.return 1
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([VOIDP], INT)
+      assert_equal 0, func.call(Fiddle.dlwrap(nil))
+      assert_equal 0, func.call(Fiddle.dlwrap(false))
+      assert_equal 1, func.call(Fiddle.dlwrap(Object.new))
+      assert_equal 1, func.call(Fiddle.dlwrap(true))
+      assert_equal 1, func.call(Fiddle.dlwrap(2.0))
+    end
+
     def test_lifetime_holes_use_borrowed_regs
       ir = IR.new
       _else = ir.label :else
@@ -87,7 +125,7 @@ class TenderJIT
       b = ir.param(1)
 
       ir.cmp a, b
-      z = ir.write(ir.var, 0)
+      z = ir.loadi(0)
       t = ir.csel_lt(a, z) # t = a < b ? a : b
       ir.return t
 
@@ -117,7 +155,7 @@ class TenderJIT
     def test_jo
       ir = IR.new
       a = ir.param(0)
-      b = ir.write(ir.var, 0xFFFF_FFFF_FFFF_FFFF >> 1)
+      b = ir.loadi(0xFFFF_FFFF_FFFF_FFFF >> 1)
 
       t = ir.add(a, b) # t = a + b
       overflow = ir.label(:overflow)
@@ -189,7 +227,7 @@ class TenderJIT
 
     def test_bitwise_lit_lit
       ir = IR.new
-      t = ir.and(3, 1) # t = a & b
+      t = ir.and(ir.loadi(3), 1) # t = a & b
       ir.return t      # return t
       buf = assemble ir
       func = buf.to_function([], Fiddle::TYPE_INT)
@@ -243,8 +281,7 @@ class TenderJIT
 
     def test_write
       ir = IR.new
-      a = ir.param(0)
-      b = ir.write(a, ir.uimm(16))
+      b = ir.loadi(16)
       ir.return b
 
       buf = assemble ir
@@ -276,7 +313,7 @@ class TenderJIT
 
       ir = IR.new
       a = ir.param(0)
-      b = ir.write(ir.var, ir.uimm(val))
+      b = ir.loadi(val)
       c = ir.store(b, a, ir.uimm(0))
       ir.return a
 
@@ -333,8 +370,7 @@ class TenderJIT
       ir.jmp foo
 
       # Write a value to x0 but jump over it, making sure the jmp works
-      ir.return ir.write(a, ir.uimm(32))
-      b = ir.load(a, ir.uimm(0))
+      ir.return ir.loadi(32)
 
       ir.put_label(foo)
       ir.return a
@@ -373,7 +409,7 @@ class TenderJIT
     def assemble ir
       cfg = ir.cfg
 
-      asm = cfg.to_binary
+      asm = cfg.assemble
 
       buf = JITBuffer.new 4096
 
