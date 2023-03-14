@@ -36,7 +36,7 @@ class TenderJIT
          end
 
     # Now disassemble the instructions with Hatstone
-    hs.disasm(buf[0, buf.pos], 0x0).each do |insn|
+    hs.disasm(buf[0, buf.pos], buf.to_i).each do |insn|
       puts "%#05x %s %s" % [insn.address, insn.mnemonic, insn.op_str]
     end
   end
