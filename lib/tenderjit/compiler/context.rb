@@ -35,7 +35,11 @@ class TenderJIT
       end
 
       def get_local name
-        @locals[name]
+        @locals.fetch(name)
+      end
+
+      def have_local? name
+        @locals.key? name
       end
 
       def set_local name, var

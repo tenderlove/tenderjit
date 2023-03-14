@@ -130,7 +130,7 @@ class TenderJIT
     end
   end
 
-  class BasicBlock < Util::ClassGen.pos(:name, :start, :finish, :phis, :ue_vars, :killed_vars)
+  class BasicBlock < Util::ClassGen.pos(:name, :start, :finish, :phis)
     def self.build insn_head, ir, ssa
       head = last_bb = BasicBlockHead.new ssa, ir
       insn = insn_head._next
@@ -289,10 +289,9 @@ class TenderJIT
         worklist = name_to_blocks[x].to_a
         while b = worklist.shift
           b.df.each do |d|
-            phi = d.phis.find { |phi| phi.vars.include?(x) }
-            puts "hi"
+            phi = d.phis.find { |phi| phi.inputs.include?(x) }
             unless phi
-              d.phis << IR::Phi.new(x, [x])
+              d.phis << IR::Phi.new(x, x, x)
               worklist << d
             end
           end
@@ -318,24 +317,41 @@ class TenderJIT
       @live_out     = Set.new
       @dominators   = nil
       @df           = nil
-      @ue_vars      = nil
-      @killed_vars  = nil
     end
 
     def reset!
-      @ue_vars = nil
-      @killed_vars = nil
       @live_out = Set.new
     end
 
     def ue_vars
-      scan_vars unless @ue_vars
-      @ue_vars
+      # UE means "upward exposed"
+      ue_vars = Set.new
+      iter = start
+      while iter != finish
+        if ue = iter.used_variables
+          ue.each do |ue_var|
+            ue_vars << ue_var unless killed_vars.include?(ue_var)
+          end
+        end
+
+        iter = iter._next
+      end
+
+      ue_vars |= child_phis out1
+      ue_vars |= child_phis out2
+
+      ue_vars
     end
 
     def killed_vars
-      scan_vars unless @killed_vars
-      @killed_vars
+      # UE means "upward exposed"
+      killed_vars = []
+      iter = start
+      while iter != finish
+        killed_vars << iter.set_variable if iter.set_variable
+        iter = iter._next
+      end
+      killed_vars
     end
 
     def head?; false; end
@@ -362,8 +378,7 @@ class TenderJIT
     end
 
     def live_in predecessor
-      used_phis = Set.new(phis.flat_map(&:vars).uniq)
-      ue_vars | (predecessor.killed_vars & used_phis)
+      ue_vars | predecessor.killed_vars | (Set.new(phis.flat_map(&:inputs)) & predecessor.ue_vars)
     end
 
     def add_edge edge
@@ -495,26 +510,6 @@ class TenderJIT
 
     private
 
-    def scan_vars
-      # UE means "upward exposed"
-      ue_vars = Set.new
-      killed_vars = Set.new
-      iter = start
-      while iter != finish
-        if ue = iter.used_variables
-          ue.each do |ue_var|
-            ue_vars << ue_var unless killed_vars.include?(ue_var)
-          end
-        end
-
-        killed_vars << iter.set_variable if iter.set_variable
-
-        iter = iter._next
-      end
-      @ue_vars = ue_vars
-      @killed_vars = killed_vars
-    end
-
     def write_instruction asm, insn
       vr1 = insn.arg1
       vr2 = insn.arg2
@@ -524,11 +519,25 @@ class TenderJIT
       asm.handle insn, vr3.pr, vr1.pr, vr2.pr
     end
 
+    EMPTY_SET = Set.new
+
+    def child_phis successor
+      return EMPTY_SET unless successor
+
+      if successor.phis.any?
+        live_phi = successor.phis.flat_map(&:inputs) &
+          dominators.flat_map(&:killed_vars)
+        Set.new(live_phi)
+      else
+        EMPTY_SET
+      end
+    end
+
     def write_phis asm, successor
       return unless successor
 
       successor.phis.each do |phi|
-        phi.vars.each do |transfer|
+        phi.inputs.each do |transfer|
           if live_out.include?(transfer)
             if phi.out.pr != transfer.pr
               write = IR::Instruction.new(:write, transfer, IR::NONE, phi.out)

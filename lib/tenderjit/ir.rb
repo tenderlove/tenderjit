@@ -192,7 +192,10 @@ class TenderJIT
     end
 
     def assemble
-      cfg.assemble
+      x = cfg
+      m = x.assemble
+      #File.binwrite("ir_cfg.dot", cfg.to_dot)
+      m
     end
 
     def write_to buffer
@@ -265,39 +268,20 @@ class TenderJIT
       nil
     end
 
-    class Phi
-      include LinkedList::Element
-
-      attr_reader :out, :vars
-      attr_accessor :number
-
-      def initialize out, vars
-        @out = out
-        @vars = vars
-        @number = nil
+    class Phi < IR::Instruction
+      def initialize arg1, arg2, out
+        super(:phi, arg1, arg2, out)
       end
 
-      def arg1; NONE; end
-      def arg2; NONE; end
-
-      def op; :phi; end
-
-      def registers
-        [@out] + @vars
+      def inputs
+        [arg1, arg2]
       end
 
-      def used_at i
-        @vars.each { _1.set_last_use i }
+      def used_variables
+        []
       end
 
-      def put_label?; false; end
-      def jump?; false; end
       def phi?; true; end
-
-      def used_variables; []; end
-      def set_variable; @out; end
-
-      def return?; false; end
     end
 
     def phi *args

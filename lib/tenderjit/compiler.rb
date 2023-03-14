@@ -78,15 +78,37 @@ class TenderJIT
       worklist = [[cfg.first, context]]
       while work = worklist.pop
         yarv_block, context = *work
-        # Add a phi function for stack items that differ
-        # The stack that went first wins and everyone else needs to copy
-        # in to that "winning" register
+        # If we've seen the block before, it must be a joint point
         if seen[yarv_block]
+          # Add a phi function for stack items that differ
+          # The stack that went first wins and everyone else needs to copy
+          # in to that "winning" register
           prev_context, insns = seen[yarv_block]
           prev_context.zip(context).reject { |left, right|
             left.reg == right.reg
           }.each { |existing, new|
-            insns._next.append IR::Phi.new(existing.reg, [new.reg])
+            insns._next.append IR::Phi.new(existing.reg, new.reg, ir.var)
+          }
+
+          # Add phi functions for locals
+          yarv_block.phis.map(&:out).map(&:name).each { |name|
+            existing = prev_context.get_local name
+            new = context.get_local name
+            phi = IR::Phi.new(existing, new, ir.var)
+            insns._next.append phi
+            iter = phi._next
+            fix_ups = []
+            while iter != ir.current_instruction
+              if iter.arg1 == existing || iter.arg2 == existing
+                fix_ups << iter
+              end
+              iter = iter._next
+            end
+            fix_ups.each do |insn|
+              arg1 = insn.arg1 == existing ? phi.out : insn.arg1
+              arg2 = insn.arg2 == existing ? phi.out : insn.arg2
+              insn.replace arg1, arg2
+            end
           }
         else
           seen[yarv_block] = [context.dup, ir.current_instruction]
@@ -247,15 +269,14 @@ class TenderJIT
 
     def getlocal ctx, ir, insn
       local = insn.opnds
-      var = ctx.get_local(local.name)
-      unless var
+      unless ctx.have_local?(local.name)
         # If the local hasn't been loaded yet, load it
         ep = ir.load(ctx.cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
         index, _ = local.ops
         var = ir.load(ep, ir.imm(-index * Fiddle::SIZEOF_VOIDP))
         ctx.set_local local.name, var
       end
-      ctx.push :unknown, var
+      ctx.push :unknown, ctx.get_local(local.name)
     end
 
     def leave ctx, ir, opnds

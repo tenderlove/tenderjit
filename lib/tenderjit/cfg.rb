@@ -16,6 +16,7 @@ class TenderJIT
     end
 
     def clean blocks
+      return blocks
       blocks.each do |blk|
         blk.remove if blk.empty?
       end
@@ -90,7 +91,7 @@ class TenderJIT
         if block.phis.any?
           block.phis.each do |phi|
             buf << "Phi: #{ir.vars [phi.out]} = "
-            buf << "#{ir.vars phi.vars}\\l"
+            buf << "#{ir.vars phi.inputs}\\l"
           end
         end
         buf << "Dom:      #{block.dominators.map(&:name).join(",")}\\l"

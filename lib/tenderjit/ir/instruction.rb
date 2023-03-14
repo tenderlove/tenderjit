@@ -41,7 +41,7 @@ class TenderJIT
       end
 
       def used_variables
-        [arg1, arg2].select(&:register?)
+        [arg1, arg2].select(&:variable?)
       end
 
       def set_variable
