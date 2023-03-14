@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+
 class TenderJIT
   class CFG
     attr_reader :ir, :basic_blocks

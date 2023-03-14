@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "tenderjit/util"
 require "tenderjit/linked_list"
 
