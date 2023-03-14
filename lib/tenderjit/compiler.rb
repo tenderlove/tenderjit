@@ -80,36 +80,53 @@ class TenderJIT
         yarv_block, context = *work
         # If we've seen the block before, it must be a joint point
         if seen[yarv_block]
-          # Add a phi function for stack items that differ
-          # The stack that went first wins and everyone else needs to copy
-          # in to that "winning" register
           prev_context, insns = seen[yarv_block]
+          phis = []
+
+          # Add a phi function for stack items that differ
           prev_context.zip(context).reject { |left, right|
             left.reg == right.reg
           }.each { |existing, new|
-            insns._next.append IR::Phi.new(existing.reg, new.reg, ir.var)
+            phis << IR::Phi.new(existing.reg, new.reg, ir.var)
           }
 
-          # Add phi functions for locals
+          # Make phi functions for locals
           yarv_block.phis.map(&:out).map(&:name).each { |name|
             existing = prev_context.get_local name
             new = context.get_local name
-            phi = IR::Phi.new(existing, new, ir.var)
-            insns._next.append phi
-            iter = phi._next
-            fix_ups = []
-            while iter != ir.current_instruction
-              if iter.arg1 == existing || iter.arg2 == existing
-                fix_ups << iter
-              end
-              iter = iter._next
-            end
-            fix_ups.each do |insn|
-              arg1 = insn.arg1 == existing ? phi.out : insn.arg1
-              arg2 = insn.arg2 == existing ? phi.out : insn.arg2
-              insn.replace arg1, arg2
-            end
+            phis << IR::Phi.new(existing, new, ir.var)
           }
+
+          # Append all phis
+          phis.each { |phi| insns._next.append phi }
+
+          ## Walk past the phi nodes
+          iter = insns._next._next
+          while iter.phi?
+            iter = iter._next
+          end
+
+          old_vars = phis.each_with_object({}) { |phi, out|
+            out[phi.arg1] = phi.out
+            out[phi.arg2] = phi.out
+          }
+
+          needs_fixing = []
+
+          while iter != ir.current_instruction
+            if old_vars.key?(iter.arg1) || old_vars.key?(iter.arg2)
+              needs_fixing << iter
+            end
+            iter = iter._next
+          end
+
+          # Replace instructions so they point at the phi output instead of
+          # the original input
+          needs_fixing.each do |insn|
+            arg1 = old_vars[insn.arg1] || insn.arg1
+            arg2 = old_vars[insn.arg2] || insn.arg2
+            insn.replace arg1, arg2
+          end
         else
           seen[yarv_block] = [context.dup, ir.current_instruction]
           translate_block yarv_block, ir, context
