@@ -152,6 +152,22 @@ class TenderJIT
       assert_equal 1, func.call(2, 1)
     end
 
+    def test_csel_gt
+      ir = IR.new
+      a = ir.param(0)
+      b = ir.param(1)
+
+      ir.cmp a, b
+      t = ir.csel_gt(a, b) # t = a > b ? a : b
+      ir.return t
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal 2, func.call(1, 2)
+      assert_equal 2, func.call(2, 1)
+    end
+
     def test_jo
       ir = IR.new
       a = ir.param(0)

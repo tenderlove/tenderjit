@@ -286,9 +286,9 @@ class TenderJIT
       def phi?; true; end
     end
 
-    def phi *args
+    def phi arg1, arg2
       out = var
-      @instructions = @instructions.append Phi.new(out, args)
+      @instructions = @instructions.append Phi.new(arg1, arg2, out)
       out
     end
 
@@ -308,6 +308,11 @@ class TenderJIT
     end
 
     def csel_lt arg1, arg2
+      raise ArgumentError if arg1.integer? || arg2.integer?
+      push __method__, arg1, arg2
+    end
+
+    def csel_gt arg1, arg2
       raise ArgumentError if arg1.integer? || arg2.integer?
       push __method__, arg1, arg2
     end

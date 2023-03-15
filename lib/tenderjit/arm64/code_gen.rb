@@ -200,6 +200,11 @@ class TenderJIT
         asm.csel out, in1, in2, :lt
       end
 
+      def csel_gt out, in1, in2
+        in2 = XZR if in2 == 0
+        asm.csel out, in1, in2, :gt
+      end
+
       def put_label label, _, _
         asm.put_label label
       end
