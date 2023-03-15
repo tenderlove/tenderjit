@@ -64,6 +64,11 @@ class TenderJIT
 
       buff.writeable!
       asm.write_to buff
+
+      if $DEBUG
+        disasm buff
+      end
+
       buff.executable!
 
       buff.to_i
@@ -170,21 +175,9 @@ class TenderJIT
       yarv = YARV.new iseq, locals
 
       while jit_pc < iseq_size
-        insn = INSNS.fetch(C.rb_vm_insn_decode(iseq.body.iseq_encoded[jit_pc]))
-        operands = insn.opes.map.with_index { |operand,  i|
-          case operand[:type]
-          when "lindex_t" then iseq_buf[jit_pc + i + 1]
-          when "rb_num_t" then iseq_buf[jit_pc + i + 1]
-          when "OFFSET" then
-            # OFFSET is signed
-            Fiddle::Pointer.new(iseq_buf.to_i + ((jit_pc + i + 1) * 8))[0, 8].unpack1("q")
-          when "CALL_DATA" then C.rb_call_data.new(iseq_buf[jit_pc + i + 1])
-          when "VALUE" then Fiddle.dlunwrap(iseq_buf[jit_pc + i + 1])
-          else
-            raise operand[:type]
-          end
-        }
-        yarv.handle jit_pc, insn, operands
+        addr = iseq_buf.to_i + (jit_pc * Fiddle::SIZEOF_VOIDP)
+        insn = INSNS.fetch C.rb_vm_insn_decode(Fiddle.read_ptr(addr, 0))
+        yarv.handle addr, insn
 
         jit_pc += insn.len
       end
@@ -334,11 +327,7 @@ class TenderJIT
       ir.store(sp, ctx.cfp, C.rb_control_frame_t.offsetof(:sp))
 
       # Update the PC
-      iseq = ir.load(ctx.cfp, C.rb_control_frame_t.offsetof(:iseq))
-      body = ir.load(iseq, C.rb_iseq_t.offsetof(:body))
-      pc   = ir.load(body, C.rb_iseq_constant_body.offsetof(:iseq_encoded))
-      pc = ir.add(pc, vm_pc * Fiddle::SIZEOF_VOIDP)
-      ir.store(pc, ctx.cfp, C.rb_control_frame_t.offsetof(:pc))
+      ir.store(ir.loadi(vm_pc), ctx.cfp, C.rb_control_frame_t.offsetof(:pc))
 
       ir.ret Fiddle::Qundef
       ir.put_label pass

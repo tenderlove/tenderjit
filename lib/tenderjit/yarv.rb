@@ -143,19 +143,21 @@ class TenderJIT
       end
     end
 
-    def handle pc, insn, operands
+    EMPTY = [].freeze
+
+    def handle pc, insn
       if label = @label_map[pc]
         put_label pc, label
       end
-      send insn.name, pc, insn, operands
+      send insn.name, pc, insn
     end
 
-    def dup pc, insn, ops
-      add_insn __method__, pc, insn, ops
+    def dup pc, insn
+      add_insn __method__, pc, insn, EMPTY
     end
 
-    def getlocal_WC_0 pc, insn, ops
-      getlocal pc, insn, [ops[0], 0]
+    def getlocal_WC_0 pc, insn
+      add_insn :getlocal, pc, insn, local_name([readop(:uint, pc, 0), 0])
     end
 
     def getlocal pc, insn, ops
@@ -166,15 +168,16 @@ class TenderJIT
       add_insn __method__, pc, insn, ops
     end
 
-    def setlocal_WC_0 pc, insn, ops
-      setlocal pc, insn, [ops[0], 0]
+    def setlocal_WC_0 pc, insn
+      add_insn :setlocal, pc, insn, local_name([readop(:uint, pc, 0), 0])
     end
 
     def setlocal pc, insn, ops
       add_insn __method__, pc, insn, local_name(ops)
     end
 
-    def opt_plus pc, insn, ops
+    def opt_plus pc, insn
+      ops = [C.rb_call_data.new(readop(:ptr, pc, 0))]
       add_insn __method__, pc, insn, ops
     end
 
@@ -182,31 +185,33 @@ class TenderJIT
       add_insn __method__, pc, insn, ops
     end
 
-    def leave pc, insn, ops
+    def leave pc, insn
+      add_insn __method__, pc, insn, EMPTY
+    end
+
+    def putobject pc, insn
+      ops = [Fiddle.dlunwrap(readop(:ptr, pc, 0))]
       add_insn __method__, pc, insn, ops
     end
 
-    def putobject pc, insn, ops
-      add_insn __method__, pc, insn, ops
-    end
-
-    def putobject_INT2FIX_1_ pc, insn, ops
-      putobject pc, insn, [1]
+    def putobject_INT2FIX_1_ pc, insn
+      add_insn :putobject, pc, insn, [1]
     end
 
     def putobject_INT2FIX_0_ pc, insn, ops
-      putobject pc, insn, [0]
+      add_insn :putobject, pc, insn, [0]
     end
 
-    def putnil pc, insn, ops
-      putobject pc, insn, [nil]
+    def putnil pc, insn
+      add_insn :putobject, pc, insn, [nil]
     end
 
-    def pop pc, insn, ops
-      add_insn __method__, pc, insn, ops
+    def pop pc, insn
+      add_insn __method__, pc, insn, EMPTY
     end
 
-    def opt_lt pc, insn, ops
+    def opt_lt pc, insn
+      ops = [C.rb_call_data.new(readop(:ptr, pc, 0))]
       add_insn __method__, pc, insn, ops
     end
 
@@ -218,11 +223,11 @@ class TenderJIT
       add_insn __method__, pc, insn, ops
     end
 
-    def branchunless pc, insn, ops
-      offset = ops.first
+    def branchunless pc, insn
+      offset = readop(:int, pc, 0)
 
       # offset is PC + dest
-      dest_pc = pc + offset + 2 # branchunless is 2 wide
+      dest_pc = pc + ((offset + 2) * Fiddle::SIZEOF_VOIDP) # branchunless is 2 wide
 
       label = insert_label_at_pc pc, dest_pc
 
@@ -233,7 +238,7 @@ class TenderJIT
       offset = ops.first
 
       # offset is PC + dest
-      dest_pc = pc + offset + 2 # branchunless is 2 wide
+      dest_pc = pc + ((offset + 2) * Fiddle::SIZEOF_VOIDP) # branchif is 2 wide
 
       label = insert_label_at_pc pc, dest_pc
 
@@ -244,11 +249,11 @@ class TenderJIT
       add_insn __method__, pc, label, [label]
     end
 
-    def jump pc, insn, ops
-      offset = ops.first
+    def jump pc, insn
+      offset = readop(:int, pc, 0)
 
       # offset is PC + dest
-      dest_pc = pc + offset + 2 # branchunless is 2 wide
+      dest_pc = pc + ((offset + 2) * Fiddle::SIZEOF_VOIDP) # jump is 2 wide
 
       label = insert_label_at_pc pc, dest_pc
 
@@ -296,6 +301,16 @@ class TenderJIT
         end
       end
       @local_names[ops]
+    end
+
+    def readop type, pc, idx
+      case type
+      when :ptr then Fiddle.read_ptr(pc + ((idx + 1) * Fiddle::SIZEOF_VOIDP), 0)
+      when :uint then Fiddle.read_uint(pc + ((idx + 1) * Fiddle::SIZEOF_VOIDP), 0)
+      when :int then Fiddle.read_int(pc + ((idx + 1) * Fiddle::SIZEOF_VOIDP), 0)
+      else
+        raise
+      end
     end
   end
 end

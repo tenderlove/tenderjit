@@ -194,7 +194,9 @@ class TenderJIT
     def assemble
       x = cfg
       m = x.assemble
-      #File.binwrite("ir_cfg.dot", cfg.to_dot)
+      if $DEBUG
+        File.binwrite("ir_cfg.dot", cfg.to_dot)
+      end
       m
     end
 

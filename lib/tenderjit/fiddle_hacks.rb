@@ -33,8 +33,12 @@ module Fiddle
     nil
   end
 
-  def self.read_unsigned_int ptr, offset
+  def self.read_uint ptr, offset
     Fiddle::Pointer.new(ptr)[offset, Fiddle::SIZEOF_INT].unpack1(PackInfo::PACK_MAP[-TYPE_INT])
+  end
+
+  def self.read_int ptr, offset
+    Fiddle::Pointer.new(ptr)[offset, Fiddle::SIZEOF_INT].unpack1(PackInfo::PACK_MAP[TYPE_INT])
   end
 
   module Layout
