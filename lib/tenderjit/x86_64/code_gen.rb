@@ -87,6 +87,10 @@ class TenderJIT
         @asm.mov out, @asm.m64(src, offset)
       end
 
+      def loadi out, val, _
+        @asm.mov out, @asm.uimm(val)
+      end
+
       def store offset, val, dst
         @asm.mov @asm.m64(dst, offset), val
       end
@@ -96,14 +100,14 @@ class TenderJIT
         arg1 = @asm.uimm(arg1) if arg1.integer?
 
         @asm.cmp arg1, arg2
-        @asm.jle asm.label(dest.name)
+        @asm.jle asm.label(dest)
       end
 
-      def jmp _, arg1, _
-        if arg1.integer?
-          @asm.jmp @asm.uimm(arg1)
+      def jmp dest, _, _
+        if dest.integer?
+          @asm.jmp @asm.uimm(dest)
         else
-          @asm.jmp @asm.label(arg1.name)
+          @asm.jmp @asm.label(dest)
         end
       end
 
@@ -112,14 +116,78 @@ class TenderJIT
         arg1 = @asm.uimm(arg1) if arg1.integer?
 
         asm.cmp arg1, arg2
-        asm.je asm.label(dest.name)
+        asm.je asm.label(dest)
       end
 
-      def put_label _, label, _
-        @asm.put_label label.name
+      def put_label label, _, _
+        @asm.put_label label
       end
 
-      def write out, _, val
+      def jo dest, _, _
+        @asm.jo asm.label(dest)
+      end
+
+      def cmp _, in1, in2
+        asm.cmp in1, in2
+      end
+
+      def tbnz dest, arg1, arg2
+        raise ArgumentError unless arg2.integer?
+        raise ArgumentError unless arg1.register?
+
+        mask = (1 << arg2)
+
+        arg2 = @asm.uimm(mask)
+
+        asm.test arg1, arg2
+        asm.jnz @asm.label(dest)
+      end
+
+      def tbz dest, arg1, arg2
+        raise ArgumentError unless arg2.integer?
+        raise ArgumentError unless arg1.register?
+
+        mask = (1 << arg2)
+
+        arg2 = @asm.uimm(mask)
+
+        asm.test arg1, arg2
+        asm.jz @asm.label(dest)
+      end
+
+      def csel_lt out, in1, in2
+        raise ArgumentError unless in1.register?
+        raise ArgumentError unless in2.register?
+
+        if out != in1
+          asm.mov out, in2
+        end
+
+        asm.cmovl out, in1
+      end
+
+      def csel_gt out, in1, in2
+        raise ArgumentError unless in1.register?
+        raise ArgumentError unless in2.register?
+
+        if out != in1
+          asm.mov out, in2
+        end
+
+        asm.cmovg out, in1
+      end
+
+      def jnfalse dest, reg, _
+        asm.test reg, asm.imm(~Fiddle::Qnil)
+        asm.jne asm.label(dest)
+      end
+
+      def jfalse dest, reg, _
+        asm.test reg, asm.imm(~Fiddle::Qnil)
+        asm.je asm.label(dest)
+      end
+
+      def write out, val, _
         if val.integer?
           @asm.mov out, @asm.uimm(val)
         else

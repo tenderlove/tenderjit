@@ -12,7 +12,7 @@ class TenderJIT
 
     class RegisterAllocator < TenderJIT::RegisterAllocator
       def initialize
-        super(PARAM_REGS, FREE_REGS)
+        super(Fisk::Registers::RSP, PARAM_REGS, FREE_REGS)
       end
     end
   end
