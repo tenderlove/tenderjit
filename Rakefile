@@ -30,6 +30,15 @@ end
   files << test_file
 end
 
+rule '.dot.pdf' => '.dot' do |task|
+  sh "dot -O -Tpdf #{task.source}"
+end
+
+task pdf: FileList['*.dot'].ext('.dot.pdf')
+
+CLEAN.include FileList['*.dot']
+CLEAN.include FileList['*.dot'].ext('.dot.pdf')
+
 # Run the test suites.
 #
 # Test suites are assumed to be under any subdirectory level of `test`, and with

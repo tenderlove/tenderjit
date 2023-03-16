@@ -220,11 +220,6 @@ class TenderJIT
 
       exit_label = ir.label(:exit)
 
-      unless l_type.fixnum? && r_type.fixnum?
-        # Generate an exit
-        generate_exit ctx, ir, insn.pc, exit_label
-      end
-
       right = r_type.reg
 
       guard_fixnum ir, right, exit_label unless r_type.fixnum?
@@ -232,6 +227,11 @@ class TenderJIT
       left = l_type.reg
 
       guard_fixnum ir, left, exit_label unless l_type.fixnum?
+
+      unless l_type.fixnum? && r_type.fixnum?
+        # Generate an exit
+        generate_exit ctx, ir, insn.pc, exit_label
+      end
 
       ir.cmp left, right
       out = ir.csel_lt ir.loadi(Fiddle::Qtrue), ir.loadi(Fiddle::Qfalse)
@@ -274,9 +274,6 @@ class TenderJIT
 
       exit_label = ir.label(:exit)
 
-      # Generate an exit in case of overflow or not fixnums
-      generate_exit ctx, ir, insn.pc, exit_label
-
       right = r_type.reg
 
       # Only test the type at runtime if we don't know for sure
@@ -293,6 +290,9 @@ class TenderJIT
       # Add them
       out = ir.add(left, right)
       ir.jo exit_label
+
+      # Generate an exit in case of overflow or not fixnums
+      generate_exit ctx, ir, insn.pc, exit_label
 
       ctx.pop
       ctx.pop
@@ -335,11 +335,6 @@ class TenderJIT
 
       ir.put_label exit_label
 
-      stats_location = ir.loadi(STATS.to_i)
-      stat = ir.load(stats_location, Stats.offsetof("exits"))
-      inc = ir.add(stat, 0x1)
-      ir.store(inc, stats_location, Stats.offsetof("exits"))
-
       # load the stack pointer
       sp = ir.load(ctx.cfp, C.rb_control_frame_t.offsetof(:sp))
 
@@ -355,6 +350,11 @@ class TenderJIT
 
       # Update the PC
       ir.store(ir.loadi(vm_pc), ctx.cfp, C.rb_control_frame_t.offsetof(:pc))
+
+      stats_location = ir.loadi(STATS.to_i)
+      stat = ir.load(stats_location, Stats.offsetof("exits"))
+      inc = ir.add(stat, 0x1)
+      ir.store(inc, stats_location, Stats.offsetof("exits"))
 
       ir.ret Fiddle::Qundef
       ir.put_label pass

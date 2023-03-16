@@ -86,7 +86,7 @@ class TenderJIT
     def allocate cfg, ir
       active = Set.new
 
-      cfg.each do |block|
+      cfg.dfs do |block|
         block.each_instruction do |insn|
           # vr == "virtual register"
           # pr == "physical register"
@@ -142,7 +142,7 @@ class TenderJIT
 
     private
 
-    SPILL = Object.new
+    SPILL = false
     private_constant :SPILL
 
     def alloc r, from, to

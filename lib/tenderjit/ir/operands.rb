@@ -9,6 +9,7 @@ class TenderJIT
       class UnknownState < TenderJIT::Error; end
       class UnusedOperand < TenderJIT::Error; end
       class ArgumentError < TenderJIT::Error; end
+      class EnsureError < TenderJIT::Error; end
 
       class None
         def register?; false; end
@@ -78,25 +79,27 @@ class TenderJIT
         end
 
         def add_range from, to
-          unless ranges.last && ranges.last.first == from
-            ranges << [from, to]
-            ranges.sort_by! { |from, to| from }.reverse!
-          end
+          return if ranges.find { |_from, _| _from == from }
+          ranges << [from, to]
+          ranges.sort_by!(&:first)
         end
 
         def set_from from
           if @ranges.empty?
             raise UnusedOperand, "Operand #{to_s} is unused"
           end
-          @ranges.last[0] = from
+          range = @ranges.find { |x, to|
+            x <= from && to >= from
+          }
+          range[0] = from
         end
 
         def first_use
-          @ranges.last.first
+          @ranges.first.first
         end
 
         def last_use
-          @ranges.first.last
+          @ranges.last.last
         end
 
         def used_at? i
@@ -108,7 +111,9 @@ class TenderJIT
         end
 
         def ensure ra, i
-          raise TenderJIT::Error unless used_at?(i)
+          unless used_at?(i)
+            raise EnsureError, "Register #{self} isn't live at instruction #{i}. Live at #{@ranges}"
+          end
 
           ra.ensure self, i, last_use
         end
@@ -131,7 +136,7 @@ class TenderJIT
 
         def next_use from
           r = nil
-          @ranges.reverse_each { |range|
+          @ranges.each { |range|
             if range.first > from
               r = range
               break

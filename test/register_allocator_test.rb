@@ -16,8 +16,22 @@ class TenderJIT
       ].freeze
 
       def initialize
-        super(PARAM_REGS, [:one, :two])
+        super(:sp, PARAM_REGS, [:one, :two])
       end
+    end
+
+    def test_set_from_works
+      reg1 = VirtualRegister.new(1)
+      reg1.add_range 16, 17
+      reg1.add_range 61, 62
+      reg1.add_range 60, 60
+      reg1.add_range 57, 59
+
+      assert_equal [[16, 17], [57, 59], [60, 60], [61, 62]], reg1.ranges
+
+      reg1.set_from 58
+
+      assert_equal [[16, 17], [58, 59], [60, 60], [61, 62]], reg1.ranges
     end
 
     def test_two_overlap_get_different_regs
@@ -34,7 +48,7 @@ class TenderJIT
       assert_equal [:one, :two].sort, [pr1, pr2].map(&:unwrap).sort
     end
 
-    def test_spills_raise
+    def test_spills_return_false
       reg1 = VirtualRegister.new(1)
       reg2 = VirtualRegister.new(2)
       reg3 = VirtualRegister.new(3)
@@ -47,9 +61,9 @@ class TenderJIT
       pr1 = reg1.ensure ra, 0
       pr2 = reg2.ensure ra, 0
 
-      assert_raises RegisterAllocator::Spill do
-        reg3.ensure ra, 0
-      end
+      assert pr1
+      assert pr2
+      assert_equal false, reg3.ensure(ra, 0) # spill
     end
 
     def test_ensure_raises_outside_live_range

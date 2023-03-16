@@ -187,6 +187,14 @@ class TenderJIT
         asm.je asm.label(dest)
       end
 
+      def stack_alloc _, amount, _
+        asm.sub Fisk::Registers::RSP, asm.uimm(amount)
+      end
+
+      def stack_delloc _, amount, _
+        asm.add Fisk::Registers::RSP, asm.uimm(amount)
+      end
+
       def write out, val, _
         if val.integer?
           @asm.mov out, @asm.uimm(val)

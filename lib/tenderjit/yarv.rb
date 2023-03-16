@@ -8,6 +8,7 @@ class TenderJIT
   class YARV
     class Local < Util::ClassGen.pos(:name, :ops)
       def variable?; true; end
+      def clear_live_ranges!; end
     end
 
     class Instruction < Util::ClassGen.pos(:op, :pc, :insn, :opnds, :stack_pos, :number)
@@ -87,6 +88,8 @@ class TenderJIT
           "#{number} #{op}\t#{opnds.map(&:to_s).join("\t")}"
         end
       end
+
+      def clear_live_ranges!; end
     end
 
     class Label < Util::ClassGen.pos(:name)
@@ -198,7 +201,7 @@ class TenderJIT
       add_insn :putobject, pc, insn, [1]
     end
 
-    def putobject_INT2FIX_0_ pc, insn, ops
+    def putobject_INT2FIX_0_ pc, insn
       add_insn :putobject, pc, insn, [0]
     end
 

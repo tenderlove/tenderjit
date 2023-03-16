@@ -7,11 +7,16 @@ class TenderJIT
     attr_accessor :out1
     attr_reader :dominators
 
-    def initialize ssa, ir
+    def initialize insn_head, ssa, ir
+      @insn_head = insn_head
       @out1 = nil
       @ssa = ssa
       @ir = ir
       @dominators = [].freeze
+    end
+
+    def rebuild
+      BasicBlock.build @insn_head, @ir, @ssa
     end
 
     def empty?; false; end
@@ -50,26 +55,6 @@ class TenderJIT
 
     def dfs &blk
       @out1.dfs(&blk)
-    end
-
-    def reset!
-      i = 0
-      each do |bb|
-        bb.reset!
-        bb.each_instruction do |insn|
-          insn.clear_live_ranges!
-          insn.number = i
-          i += 1
-        end
-      end
-      raise unless ssa?
-      live_ranges!
-    end
-
-    def number!
-      each_instruction.with_index do |insn, i|
-        insn.number = i
-      end
     end
 
     def each_instruction &blk
@@ -132,7 +117,7 @@ class TenderJIT
 
   class BasicBlock < Util::ClassGen.pos(:name, :start, :finish, :phis)
     def self.build insn_head, ir, ssa
-      head = last_bb = BasicBlockHead.new ssa, ir
+      head = last_bb = BasicBlockHead.new insn_head, ssa, ir
       insn = insn_head._next
       i = 0
       wants_label = []
@@ -203,8 +188,13 @@ class TenderJIT
     ##
     # Number the instructions so we can determine the live ranges
     def self.number bbs
-      bbs.each_instruction.with_index do |insn, i|
-        insn.number = i
+      i = 0
+      bbs.dfs do |block|
+        block.each_instruction do |insn|
+          insn.clear_live_ranges!
+          insn.number = i
+          i += 1
+        end
       end
       bbs
     end
@@ -327,13 +317,14 @@ class TenderJIT
       # UE means "upward exposed"
       ue_vars = Set.new
       iter = start
-      while iter != finish
+      loop do
         if ue = iter.used_variables
           ue.each do |ue_var|
             ue_vars << ue_var unless killed_vars.include?(ue_var)
           end
         end
 
+        break if iter == finish
         iter = iter._next
       end
 
@@ -378,7 +369,7 @@ class TenderJIT
     end
 
     def live_in predecessor
-      ue_vars | predecessor.killed_vars | (Set.new(phis.flat_map(&:inputs)) & predecessor.ue_vars)
+      ue_vars | (Set.new(phis.flat_map(&:inputs)) & predecessor.ue_vars)
     end
 
     def add_edge edge

@@ -233,6 +233,14 @@ class TenderJIT
       push __method__, arg1, NONE, NONE
     end
 
+    def stack_alloc arg1
+      push __method__, arg1, NONE, NONE
+    end
+
+    def stack_delloc arg1
+      push __method__, arg1, NONE, NONE
+    end
+
     def call location, arity
       push __method__, location, arity, param(0)
     end

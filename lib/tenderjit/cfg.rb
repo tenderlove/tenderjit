@@ -38,13 +38,35 @@ class TenderJIT
     end
 
     def assign_registers platform = Util::PLATFORM
+      File.binwrite("before_ra.dot", to_dot) if $DEBUG
+
       result = ra(platform).allocate(@basic_blocks, @ir)
       spills = 0
+      File.binwrite("before_spill.dot", to_dot) if $DEBUG
+
       while result.spill?
         fix_spill result, @ir, spills
         spills += 1
-        @basic_blocks.reset!
+        @basic_blocks = @basic_blocks.rebuild
+        @basic_blocks.live_ranges!
         result = ra(platform).allocate(@basic_blocks, @ir)
+        File.binwrite("spill_#{spills}.dot", to_dot) if $DEBUG
+      end
+
+      if spills > 0
+        bytes = spills * Fiddle::SIZEOF_VOIDP
+        bytes = (bytes + 15) & -16 # round up to the nearest 16
+        @basic_blocks.first.start
+        ir.insert_at(@basic_blocks.first.start) do |ir|
+          ir.stack_alloc(bytes)
+        end
+        each_instruction do |insn|
+          if insn.return?
+            ir.insert_at(insn.prev) do |ir|
+              ir.stack_delloc(bytes)
+            end
+          end
+        end
       end
     end
 
@@ -85,7 +107,11 @@ class TenderJIT
       buf << "edge[fontname=\"Comic Code\"];\n"
       @basic_blocks.each do |block|
         buf << block.name.to_s
-        buf << "[label=\"BB#{block.name}\\l"
+        buf << "["
+        if block.start.put_label? && block.start.out.name == :exit
+          buf << "fontcolor=\"grey\" color=\"grey\" "
+        end
+        buf << "label=\"BB#{block.name}\\l"
         buf << "UE:       #{ir.vars block.ue_vars}\\l"
         buf << "Killed:   #{ir.vars block.killed_vars}\\l"
         buf << "Live Out: #{ir.vars block.live_out}\\l"
@@ -119,7 +145,7 @@ class TenderJIT
       spill_reg     = nil
 
       # Find spill candidate from the active registers
-      while iter != block.finish
+      while iter
         break if active.empty?
 
         if active.include?(iter.arg1)
@@ -135,12 +161,22 @@ class TenderJIT
         iter = iter._next
       end
 
-      ir.insert_at(insn.prev) do |ir|
+      if $DEBUG
+        puts "Selected #{spill_reg.to_s} to spill at insn #{insn.prev.number}"
+      end
+
+      iter = insn
+      while !iter.head?
+        break if iter.out == spill_reg
+        iter = iter.prev
+      end
+
+      ir.insert_at(iter) do |ir|
         ir.store(spill_reg, ir.sp, spills * 8)
       end
 
       iter = insn
-      while iter != block.finish
+      while iter
         if iter.arg1 == spill_reg || iter.arg2 == spill_reg
           ir.insert_at(iter.prev) do |ir|
             var = ir.load(ir.sp, spills * 8)

@@ -25,9 +25,9 @@ class TenderJIT
       end
 
       def replace arg1, arg2
-        insn = self.class.new(op, arg1, arg2, out)
-        append insn
-        unlink
+        @arg1 = arg1
+        @arg2 = arg2
+        self
       end
 
       def return?
@@ -63,8 +63,11 @@ class TenderJIT
       end
 
       def clear_live_ranges!
-        arg1.clear_live_ranges!
-        arg2.clear_live_ranges!
+        if op == :store
+          arg1.clear_live_ranges!
+          arg2.clear_live_ranges!
+        end
+
         out.clear_live_ranges!
       end
 
