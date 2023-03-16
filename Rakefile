@@ -1,8 +1,5 @@
-require "digest/md5"
 require "rake/testtask"
 require "rake/clean"
-
-require_relative "lib/tenderjit/ruby_interpreter_metadata_helper"
 
 TEST_SUITE_DEFAULT_PREFIX='*'
 DEBUG_LIBRARIES = %w[fiddle fisk worf odinflex]
