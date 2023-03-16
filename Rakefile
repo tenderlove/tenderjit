@@ -33,21 +33,6 @@ end
   files << test_file
 end
 
-folder = TenderJIT::RubyInterpreterMetadataHelper.fingerprint
-
-gen_files = %w{ constants structs symbols }.map { |name|
-  "lib/tenderjit/ruby/#{folder}/#{name}.rb"
-}
-
-file gen_files.first do |t|
-  FileUtils.mkdir_p("lib/tenderjit/ruby/#{folder}")
-  ruby %{-I lib misc/build-ruby-internals.rb #{folder}}
-end
-
-task :compile => gen_files.first
-
-task :default => 'lib/tendertools/dwarf/constants.rb'
-
 # Run the test suites.
 #
 # Test suites are assumed to be under any subdirectory level of `test`, and with
@@ -123,5 +108,3 @@ task :debug, [:test_suite_file] => test_files + [:compile] do |_, args|
     system command
   end
 end
-
-CLEAN.include "lib/tenderjit/ruby"
