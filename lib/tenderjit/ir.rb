@@ -4,6 +4,7 @@ require "tenderjit/ir/instruction"
 require "tenderjit/basic_block"
 require "tenderjit/cfg"
 require "tenderjit/linked_list"
+require "tenderjit/combined_live_range"
 
 class TenderJIT
   class IR
@@ -164,7 +165,7 @@ class TenderJIT
     end
 
     def insert_jump node, label
-      node.insert new_insn :jmp, NONE, NONE, label
+      insert_at node { jmp label }
     end
 
     def insn_str insn
@@ -209,8 +210,9 @@ class TenderJIT
     end
 
     def var
+      op = Operands::InOut.new(@counter)
       @counter += 1
-      Operands::InOut.new(@counter)
+      op
     end
 
     def param idx
@@ -279,10 +281,6 @@ class TenderJIT
     end
 
     class Phi < IR::Instruction
-      def initialize arg1, arg2, out
-        super(:phi, arg1, arg2, out)
-      end
-
       def inputs
         [arg1, arg2]
       end
@@ -291,16 +289,27 @@ class TenderJIT
         []
       end
 
+      def combined_range
+        CombinedLiveRange.new(arg1, arg2, out)
+      end
+
       def phi?; true; end
     end
 
     def phi arg1, arg2
       out = var
-      @instructions = @instructions.append Phi.new(arg1, arg2, out)
+      insn = new_insn(Phi, :phi, arg1, arg2, out)
+      arg1.live_range = arg2.live_range = out.live_range = insn.combined_range
+      @instructions = @instructions.append insn
       out
     end
 
     alias :ret :return
+
+    def loadp num
+      raise ArgumentError unless num.integer?
+      push __method__, uimm(num), NONE
+    end
 
     def load arg1, arg2
       push __method__, arg1, arg2
@@ -387,19 +396,27 @@ class TenderJIT
       push __method__, NONE, NONE, NONE
     end
 
+    def create name, a, b, out = self.var
+      new_insn Instruction, name, a, b, out
+    end
+
     private
 
     def push name, a, b, out = self.var
+      @instructions = @instructions.append new_insn(Instruction, name, a, b, out)
+      out
+    end
+
+    def new_insn klass, name, a, b, out
       a = uimm(a) if a.integer?
       b = uimm(b) if b.integer?
       raise if a.label? || b.label?
 
-      @instructions = @instructions.append new_insn(name, a, b, out)
-      out
-    end
-
-    def new_insn name, a, b, out
-      Instruction.new name, a, b, out
+      insn = klass.new name, a, b, out
+      a.add_use insn
+      b.add_use insn
+      out.definition = insn
+      insn
     end
   end
 end

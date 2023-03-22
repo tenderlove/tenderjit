@@ -25,16 +25,9 @@ class TenderJIT
         node
       end
 
-      def insert node
-        node._next = @_next
-        node.prev = self
-        @_next = node
-        node
-      end
-
       def unlink
-        prev._next = @_next
-        @_next.prev = prev
+        prev._next = @_next if prev
+        @_next.prev = prev if @_next
       end
 
       def each

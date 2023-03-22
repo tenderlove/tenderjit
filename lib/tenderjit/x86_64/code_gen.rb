@@ -87,6 +87,21 @@ class TenderJIT
         @asm.mov out, @asm.m64(src, offset)
       end
 
+      PARAM_REGS = [
+        Fisk::Registers::RDI,
+        Fisk::Registers::RSI,
+        Fisk::Registers::RDX,
+        Fisk::Registers::RCX,
+        Fisk::Registers::R8,
+        Fisk::Registers::R9,
+      ]
+
+      def loadp out, offset, _
+        unless out == PARAM_REGS[offset]
+          @asm.mov out, PARAM_REGS[offset]
+        end
+      end
+
       def loadi out, val, _
         @asm.mov out, @asm.uimm(val)
       end

@@ -11,12 +11,12 @@ class TenderJIT
       def clear_live_ranges!; end
     end
 
-    class Instruction < Util::ClassGen.pos(:op, :pc, :insn, :opnds, :stack_pos, :number)
+    class Instruction < Util::ClassGen.pos(:op, :pc, :insn, :opnds, :stack_pos, :number, :bb)
       include LinkedList::Element
 
       NONE = IR::Operands::None.new
 
-      attr_writer :number
+      attr_writer :number, :bb
 
       def phi?; false; end
 
@@ -128,7 +128,7 @@ class TenderJIT
 
     def insert_jump node, label
       jump = new_insn :jump, node.pc, JUMP, [label]
-      node.insert jump
+      node.append jump
     end
 
     def peephole_optimize!

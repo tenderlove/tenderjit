@@ -34,9 +34,27 @@ rule '.dot.pdf' => '.dot' do |task|
   sh "dot -O -Tpdf #{task.source}"
 end
 
-task pdf: FileList['*.dot'].ext('.dot.pdf')
+#p FileList['*.[0-9].dot'].ext('.dot.pdf')
+grouped_pdfs = FileList['*.[0-9].dot'].map { |x| x.split('.').first }.uniq
+grouped_pdfs.each do |f|
+  file "#{f}.pdf" => FileList["#{f}.*.dot"].ext('dot.pdf') do |t|
+    sources = t.sources.join(" ")
+    sh "gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -sOutputFile=#{t.name} #{sources}"
+  end
+end
+
+non_grouped = FileList['*.dot'].exclude("[0-9].dot").ext('.dot.pdf')
+#task open_pdf: grouped_pdfs + FileList['*.dot'].ext('.dot.pdf') do |t|
+task open_pdf: grouped_pdfs.map { |x| x + ".pdf" } + non_grouped do |t|
+  t.sources.each do |source|
+    sh "open #{source}"
+  end
+end
+
+task :pdf => :open_pdf
 
 CLEAN.include FileList['*.dot']
+CLEAN.include FileList['*.pdf']
 CLEAN.include FileList['*.dot'].ext('.dot.pdf')
 
 # Run the test suites.

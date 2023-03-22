@@ -18,11 +18,11 @@ class TenderJIT
 
     def clean blocks
       return blocks
-      blocks.each do |blk|
-        blk.remove if blk.empty?
-      end
+      #blocks.each do |blk|
+      #  blk.remove if blk.empty?
+      #end
 
-      blocks
+      #blocks
     end
 
     def each &blk
@@ -40,18 +40,7 @@ class TenderJIT
     def assign_registers platform = Util::PLATFORM
       File.binwrite("before_ra.dot", to_dot) if $DEBUG
 
-      result = ra(platform).allocate(@basic_blocks, @ir)
-      spills = 0
-      File.binwrite("before_spill.dot", to_dot) if $DEBUG
-
-      while result.spill?
-        fix_spill result, @ir, spills
-        spills += 1
-        @basic_blocks = @basic_blocks.rebuild
-        @basic_blocks.live_ranges!
-        result = ra(platform).allocate(@basic_blocks, @ir)
-        File.binwrite("spill_#{spills}.dot", to_dot) if $DEBUG
-      end
+      spills = ra(platform).allocate(@basic_blocks, @ir)
 
       if spills > 0
         bytes = spills * Fiddle::SIZEOF_VOIDP
@@ -140,7 +129,6 @@ class TenderJIT
     def fix_spill e, ir, spills
       insn = e.insn
       active = e.active
-      block = e.block
       iter          = insn
       spill_reg     = nil
 

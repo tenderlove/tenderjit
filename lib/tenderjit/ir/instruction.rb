@@ -5,16 +5,20 @@ require "tenderjit/linked_list"
 
 class TenderJIT
   class IR
-    class Instruction < Util::ClassGen.pos(:op, :arg1, :arg2, :out, :number)
+    class Instruction < Util::ClassGen.pos(:op, :arg1, :arg2, :out, :number, :bb)
       include LinkedList::Element
 
-      attr_writer :number
+      attr_writer :number, :bb
 
       def phi?; false; end
 
       def registers
         [arg1, arg2, out].select(&:register?)
       end
+
+      def lr1;    arg1.live_range; end
+      def lr2;    arg2.live_range; end
+      def lr_out; out.live_range; end
 
       def put_label?
         op == :put_label
@@ -25,6 +29,10 @@ class TenderJIT
       end
 
       def replace arg1, arg2
+        @arg1.remove_use self
+        @arg2.remove_use self
+        arg1.add_use self
+        arg2.add_use self
         @arg1 = arg1
         @arg2 = arg2
         self
@@ -47,7 +55,7 @@ class TenderJIT
       end
 
       def set_variable
-        if out.register?
+        if out.variable?
           out
         end
       end

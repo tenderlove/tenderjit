@@ -152,6 +152,23 @@ class TenderJIT
         asm.ldur out, [src, offset]
       end
 
+      PARAM_REGS = [
+        AArch64::Registers::X0,
+        AArch64::Registers::X1,
+        AArch64::Registers::X2,
+        AArch64::Registers::X3,
+        AArch64::Registers::X4,
+        AArch64::Registers::X5,
+        AArch64::Registers::X6,
+        AArch64::Registers::X7,
+      ]
+
+      def loadp out, idx, _
+        unless out == PARAM_REGS[idx]
+          asm.mov out, PARAM_REGS[idx]
+        end
+      end
+
       def loadi out, val, _
         if val == 0
           asm.mov out, XZR

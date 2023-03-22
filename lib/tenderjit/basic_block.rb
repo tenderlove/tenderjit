@@ -1,4 +1,6 @@
 require "tenderjit/util"
+require "tenderjit/bitmatrix"
+require "tenderjit/adjacency_list"
 
 class TenderJIT
   class BasicBlockHead
@@ -69,7 +71,7 @@ class TenderJIT
     # Calculate LiveOut and the live ranges for variables
     def live_ranges!
       if ssa?
-        reverse_each do |bi|
+        dfs.reverse_each do |bi|
           live = bi.live_out = bi.successors.inject(Set.new) do |set, succ|
             set | (succ.live_in(bi) | (succ.live_out - succ.killed_vars))
           end
@@ -115,7 +117,9 @@ class TenderJIT
     end
   end
 
-  class BasicBlock < Util::ClassGen.pos(:name, :start, :finish, :phis)
+  class BasicBlock < Util::ClassGen.pos(:name, :start, :finish)
+    attr_writer :start, :finish
+
     def self.build insn_head, ir, ssa
       head = last_bb = BasicBlockHead.new insn_head, ssa, ir
       insn = insn_head._next
@@ -127,18 +131,18 @@ class TenderJIT
       while insn
         start = finish = insn
 
-        phis = []
+        bb = BasicBlock.new(i, start, nil)
+        bb.add_instruction finish
 
         while finish._next
-
           break if finish.jump? || finish.return?
           break if finish._next.put_label?
           _next = finish._next
-          phis << finish if finish.phi?
+          bb.add_phi finish if finish.phi?
           finish = _next
+          bb.add_instruction finish
         end
 
-        bb = BasicBlock.new(i, start, finish, phis)
         all_bbs << bb
 
         has_label[bb.label] = bb if bb.labeled_entry?
@@ -281,7 +285,7 @@ class TenderJIT
           b.df.each do |d|
             phi = d.phis.find { |phi| phi.inputs.include?(x) }
             unless phi
-              d.phis << IR::Phi.new(x, x, x)
+              d.add_phi IR::Phi.new(:phi, x, x, x)
               worklist << d
             end
           end
@@ -299,14 +303,44 @@ class TenderJIT
       new name, nil, nil, nil, nil, nil
     end
 
-    def initialize name, start, finish, phis
-      super
+    def initialize name, start, finish
+      super(name, start, finish)
+      raise "Block shouldn't start with phi" if start.phi?
       @predecessors = []
       @out1         = nil
       @out2         = nil
       @live_out     = Set.new
       @dominators   = nil
       @df           = nil
+      @phis         = []
+    end
+
+    def add_phi phi
+      phi.unlink
+      start.append phi
+    end
+
+    def phis
+      phis = []
+      iter = start._next
+      while iter.op == :phi
+        phis << iter
+        iter = iter._next
+      end
+      phis.freeze
+    end
+
+    def add_instruction insn
+      insn.bb = self
+      @finish = insn
+    end
+
+    def execution_frequency
+      if labeled_entry? && start.label.name == :exit
+        0.2
+      else
+        1
+      end
     end
 
     def reset!

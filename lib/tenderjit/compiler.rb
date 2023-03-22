@@ -46,8 +46,8 @@ class TenderJIT
 
       ir = IR.new
 
-      ec  = ir.param(0)
-      cfp = ir.param(1)
+      ec  = ir.loadp(0)
+      cfp = ir.loadp(1)
 
       buff = JITBuffer.new 4096
       ctx = Context.new(buff, ec, cfp, nil, nil)
@@ -86,28 +86,26 @@ class TenderJIT
         # If we've seen the block before, it must be a joint point
         if seen[yarv_block]
           prev_context, insns = seen[yarv_block]
-          phis = []
 
           # Add a phi function for stack items that differ
           prev_context.zip(context).reject { |left, right|
             left.reg == right.reg
           }.each { |existing, new|
-            phis << IR::Phi.new(existing.reg, new.reg, ir.var)
+            ir.insert_at(insns._next) { ir.phi existing.reg, new.reg }
           }
 
           # Make phi functions for locals
           yarv_block.phis.map(&:out).map(&:name).each { |name|
             existing = prev_context.get_local name
             new = context.get_local name
-            phis << IR::Phi.new(existing, new, ir.var)
+            ir.insert_at(insns._next) { ir.phi existing, new }
           }
 
-          # Append all phis
-          phis.each { |phi| insns._next.append phi }
-
+          phis = []
           ## Walk past the phi nodes
           iter = insns._next._next
           while iter.phi?
+            phis << iter
             iter = iter._next
           end
 
@@ -150,6 +148,9 @@ class TenderJIT
       block.each_instruction do |insn|
         send insn.op, context, ir, insn
       end
+    end
+
+    def phi context, ir, insn
     end
 
     def yarv_ir iseq
@@ -306,7 +307,9 @@ class TenderJIT
 
     def getlocal ctx, ir, insn
       local = insn.opnds
-      unless ctx.have_local?(local.name)
+      if ctx.have_local?(local.name)
+        # FIXME: propagate type info for locals
+      else
         # If the local hasn't been loaded yet, load it
         ep = ir.load(ctx.cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
         index, _ = local.ops

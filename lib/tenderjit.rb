@@ -92,7 +92,7 @@ class TenderJIT
 end
 
 class << RubyVM::RJIT
-  def compile iseq
+  def compile iseq, thing
     compiler = TenderJIT::Compiler.new
     compiler.compile iseq
   end
