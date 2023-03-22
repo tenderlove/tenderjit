@@ -17,6 +17,8 @@ class TenderJIT
       @dominators = [].freeze
     end
 
+    def head; self; end
+
     def rebuild
       BasicBlock.build @insn_head, @ir, @ssa
     end
@@ -66,58 +68,11 @@ class TenderJIT
         bb.each_instruction(&blk)
       end
     end
-
-    ##
-    # Calculate LiveOut and the live ranges for variables
-    def live_ranges!
-      if ssa?
-        dfs.reverse_each do |bi|
-          live = bi.live_out = bi.successors.inject(Set.new) do |set, succ|
-            set | (succ.live_in(bi) | (succ.live_out - succ.killed_vars))
-          end
-
-          live.each do |opnd|
-            opnd.add_range(bi.from, bi.to)
-          end
-
-          bi.reverse_each_instruction do |insn|
-            insn.out.set_from(insn.number)
-            insn.arg1.add_range(bi.from, insn.number)
-            insn.arg2.add_range(bi.from, insn.number)
-          end
-        end
-      else
-        live_vars!
-      end
-    rescue TenderJIT::Error
-      puts dump_usage
-      raise
-    end
-
-    private
-
-    ##
-    # Use a different algorithm for non-ssa instructions (YARV)
-    def live_vars!
-      changed = true
-      while changed
-        changed = false
-
-        each do |bi|
-          old = bi.live_out
-          new = bi.successors.inject(Set.new) do |set, succ|
-            set | (succ.live_in(bi) | (succ.live_out - succ.killed_vars))
-          end
-          if old != new
-            bi.live_out = new
-            changed = true
-          end
-        end
-      end
-    end
   end
 
-  class BasicBlock < Util::ClassGen.pos(:name, :start, :finish)
+  class BasicBlock < Util::ClassGen.pos(:name, :head, :start, :finish)
+    autoload :Printer, "tenderjit/basic_block/printer"
+
     attr_writer :start, :finish
 
     def self.build insn_head, ir, ssa
@@ -131,7 +86,7 @@ class TenderJIT
       while insn
         start = finish = insn
 
-        bb = BasicBlock.new(i, start, nil)
+        bb = BasicBlock.new(i, head, start, nil)
         bb.add_instruction finish
 
         while finish._next
@@ -164,12 +119,7 @@ class TenderJIT
       end
 
       while bb = wants_label.pop
-        jump_target = begin
-                        has_label.fetch(bb.jump_target_label)
-                      rescue KeyError
-                        $stderr.puts ir.dump_usage bb
-                        raise
-                      end
+        jump_target = has_label.fetch(bb.jump_target_label)
 
         bb.add_edge jump_target
         jump_target.predecessors << bb
@@ -180,27 +130,13 @@ class TenderJIT
       # sweep unreachable blocks
       all_bbs.each { |x| x.remove unless mark_set.include?(x) }
 
-      head = dominators number head
+      head = dominators head
 
       unless ssa
         head = dominance_frontiers head
         head = place_phi head
       end
       head
-    end
-
-    ##
-    # Number the instructions so we can determine the live ranges
-    def self.number bbs
-      i = 0
-      bbs.dfs do |block|
-        block.each_instruction do |insn|
-          insn.clear_live_ranges!
-          insn.number = i
-          i += 1
-        end
-      end
-      bbs
     end
 
     def self.dominators bbs
@@ -303,8 +239,8 @@ class TenderJIT
       new name, nil, nil, nil, nil, nil
     end
 
-    def initialize name, start, finish
-      super(name, start, finish)
+    def initialize name, head, start, finish
+      super
       raise "Block shouldn't start with phi" if start.phi?
       @predecessors = []
       @out1         = nil
@@ -496,10 +432,6 @@ class TenderJIT
         node = node.prev
       end
     end
-
-    def from; start.number; end
-
-    def to; finish.number; end
 
     def falls_through?
       !(finish.unconditional_jump? || finish.return?)

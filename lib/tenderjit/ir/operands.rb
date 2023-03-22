@@ -17,13 +17,8 @@ class TenderJIT
         def integer?; false; end
         def variable?; false; end
         def none?; true; end
-        def label? = false
-        def ensure _, _; self; end
-        def free _, _; self; end
+        def label?; false; end
         def to_s; "NONE"; end
-        def add_range _, _; end
-        def clear_live_ranges!; end
-        def set_from _; end
         def pr; self; end
         def definition= _; end
         def add_use _; end
@@ -56,15 +51,7 @@ class TenderJIT
         def label? = false
         def variable?; false; end
 
-        def ensure _, _
-          value
-        end
-
         def pr; value; end
-        def free _, _; true end
-        def add_range _, _; end
-        def clear_live_ranges!; end
-        def set_from _; end
 
         def to_s; sprintf("IMM(%0#4x)", value); end
       end
@@ -114,103 +101,7 @@ class TenderJIT
           unless physical_register
             raise UnassignedRegister, "Virtual Register #{name} doesn't have a physical register"
           end
-          physical_register.unwrap
-        end
-
-        def clear_live_ranges!
-          @ranges.clear
-        end
-
-        def add_range from, to
-          return if ranges.find { |_from, _| _from == from }
-          ranges << [from, to]
-          ranges.sort_by!(&:first)
-        end
-
-        def set_from from
-          #if @ranges.empty?
-          #  raise UnusedOperand, "Operand #{to_s} is unused"
-          #end
-          range = @ranges.find { |x, to|
-            x <= from && to >= from
-          }
-          if range
-            range[0] = from
-          else
-            ranges << [from, from]
-          end
-        end
-
-        def first_use
-          @ranges.first.first
-        end
-
-        def last_use
-          @ranges.last.last
-        end
-
-        def used_at? i
-          @ranges.any? { |(from, to)| i >= from && i <= to }
-        end
-
-        def usage_assigned?
-          @ranges.any?
-        end
-
-        def ensure ra, i
-          unless used_at?(i)
-            raise EnsureError, "Register #{self} isn't live at instruction #{i}. Live at #{@ranges}"
-          end
-
-          ra.ensure self, i, last_use
-        end
-
-        def state_at i
-          if i < first_use
-            :unhandled
-          else
-            if used_at?(i)
-              :active
-            else
-              if last_use < i
-                :handled
-              else
-                :inactive
-              end
-            end
-          end
-        end
-
-        def next_use from
-          r = nil
-          @ranges.each { |range|
-            if range.first > from
-              r = range
-              break
-            end
-          }
-
-          raise ArgumentError unless r
-          r.first
-        end
-
-        def free ra, i
-          case state_at(i)
-          when :unhandled
-            raise FreedBeforeUsed, "Freeing a register before it's used"
-          when :active
-            case state_at(i + 1)
-            when :active
-            when :handled  then ra.free self, physical_register
-            when :inactive then ra.lend_until(physical_register, next_use(i + 1))
-            when :unhandled then raise TenderJIT::Error
-            end
-          when :handled
-            raise FreedAfterHandled, "Freeing a register after it's done"
-          when :inactive
-          else
-            raise UnknownState, "Unknown state #{state_at(i).to_s}"
-          end
+          physical_register
         end
       end
 
@@ -335,7 +226,6 @@ class TenderJIT
       class StackPointer < VirtualRegister
         def stack_pointer?; true; end
         def variable?; false; end
-        def free _, _; false; end
         def to_s; "SP"; end
       end
 
@@ -345,7 +235,6 @@ class TenderJIT
         def param?; true; end
         def variable?; false; end
         def to_s; "PARAM(#{name})"; end
-        def free _, _; false; end
       end
 
       class Label < Util::ClassGen.pos(:name, :offset, :definition)
@@ -356,7 +245,6 @@ class TenderJIT
         def immediate? = false
         def label? = true
         def variable?; false; end
-        def clear_live_ranges!; end
 
         def set_offset offset
           @offset = offset
@@ -365,14 +253,7 @@ class TenderJIT
 
         def unwrap_label; offset; end
 
-        def ensure _, _
-          self
-        end
-
         def pr; self; end
-
-        def free _, _; true; end
-        def set_from _; end
 
         def to_s; "LABEL(#{name})"; end
       end

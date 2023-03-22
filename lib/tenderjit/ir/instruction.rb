@@ -5,10 +5,10 @@ require "tenderjit/linked_list"
 
 class TenderJIT
   class IR
-    class Instruction < Util::ClassGen.pos(:op, :arg1, :arg2, :out, :number, :bb)
+    class Instruction < Util::ClassGen.pos(:op, :arg1, :arg2, :out, :bb)
       include LinkedList::Element
 
-      attr_writer :number, :bb
+      attr_writer :bb
 
       def phi?; false; end
 
@@ -54,6 +54,10 @@ class TenderJIT
         [arg1, arg2].select(&:variable?)
       end
 
+      def variables
+        [out, arg1, arg2].select(&:variable?)
+      end
+
       def set_variable
         if out.variable?
           out
@@ -68,21 +72,6 @@ class TenderJIT
       def target_label
         return out if out.label?
         raise "not a jump instruction"
-      end
-
-      def clear_live_ranges!
-        if op == :store
-          arg1.clear_live_ranges!
-          arg2.clear_live_ranges!
-        end
-
-        out.clear_live_ranges!
-      end
-
-      def used_at i
-        arg1.set_last_use i
-        arg2.set_last_use i
-        out.set_first_use i
       end
     end
   end

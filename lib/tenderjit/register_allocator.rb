@@ -4,82 +4,15 @@ require "tenderjit/interference_graph"
 
 class TenderJIT
   class RegisterAllocator
-    class DoubleFree < Error; end
-    class OutsideLiveRange < Error; end
-
     attr_reader :scratch_regs
 
-    class BorrowedRegister
-      attr_reader :info
-
-      def initialize reg, info
-        @reg = reg
-        @info = info
-      end
-
-      def unwrap; @reg; end
-
-      def borrowed?; true; end
-    end
-
-    class OwnedRegister
-      def initialize reg
-        @reg = reg
-      end
-
-      def unwrap; @reg; end
-
-      def borrowed?; false; end
-    end
-
     def initialize sp, param_regs, scratch_regs
-      @parameter_registers = param_regs.map { |x| OwnedRegister.new(x) }
-      @scratch_regs        = Set.new(scratch_regs.map { OwnedRegister.new(_1) })
+      @parameter_registers = param_regs.dup
+      @scratch_regs        = Set.new(scratch_regs)
       @freelist            = @scratch_regs.to_a
       @borrow_list         = []
       @active              = Set.new
-      @sp                  = OwnedRegister.new(sp)
-    end
-
-    def ensure virt, from, to
-      if virt.physical_register
-        virt.physical_register
-      else
-        if virt.stack_pointer?
-          virt.physical_register = @sp
-        else
-          if virt.param?
-            virt.physical_register = @parameter_registers[virt.name]
-          else
-            alloc virt, from, to
-          end
-        end
-      end
-    end
-
-    def lend_until phys, i
-      @borrow_list << [phys, i]
-      false
-    end
-
-    def free r, phys
-      @active.delete r
-
-      if phys.borrowed?
-        @borrow_list << phys.info
-        return true
-      end
-
-      if @freelist.include?(phys)
-        msg = "Physical register #{phys.unwrap.to_i} freed twice"
-        raise DoubleFree, msg
-      end
-
-      if @scratch_regs.include? phys
-        @freelist.push phys
-      end
-
-      true
+      @sp                  = sp
     end
 
     def spill?; false; end
@@ -246,46 +179,6 @@ class TenderJIT
       end
 
       graph
-    end
-
-    SPILL = false
-    private_constant :SPILL
-
-    def alloc r, from, to
-      phys = nil
-      if !@borrow_list.empty?
-        reg_info = @borrow_list.find_all { |_, next_use|
-          next_use > to
-        }.sort_by { |reg, next_use| next_use - to }.first
-
-        if reg_info
-          @borrow_list.delete reg_info
-          phys = BorrowedRegister.new(reg_info.first.unwrap, reg_info)
-        end
-      end
-
-      phys ||= @freelist.pop
-
-      if phys
-        r.physical_register = phys
-        @active << r
-        phys
-      else
-        SPILL
-      end
-    end
-
-    class Spill
-      attr_reader :var, :insn, :block, :active
-
-      def initialize var, insn, block, active
-        @var    = var
-        @insn   = insn
-        @block  = block
-        @active = active
-      end
-
-      def spill?; true; end
     end
   end
 end

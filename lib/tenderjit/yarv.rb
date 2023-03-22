@@ -8,15 +8,16 @@ class TenderJIT
   class YARV
     class Local < Util::ClassGen.pos(:name, :ops)
       def variable?; true; end
-      def clear_live_ranges!; end
+      def physical_register; end
+      def to_s; "LVAR(#{name})"; end
     end
 
-    class Instruction < Util::ClassGen.pos(:op, :pc, :insn, :opnds, :stack_pos, :number, :bb)
+    class Instruction < Util::ClassGen.pos(:op, :pc, :insn, :opnds, :bb)
       include LinkedList::Element
 
       NONE = IR::Operands::None.new
 
-      attr_writer :number, :bb
+      attr_writer :bb
 
       def phi?; false; end
 
@@ -68,6 +69,10 @@ class TenderJIT
       end
 
       def out
+        if op == :put_label
+          return opnds.first
+        end
+
         if op == :setlocal
           opnds
         else
@@ -88,24 +93,15 @@ class TenderJIT
           "#{number} #{op}\t#{opnds.map(&:to_s).join("\t")}"
         end
       end
-
-      def clear_live_ranges!; end
     end
 
     class Label < Util::ClassGen.pos(:name)
       def label?; true; end
+      def variable?; false; end
 
       def to_s
         "LABEL(#{name})"
       end
-    end
-
-    def self.dump_insns insns, ansi: true
-      insns.map { |insn| insn.to_s }.join("\\l") + "\\l"
-    end
-
-    def self.vars set
-      set.to_a.map(&:name).inspect
     end
 
     def initialize iseq, locals

@@ -59,6 +59,7 @@ class TenderJIT
       ir.store(inc, stats_location, ir.uimm(Stats.offsetof("executed_methods")))
 
       cfg = yarv.cfg
+
       translate_cfg cfg, ir, ctx
       asm = ir.assemble
 

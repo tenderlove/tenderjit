@@ -44,13 +44,14 @@ class TenderJIT
     end
 
     def self.dump_insns instructions, highlight_insn: nil, ansi: true
+      raise
       virt_regs = instructions.flat_map { |insn|
         insn.registers
       }.uniq
       regs = virt_regs.select(&:variable?)
       regs = regs.select(&:usage_assigned?)
 
-      physical_regs = regs.map(&:physical_register).compact.map(&:unwrap).uniq.sort_by(&:to_i)
+      physical_regs = regs.map(&:physical_register).compact.uniq.sort_by(&:to_i)
 
       phys_reg_names = physical_regs.map { |x| "R#{x.to_i}" }
       phys_reg_name_max_width = 3
@@ -118,7 +119,7 @@ class TenderJIT
           sorted_regs.map { |r|
             label = if r.physical_register
                       if r.used_at?(insn.number)
-                        "R#{r.physical_register.unwrap.to_i}"
+                        "R#{r.physical_register.to_i}"
                       else
                         " "
                       end
