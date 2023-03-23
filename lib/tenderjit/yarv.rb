@@ -2,7 +2,6 @@ require "tenderjit/util"
 require "tenderjit/linked_list"
 require "tenderjit/ir/operands"
 require "tenderjit/basic_block"
-require "tenderjit/cfg"
 
 class TenderJIT
   class YARV
@@ -114,10 +113,6 @@ class TenderJIT
 
     def basic_blocks
       BasicBlock.build @insn_head, self, false
-    end
-
-    def cfg
-      CFG.new basic_blocks, YARV
     end
 
     JUMP = RubyVM::RJIT::INSNS.values.find { |insn| insn.name == :jump }

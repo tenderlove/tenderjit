@@ -3,80 +3,13 @@ require "tenderjit/bitmatrix"
 require "tenderjit/adjacency_list"
 
 class TenderJIT
-  class BasicBlockHead
-    include Enumerable
-
-    attr_accessor :out1
-    attr_reader :dominators
-
-    def initialize insn_head, ssa, ir
-      @insn_head = insn_head
-      @out1 = nil
-      @ssa = ssa
-      @ir = ir
-      @dominators = [].freeze
-    end
-
-    def head; self; end
-
-    def rebuild
-      BasicBlock.build @insn_head, @ir, @ssa
-    end
-
-    def empty?; false; end
-
-    def ssa?; @ssa; end
-
-    def name; :HEAD; end
-
-    def predecessors; []; end
-
-    def dump_usage highlight_insn = nil
-      @ir.dump_usage highlight_insn
-    end
-
-    def head?; true; end
-
-    def falls_through?; true; end
-
-    def jumps?; true; end
-
-    def add_edge node
-      raise ArgumentError if @out1
-      @out1 = node
-    end
-
-    # Head block should only ever point at one thing
-    def out2; end
-
-    def each &blk
-      @out1.each(&blk)
-    end
-
-    def reverse_each &blk
-      @out1.reverse_each(&blk)
-    end
-
-    def dfs &blk
-      @out1.dfs(&blk)
-    end
-
-    def each_instruction &blk
-      return enum_for(:each_instruction) unless block_given?
-
-      @out1.each do |bb|
-        bb.each_instruction(&blk)
-      end
-    end
-  end
-
   class BasicBlock < Util::ClassGen.pos(:name, :head, :start, :finish)
     autoload :Printer, "tenderjit/basic_block/printer"
 
     attr_writer :start, :finish
 
     def self.build insn_head, ir, ssa
-      head = last_bb = BasicBlockHead.new insn_head, ssa, ir
+      head = last_bb = Head.new insn_head, ssa, ir
       insn = insn_head._next
       i = 0
       wants_label = []
@@ -506,3 +439,5 @@ class TenderJIT
     end
   end
 end
+
+require "tenderjit/basic_block/head"

@@ -2,7 +2,6 @@ require "tenderjit/util"
 require "tenderjit/ir/operands"
 require "tenderjit/ir/instruction"
 require "tenderjit/basic_block"
-require "tenderjit/cfg"
 require "tenderjit/linked_list"
 require "tenderjit/combined_live_range"
 
@@ -161,10 +160,6 @@ class TenderJIT
       BasicBlock.build @insn_head, self, true
     end
 
-    def cfg
-      CFG.new basic_blocks, self
-    end
-
     def insert_jump node, label
       insert_at node { jmp label }
     end
@@ -194,10 +189,10 @@ class TenderJIT
     end
 
     def assemble
-      x = cfg
+      x = basic_blocks
       m = x.assemble
       if $DEBUG
-        File.binwrite("ir_cfg.dot", cfg.to_dot)
+        File.binwrite("ir_cfg.dot", BasicBlock::Printer.new(x).to_dot)
       end
       m
     end

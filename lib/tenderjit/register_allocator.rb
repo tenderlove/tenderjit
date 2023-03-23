@@ -24,8 +24,7 @@ class TenderJIT
         stack_adjust = doit bbs, ir, counter
         adjust += stack_adjust if stack_adjust
         if $DEBUG
-          BasicBlock.number bbs
-          File.binwrite("after_spill.#{counter}.dot", CFG.new(bbs, ir).to_dot)
+          File.binwrite("after_spill.#{counter}.dot", BasicBlock::Printer.new(bbs).to_dot)
         end
         counter += 1
         raise "FIXME!" if counter > 7

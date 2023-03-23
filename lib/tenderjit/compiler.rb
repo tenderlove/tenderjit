@@ -58,7 +58,7 @@ class TenderJIT
       inc = ir.add(stat, ir.uimm(0x1))
       ir.store(inc, stats_location, ir.uimm(Stats.offsetof("executed_methods")))
 
-      cfg = yarv.cfg
+      cfg = yarv.basic_blocks
 
       translate_cfg cfg, ir, ctx
       asm = ir.assemble
@@ -79,9 +79,9 @@ class TenderJIT
 
     ##
     # Translate a CFG to IR
-    def translate_cfg cfg, ir, context
+    def translate_cfg bbs, ir, context
       seen = {}
-      worklist = [[cfg.first, context]]
+      worklist = [[bbs.first, context]]
       while work = worklist.pop
         yarv_block, context = *work
         # If we've seen the block before, it must be a joint point

@@ -43,7 +43,7 @@ grouped_pdfs.each do |f|
   end
 end
 
-non_grouped = FileList['*.dot'].exclude("[0-9].dot").ext('.dot.pdf')
+non_grouped = FileList['*.dot'].exclude("*.[0-9].dot").ext('.dot.pdf')
 #task open_pdf: grouped_pdfs + FileList['*.dot'].ext('.dot.pdf') do |t|
 task open_pdf: grouped_pdfs.map { |x| x + ".pdf" } + non_grouped do |t|
   t.sources.each do |source|
