@@ -98,15 +98,20 @@ class TenderJIT
 
         var_width = [widest_var_num, widest_reg_name].max
 
-        widest_param_name = bbs.each_instruction.flat_map { |insn|
-          [insn.out, insn.arg1, insn.arg2]
-        }.map(&:to_s).max_by(&:length).length + 1
+        width_matrix = bbs.each_instruction.map { |insn|
+          [insn.out, insn.arg1, insn.arg2].map(&:to_s).map(&:length)
+        }
+
+        widest_out = width_matrix.map(&:first).max + 1
+        widest_arg1 = width_matrix.map { _1[1] }.max + 1
+        widest_arg2 = width_matrix.map { _1[2] }.max + 1
+
         widest_insn_name = bbs.each_instruction.map(&:op).map(&:to_s).max_by(&:length).length + 1
 
         buf = (["".ljust(widest_insn_name),
-               "OUT".ljust(widest_param_name),
-               "IN1".ljust(widest_param_name),
-               "IN2".ljust(widest_param_name)] +
+               "OUT".ljust(widest_out),
+               "IN1".ljust(widest_arg1),
+               "IN2".ljust(widest_arg2)] +
         all_vars.map { |x| x.name.to_s.ljust(var_width) }).join + "\n"
 
         i = 0
@@ -129,9 +134,9 @@ class TenderJIT
                  end
 
           buf += ([ insn.op.to_s.ljust(widest_insn_name),
-                   insn.out.to_s.ljust(widest_param_name),
-                   insn.arg1.to_s.ljust(widest_param_name),
-                   insn.arg2.to_s.ljust(widest_param_name), ] + var_buf).join
+                   insn.out.to_s.ljust(widest_out),
+                   insn.arg1.to_s.ljust(widest_arg1),
+                   insn.arg2.to_s.ljust(widest_arg2), ] + var_buf).join
 
           buf += highlight.endline
           buf += "\n"
