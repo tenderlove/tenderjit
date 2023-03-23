@@ -19,6 +19,13 @@ class TenderJIT
       @jit.uncompile_iseqs
     end
 
+    def compile method, recv:, locals: []
+      cfp = C.rb_control_frame_t.new
+      cfp.self = Fiddle.dlwrap(recv)
+      @jit.compile method, cfp
+    ensure
+      Fiddle.free cfp.to_i
+    end
 
     def assert_change thing, by: 1
       initial = thing.call

@@ -15,16 +15,17 @@ class TenderJIT
 
       include Enumerable
 
-      attr_reader :buff, :ec, :cfp, :sp
-      attr_accessor :ep
+      attr_reader :buff, :ec, :cfp, :comptime_cfp
+      attr_accessor :ep, :recv
 
-      def initialize buff, ec, cfp, sp, ep
+      def initialize buff, ec, cfp, comptime_cfp
         @ec = ec
         @cfp = cfp
-        @sp = sp
         @ep = ep
         @stack = []
         @locals = {}
+        @recv = nil
+        @comptime_cfp = comptime_cfp
       end
 
       def initialize_copy other

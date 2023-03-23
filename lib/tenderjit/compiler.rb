@@ -38,7 +38,7 @@ class TenderJIT
       yarv_ir(@iseq)
     end
 
-    def compile
+    def compile comptime_frame
       # method name
       # label = iseq.body.location.label
 
@@ -50,7 +50,7 @@ class TenderJIT
       cfp = ir.loadp(1)
 
       buff = JITBuffer.new 4096
-      ctx = Context.new(buff, ec, cfp, nil, nil)
+      ctx = Context.new(buff, ec, cfp, comptime_frame)
 
       # Increment executed method count
       stats_location = ir.loadi(STATS.to_i)
@@ -204,6 +204,14 @@ class TenderJIT
     def jump ctx, ir, insn
       label = yarv_label(ir, insn.opnds.first)
       ir.jmp label
+    end
+
+    def putself ctx, ir, insn
+      unless ctx.recv
+        self_reg = ir.load(ctx.cfp, ir.uimm(C.rb_control_frame_t.offsetof(:self)))
+        ctx.recv = self_reg
+      end
+      ctx.push Hacks.basic_type(Fiddle.dlunwrap(ctx.comptime_cfp.self)), ctx.recv
     end
 
     def put_label ctx, ir, insn

@@ -51,11 +51,11 @@ class TenderJIT
   end
 
   # Entry point for manually compiling a method
-  def compile method
+  def compile method, cfp
     compiler = Compiler.for_method method
     return unless compiler
 
-    jit_addr = compiler.compile
+    jit_addr = compiler.compile cfp
     @compiled_iseq_addrs << compiler.iseq.to_i
     compiler.iseq.body.jit_func = jit_addr
   end
@@ -88,12 +88,5 @@ class TenderJIT
 
   def disable!
     #RubyVM::RJIT.pause
-  end
-end
-
-class << RubyVM::RJIT
-  def compile iseq, thing
-    compiler = TenderJIT::Compiler.new
-    compiler.compile iseq
   end
 end
