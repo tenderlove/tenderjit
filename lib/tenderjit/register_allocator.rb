@@ -23,9 +23,6 @@ class TenderJIT
       while true
         stack_adjust = doit bbs, ir, counter
         adjust += stack_adjust if stack_adjust
-        if $DEBUG
-          File.binwrite("after_spill.#{counter}.dot", BasicBlock::Printer.new(bbs).to_dot)
-        end
         counter += 1
         raise "FIXME!" if counter > 7
         break unless stack_adjust
@@ -43,6 +40,7 @@ class TenderJIT
 
       if $DEBUG
         File.binwrite("if_graph.#{counter}.dot", ig.to_dot("Interference Graph #{counter}", lr_colors))
+        File.binwrite("cfg.#{counter}.dot", BasicBlock::Printer.new(bbs).to_dot)
       end
 
       stack_adjust = 0
