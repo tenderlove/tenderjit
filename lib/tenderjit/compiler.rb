@@ -99,7 +99,7 @@ class TenderJIT
           yarv_block.phis.map(&:out).map(&:name).each { |name|
             existing = prev_context.get_local name
             new = context.get_local name
-            ir.insert_at(insns._next) { ir.phi existing, new }
+            ir.insert_at(insns._next) { ir.phi existing.reg, new.reg }
           }
 
           phis = []
@@ -303,21 +303,21 @@ class TenderJIT
 
     def setlocal ctx, ir, insn
       local = insn.opnds
-      ctx.set_local local.name, ctx.pop.reg
+      item = ctx.pop
+      ctx.set_local local.name, item.type, item.reg
     end
 
     def getlocal ctx, ir, insn
       local = insn.opnds
-      if ctx.have_local?(local.name)
-        # FIXME: propagate type info for locals
-      else
+      unless ctx.have_local?(local.name)
         # If the local hasn't been loaded yet, load it
         ep = ir.load(ctx.cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
         index, _ = local.ops
         var = ir.load(ep, ir.imm(-index * Fiddle::SIZEOF_VOIDP))
-        ctx.set_local local.name, var
+        ctx.set_local local.name, :unknown, var
       end
-      ctx.push :unknown, ctx.get_local(local.name)
+      local_item = ctx.get_local local.name
+      ctx.push local_item.type, local_item.reg
     end
 
     def leave ctx, ir, opnds

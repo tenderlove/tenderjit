@@ -11,6 +11,8 @@ class TenderJIT
         end
       end
 
+      LocalItem = Util::ClassGen.pos(:type, :reg)
+
       include Enumerable
 
       attr_reader :buff, :ec, :cfp, :sp
@@ -42,8 +44,8 @@ class TenderJIT
         @locals.key? name
       end
 
-      def set_local name, var
-        @locals[name] = var
+      def set_local name, type, register
+        @locals[name] = LocalItem.new(type, register)
       end
 
       def stack_depth
