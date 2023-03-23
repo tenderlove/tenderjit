@@ -301,6 +301,37 @@ class TenderJIT
       ctx.push(Hacks.basic_type(123), out)
     end
 
+    def opt_minus ctx, ir, insn
+      r_type = ctx.peek(0)
+      l_type = ctx.peek(1)
+
+      exit_label = ir.label(:exit)
+
+      right = r_type.reg
+
+      # Only test the type at runtime if we don't know for sure
+      guard_fixnum ir, right, exit_label unless r_type.fixnum?
+
+      left = l_type.reg
+
+      # Only test the type at runtime if we don't know for sure
+      guard_fixnum ir, left, exit_label unless l_type.fixnum?
+
+      # Subtract them
+      out = ir.sub(left, right)
+      ir.jo exit_label
+
+      # Add the tag again
+      out = ir.add out, ir.uimm(0x1)
+
+      # Generate an exit in case of overflow or not fixnums
+      generate_exit ctx, ir, insn.pc, exit_label
+
+      ctx.pop
+      ctx.pop
+      ctx.push(Hacks.basic_type(123), out)
+    end
+
     def setlocal ctx, ir, insn
       local = insn.opnds
       item = ctx.pop
