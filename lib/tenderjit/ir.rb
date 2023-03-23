@@ -164,37 +164,8 @@ class TenderJIT
       insert_at node { jmp label }
     end
 
-    def insn_str insn
-      "#{insn.op} #{insn.arg1.to_s}, #{insn.arg2.to_s}, #{insn.out.to_s}"
-    end
-
-    def to_arm64
-      require "tenderjit/arm64/register_allocator"
-      require "tenderjit/arm64/code_gen"
-
-      ra = ARM64::RegisterAllocator.new
-      cg = ARM64::CodeGen.new
-
-      ra.assemble cfg, cg
-    end
-
-    def to_x86_64
-      require "tenderjit/x86_64/register_allocator"
-      require "tenderjit/x86_64/code_gen"
-
-      ra = X86_64::RegisterAllocator.new
-      cg = X86_64::CodeGen.new
-
-      ra.assemble self, cg
-    end
-
     def assemble
-      x = basic_blocks
-      m = x.assemble
-      if $DEBUG
-        File.binwrite("ir_cfg.dot", BasicBlock::Printer.new(x).to_dot)
-      end
-      m
+      basic_blocks.assemble
     end
 
     def write_to buffer
