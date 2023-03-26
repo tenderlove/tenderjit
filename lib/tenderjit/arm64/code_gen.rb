@@ -64,37 +64,10 @@ class TenderJIT
       end
 
       def call _, location, arity
-        save_regs = [ X30 ]
-        params = @params.pop arity
-
-        mov_regs = []
-
-        params.each_with_index do |param, i|
-          param_reg = PARAM_REGS[i]
-          if param == param_reg
-            # great, don't need to save
-          else
-            save_regs << param_reg
-            mov_regs << [param_reg, param]
-          end
-        end
-
         # Save these regs
-        save_regs.each_slice(2) do |a, b|
-          b ||= XZR
-          asm.stp a, b, [SP, -16], :!
-        end
-
-        # Write the params
-        mov_regs.each do |a|
-          asm.mov a.first, a.last
-        end
-
+        asm.stp X30, XZR, [SP, -16], :!
         asm.blr location
-        save_regs.each_slice(2).to_a.reverse.each do |a, b|
-          b ||= XZR
-          asm.ldp a, b, [SP], 16
-        end
+        asm.ldp X30, XZR, [SP], 16
       end
 
       def and out, arg1, arg2
@@ -136,7 +109,7 @@ class TenderJIT
         asm.sub out, arg1, arg2
       end
 
-      def return _, arg1, _
+      def ret _, arg1, _
         if arg1 != AArch64::Registers::X0 || arg1.integer?
           asm.mov AArch64::Registers::X0, arg1
         end
@@ -152,21 +125,18 @@ class TenderJIT
         asm.ldur out, [src, offset]
       end
 
-      PARAM_REGS = [
-        AArch64::Registers::X0,
-        AArch64::Registers::X1,
-        AArch64::Registers::X2,
-        AArch64::Registers::X3,
-        AArch64::Registers::X4,
-        AArch64::Registers::X5,
-        AArch64::Registers::X6,
-        AArch64::Registers::X7,
-      ]
+      def loadp _, _, _
+      end
 
-      def loadp out, idx, _
-        unless out == PARAM_REGS[idx]
-          asm.mov out, PARAM_REGS[idx]
-        end
+      def storep out, reg, _
+        write out, reg, _
+      end
+
+      def loadsp _, _, _
+      end
+
+      def dec _, reg, amount
+        asm.sub reg, reg, amount
       end
 
       def loadi out, val, _

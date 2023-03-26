@@ -71,7 +71,19 @@ class TenderJIT
       end
 
       def assemble platform = Util::PLATFORM
+        if $DEBUG
+          $stderr.print "#" * 10
+          $stderr.print " BEFORE RA "
+          $stderr.puts "#" * 10
+          $stderr.puts BasicBlock::Printer.new(self).to_ascii
+        end
         assign_registers platform
+        if $DEBUG
+          $stderr.print "#" * 10
+          $stderr.print " AFTER RA "
+          $stderr.puts "#" * 10
+          $stderr.puts BasicBlock::Printer.new(self).to_ascii
+        end
         asm = self.code_generator platform
         dfs do |block|
           block.assemble asm

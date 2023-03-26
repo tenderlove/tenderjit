@@ -11,10 +11,10 @@ class TenderJIT
 
     attr_reader :counter
 
-    def initialize insn = LinkedList::Head.new, counter = 0
-      @insn_head = insn
+    def initialize
+      @insn_head = LinkedList::Head.new
       @instructions = @insn_head
-      @counter = counter
+      @counter = 0
     end
 
     def current_instruction
@@ -30,126 +30,6 @@ class TenderJIT
       @instructions = old
     end
 
-    def dump_usage highlight_insn = nil
-      self.class.dump_insns instructions, highlight_insn: highlight_insn
-    end
-
-    def vars set
-      set.map(&:to_s).join(", ")
-    end
-
-    def dump_insns instructions, highlight_insn: nil, ansi: true
-      self.class.dump_insns instructions, highlight_insn: highlight_insn, ansi: ansi
-    end
-
-    def self.dump_insns instructions, highlight_insn: nil, ansi: true
-      raise
-      virt_regs = instructions.flat_map { |insn|
-        insn.registers
-      }.uniq
-      regs = virt_regs.select(&:variable?)
-      regs = regs.select(&:usage_assigned?)
-
-      physical_regs = regs.map(&:physical_register).compact.uniq.sort_by(&:to_i)
-
-      phys_reg_names = physical_regs.map { |x| "R#{x.to_i}" }
-      phys_reg_name_max_width = 3
-
-      if phys_reg_names.any?
-        phys_reg_name_max_width = phys_reg_names.sort_by(&:length).last.length + 1
-      end
-
-      maxwidth = [0, 0, 0, 0]
-      num = 0
-      instructions.each do |insn|
-        maxwidth[0] = insn.op.to_s.length if insn.op.to_s.length > maxwidth[0]
-        maxwidth[1] = insn.arg1.to_s.length if insn.arg1.to_s.length > maxwidth[1]
-        maxwidth[2] = insn.arg2.to_s.length if insn.arg2.to_s.length > maxwidth[2]
-        maxwidth[3] = insn.out.to_s.length if insn.out.to_s.length > maxwidth[3]
-        num = insn.number
-      end
-
-      num_width = num.to_s.length
-      sorted_regs = regs.sort_by(&:name)
-      buff = "".dup
-      buff << "   "
-      buff << " " * (maxwidth[0] + num_width + 2)
-      buff << "OUT".ljust(maxwidth[3] + 1)
-      buff << "IN1".ljust(maxwidth[1] + 1)
-      buff << "IN2".ljust(maxwidth[2] + 1)
-
-      buff << sorted_regs.map { _1.name.to_s.ljust(phys_reg_name_max_width) }.join
-
-      buff << "\n"
-
-      insn_strs = instructions.map.with_index do |insn, j|
-        start = ""
-
-        if highlight_insn
-          if insn.number == highlight_insn
-            start += "-> "
-          else
-            start += "   "
-          end
-        else
-          start += "   "
-        end
-
-        if ansi
-          if j.even?
-            if insn.number == highlight_insn
-              start += "\033[30;1m"
-            else
-              start += "\033[30;0;0m"
-            end
-          else
-            if insn.number == highlight_insn
-              start += "\033[30;1;107m"
-            else
-              start += "\033[30;0;107m"
-            end
-          end
-        end
-
-        start + insn.number.to_s.ljust(num_width) + " " + insn.op.to_s.ljust(maxwidth[0] + 1) +
-          "#{insn.out.to_s}".ljust(maxwidth[3] + 1) +
-          "#{insn.arg1.to_s}".ljust(maxwidth[1] + 1) +
-          "#{insn.arg2.to_s}".ljust(maxwidth[2] + 1) +
-          sorted_regs.map { |r|
-            label = if r.physical_register
-                      if r.used_at?(insn.number)
-                        "R#{r.physical_register.to_i}"
-                      else
-                        " "
-                      end
-                    else
-                      if r.first_use == insn.number
-                        "A"
-                      else
-                        if r.last_use == insn.number
-                          "V"
-                        else
-                          if r.used_at?(insn.number)
-                            "X"
-                          else
-                            " "
-                          end
-                        end
-                      end
-                    end
-            label.ljust(phys_reg_name_max_width)
-          }.join + (ansi ? "\033[0m" : "")
-      end
-      insn_strs.each { buff << _1 + "\n" }
-      buff
-    end
-
-    def set_last_use
-      @insn_head.each_with_index do |insn, i|
-        insn.used_at i
-      end
-    end
-
     def each_instruction
       @insn_head.each_with_index do |insn, i|
         yield insn, i
@@ -161,7 +41,8 @@ class TenderJIT
     end
 
     def insert_jump node, label
-      insert_at node { jmp label }
+      insert_at(node) { jmp label }
+      node._next
     end
 
     def assemble
@@ -172,18 +53,16 @@ class TenderJIT
       assemble.write_to buffer
     end
 
-    def sp
-      Operands::SP
+    def loadsp
+      sp = Operands::StackPointer.new(@counter)
+      @counter += 1
+      push __method__, NONE, NONE, sp
     end
 
     def var
       op = Operands::InOut.new(@counter)
       @counter += 1
       op
-    end
-
-    def param idx
-      Operands::Param.new(idx)
     end
 
     def uimm int
@@ -198,6 +77,10 @@ class TenderJIT
       push __method__, self.imm(imm), NONE
     end
 
+    def storei imm, arg
+      push __method__, self.imm(imm), arg, NONE
+    end
+
     def set_param arg1
       push __method__, arg1, NONE, NONE
     end
@@ -210,8 +93,8 @@ class TenderJIT
       push __method__, arg1, NONE, NONE
     end
 
-    def call location, arity
-      push __method__, location, arity, param(0)
+    def call location
+      push __method__, location, NONE, retvar
     end
 
     def add arg1, arg2
@@ -235,6 +118,11 @@ class TenderJIT
       push __method__, arg1, arg2
     end
 
+    def dec arg1, arg2
+      raise ArgumentError, "First parameter must be a register" if arg1.integer?
+      push __method__, arg1, arg2, NONE
+    end
+
     def store value, reg, offset
       offset = uimm(offset) if offset.integer?
       raise ArgumentError unless offset.immediate?
@@ -242,7 +130,7 @@ class TenderJIT
       nil
     end
 
-    def return arg1
+    def ret arg1
       push __method__, arg1, NONE, NONE
       nil
     end
@@ -271,11 +159,15 @@ class TenderJIT
       out
     end
 
-    alias :ret :return
-
     def loadp num
       raise ArgumentError unless num.integer?
-      push __method__, uimm(num), NONE
+      push __method__, NONE, NONE, param(num)
+    end
+
+    def storep num, var
+      raise ArgumentError unless num.integer?
+      x = param(num)
+      push __method__, var, NONE, x
     end
 
     def load arg1, arg2
@@ -384,6 +276,18 @@ class TenderJIT
       b.add_use insn
       out.definition = insn
       insn
+    end
+
+    def param idx
+      op = Operands::Param.new(@counter, idx)
+      @counter += 1
+      op
+    end
+
+    def retvar
+      op = Operands::RetVar.new(@counter)
+      @counter += 1
+      op
     end
   end
 end

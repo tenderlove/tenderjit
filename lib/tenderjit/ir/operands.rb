@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "tenderjit/error"
 require "tenderjit/util"
 
@@ -67,6 +69,11 @@ class TenderJIT
         def label?; false; end
         def variable?; true; end
         def stack_pointer?; false; end
+        def rclass; :general; end
+
+        def to_s; "#{varname}(#{name})"; end
+
+        def varname; "TMP"; end
 
         def initialize name, physical_register = nil, uses = [], ranges = []
           super
@@ -99,15 +106,13 @@ class TenderJIT
         # Unwrapped physical register
         def pr
           unless physical_register
-            raise UnassignedRegister, "Virtual Register #{name} doesn't have a physical register"
+            raise UnassignedRegister, "Virtual Register #{to_s} doesn't have a physical register"
           end
           physical_register
         end
       end
 
       class InOut < VirtualRegister
-        def to_s; "TMP(#{name})"; end
-
         ##
         # Spill this variable.  Returns the number of stores to the SP
         # it generated.
@@ -224,17 +229,34 @@ class TenderJIT
       end
 
       class StackPointer < VirtualRegister
-        def stack_pointer?; true; end
-        def variable?; false; end
-        def to_s; "SP"; end
+        def sp?; true; end
+        def variable?; true; end
+        def varname; "SP"; end
+        def rclass; :sp; end
       end
 
-      SP = StackPointer.new "SP"
+      class RetVar < VirtualRegister
+        def variable?; true; end
+        def varname; "RETV"; end
+        def rclass; :ret; end
+
+        def spill_cost; Float::INFINITY; end
+      end
 
       class Param < VirtualRegister
+        attr_reader :number
+
+        def initialize counter, num
+          super(counter)
+          @number = num
+        end
+
         def param?; true; end
-        def variable?; false; end
-        def to_s; "PARAM(#{name})"; end
+        def variable?; true; end
+        def varname; "PARAM_#{@number}"; end
+        def rclass; :param; end
+
+        def spill_cost; 2; end
       end
 
       class Label < Util::ClassGen.pos(:name, :offset, :definition)

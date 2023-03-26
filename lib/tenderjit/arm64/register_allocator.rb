@@ -16,8 +16,10 @@ class TenderJIT
     ].freeze
 
     class RegisterAllocator < TenderJIT::RegisterAllocator
+      include AArch64::Registers
+
       def initialize
-        super(AArch64::Registers::SP, PARAM_REGS, FREE_REGS)
+        super(SP, PARAM_REGS, FREE_REGS, X0)
       end
     end
   end

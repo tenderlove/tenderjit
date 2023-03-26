@@ -4,15 +4,78 @@ require "tenderjit/interference_graph"
 
 class TenderJIT
   class RegisterAllocator
+    # Maps register classes to colors
+    class ColorMap
+      def initialize
+        @register_classes = {}
+        @classes_to_colors = {}
+        @reg_lut = []
+        @interference_classes = {}
+        @assigned_colors = {}
+      end
+
+      def add_overlap c1, c2
+        @interference_classes[c1] << c2
+        @interference_classes[c2] << c1
+      end
+
+      def add_regs klass, regs
+        @interference_classes[klass] = [klass]
+        @assigned_colors[klass] = []
+        @register_classes[klass] = regs
+        add_colors klass, regs
+        @reg_lut += regs
+      end
+
+      def overlap lr
+        @interference_classes.fetch(lr.rclass)
+      end
+
+      def possible_colors lr
+        assigned = assigned_color(lr)
+        if assigned
+          [assigned]
+        else
+          @classes_to_colors.fetch(lr.rclass)
+        end
+      end
+
+      def assign_color lr, this_color
+        @assigned_colors[lr.rclass][lr.name] = this_color
+      end
+
+      def assigned_color lr
+        overlapping_classes = overlap(lr)
+        overlapping_classes.each do |klass|
+          m = @assigned_colors.fetch(klass)[lr.name]
+          return m if m
+        end
+        nil
+      end
+
+      def available_colors klass
+        @register_classes.fetch(klass)
+      end
+
+      def color_for lr
+        @reg_lut.fetch(@assigned_colors[lr.rclass][lr.name])
+      end
+
+      private
+
+      def add_colors klass, regs
+        i = @classes_to_colors.values.flatten.length
+        @classes_to_colors[klass] = regs.length.times.map { |j| i + j }
+      end
+    end
+
     attr_reader :scratch_regs
 
-    def initialize sp, param_regs, scratch_regs
+    def initialize sp, param_regs, scratch_regs, ret
       @parameter_registers = param_regs.dup
-      @scratch_regs        = Set.new(scratch_regs)
-      @freelist            = @scratch_regs.to_a
-      @borrow_list         = []
-      @active              = Set.new
+      @scratch_regs        = scratch_regs
       @sp                  = sp
+      @ret                 = ret
     end
 
     def spill?; false; end
@@ -32,14 +95,30 @@ class TenderJIT
 
     def doit bbs, ir, counter
       live_ranges = renumber bbs
-      ig = build bbs, live_ranges.last.name + 1
+      ig = build bbs, live_ranges
       ig.freeze
-      # coalesce
-      stack = simplify ig, live_ranges, @scratch_regs.length
-      lr_colors, spills = select ig, stack, @scratch_regs.length.times.to_a
+
+      # coalesce # FIXME: we should implement coalescing
+
+      color_map = ColorMap.new
+      color_map.add_regs :general, @scratch_regs
+      color_map.add_regs :sp,      [@sp]
+      color_map.add_regs :param,   @parameter_registers
+      color_map.add_regs :ret,     [@ret]
+
+      color_map.add_overlap :param, :ret
+
+      # Pre-color parameter registers
+      live_ranges.select(&:param?).each do |param|
+        color = color_map.possible_colors(param)[param.number]
+        color_map.assign_color(param, color)
+      end
+
+      stack = simplify ig, live_ranges, color_map
+      spills = select ig, stack, color_map
 
       if $DEBUG
-        File.binwrite("if_graph.#{counter}.dot", ig.to_dot("Interference Graph #{counter}", lr_colors))
+        #File.binwrite("if_graph.#{counter}.dot", ig.to_dot("Interference Graph #{counter}", lr_colors))
         File.binwrite("cfg.#{counter}.dot", BasicBlock::Printer.new(bbs).to_dot)
       end
 
@@ -60,9 +139,9 @@ class TenderJIT
         end
         stack_adjust
       else
-        regs = @scratch_regs.to_a
         live_ranges.each do |lr|
-          lr.physical_register = regs[lr_colors[lr.name]]
+          pr = color_map.color_for(lr)
+          lr.physical_register = pr
           lr.freeze
         end
         false
@@ -83,28 +162,35 @@ class TenderJIT
 
     ##
     # Select. Select registers for each live range.
-    def select graph, stack, colors
-      # the index in lr_colors maps to the live range id
-      lr_colors = []
+    def select graph, stack, cm
       spill_list = []
 
       while lr = stack.shift
-        used_colors = graph.neighbors(lr.name).map { |neighbor|
-          lr_colors[neighbor]
+        overlaps_with = cm.overlap lr
+
+        # only consider colors of neighbors that compete with this class
+        used_colors = graph.neighbors(lr.name).select { |neighbor|
+          # Find all neighbors that overlap
+          overlaps_with.include?(neighbor.rclass)
+        }.flat_map { |neighbor|
+          cm.assigned_color(neighbor)
         }.compact
-        this_color = (colors - used_colors).first
+
+        this_color = (cm.possible_colors(lr) - used_colors).first
+
         if this_color
-          lr_colors[lr.name] = this_color
+          cm.assign_color lr, this_color
         else
           spill_list << lr
         end
       end
-      [lr_colors, spill_list]
+
+      spill_list
     end
 
     ##
     # Simplify.  Return a stack of live ranges to color
-    def simplify graph, lrs, reg_count
+    def simplify graph, lrs, cm
       work_list = lrs.dup
       graph = graph.dup
 
@@ -114,7 +200,7 @@ class TenderJIT
         break if work_list.empty?
 
         can_push, work_list = work_list.partition { |x|
-          graph.degree(x.name) < reg_count
+          graph.degree(x.name) < cm.available_colors(x.rclass).length
         }
 
         can_push.each { |lr| graph.remove(lr.name) }
@@ -150,8 +236,8 @@ class TenderJIT
 
     ##
     # Build the interference graph
-    def build bbs, lr_size
-      graph = InterferenceGraph.new lr_size
+    def build bbs, live_ranges
+      graph = InterferenceGraph.new live_ranges
 
       bbs.dfs.reverse_each do |bi|
         live = bi.live_out = bi.successors.inject(Set.new) do |set, succ|

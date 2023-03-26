@@ -17,7 +17,7 @@ class TenderJIT
     end
 
     def test_sub_lits
-      jit.compile method(:sub_lits)
+      compile method(:sub_lits), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 
@@ -32,7 +32,7 @@ class TenderJIT
     end
 
     def test_sub_params
-      jit.compile method(:sub_params)
+      compile method(:sub_params), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 
@@ -47,7 +47,7 @@ class TenderJIT
     end
 
     def test_sub_lit_and_params
-      jit.compile method(:sub_lit_and_param)
+      compile method(:sub_lit_and_param), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 
@@ -62,7 +62,7 @@ class TenderJIT
     end
 
     def test_sub_strings_bails
-      jit.compile method(:sub_params)
+      compile method(:sub_params), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 

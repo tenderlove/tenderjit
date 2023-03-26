@@ -90,11 +90,11 @@ class TenderJIT
           obj[all_vars[i]] = i
         }
 
-        widest_var_num = all_vars.map(&:name).map(&:to_s).max_by(&:length).size + 1
+        widest_var_num = (all_vars.map(&:name).map(&:to_s).max_by(&:length) || []).size + 1
 
-        widest_reg_name = all_vars.map { |var|
+        widest_reg_name = (all_vars.map { |var|
           var.physical_register ? var.physical_register.name : var.name.to_s
-        }.max_by(&:length).length + 1
+        }.max_by(&:length) || []).length + 1
 
         var_width = [widest_var_num, widest_reg_name].max
 
@@ -168,8 +168,7 @@ class TenderJIT
           live_now = live.dup
 
           bi.reverse_each_instruction do |insn|
-            live_now << insn.arg1 if insn.arg1.variable?
-            live_now << insn.arg2 if insn.arg2.variable?
+            insn.variables.each { |var| live_now << var }
 
             live_var_map[insn] = live_now.dup
 

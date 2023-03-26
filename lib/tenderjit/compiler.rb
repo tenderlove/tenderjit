@@ -31,7 +31,9 @@ class TenderJIT
 
     def initialize iseq
       @iseq = iseq
+      @trampolines = JITBuffer.new 4096
       @yarv_labels = {}
+      @trampoline_index = []
     end
 
     def yarv
@@ -40,7 +42,8 @@ class TenderJIT
 
     def compile comptime_frame
       # method name
-      # label = iseq.body.location.label
+      label = iseq.body.location.label
+      puts "Compiling #{label}" if $DEBUG
 
       STATS.compiled_methods += 1
 
@@ -147,6 +150,7 @@ class TenderJIT
 
     def translate_block block, ir, context
       block.each_instruction do |insn|
+        puts insn.op if $DEBUG
         send insn.op, context, ir, insn
       end
     end
@@ -222,6 +226,23 @@ class TenderJIT
       obj = insn.opnds.first
       out = ir.loadi(Fiddle.dlwrap(obj))
       ctx.push Hacks.basic_type(obj), out
+    end
+
+    def opt_send_without_block ctx, ir, insn
+      cd = insn.opnds.first
+      mid   = C.vm_ci_mid(cd.ci)
+      argc  = C.vm_ci_argc(cd.ci)
+      flags = C.vm_ci_flag(cd.ci)
+
+      ir.brk
+      ir.storei(0, ctx.peek(argc).reg)
+      ir.storei(1, argc)
+      argc.times do |i|
+        ir.storei(2 + i, ctx.pop.reg)
+      end
+      ctx.pop
+      func = ir.loadi trampoline(2 + argc)
+      ir.call func
     end
 
     def opt_lt ctx, ir, insn
@@ -411,6 +432,26 @@ class TenderJIT
     # Look up a yarv label and translate it to an IR label
     def yarv_label ir, label
       @yarv_labels[label.name] ||= ir.label("YARV: #{label.name}")
+    end
+
+    def trampoline len
+      ir = IR.new
+      ir.brk
+      sp = ir.loadsp
+      ir.dec(sp, ((len * 8) + 7) & -8)
+      loads = len.times.map do |i|
+        ir.loadp(i)
+      end
+      loads.each_with_index do |p, i|
+        ir.store(p, sp, i * 8)
+      end
+      ir.ret 1
+      asm = ir.assemble
+      addr = @trampolines.to_i + @trampolines.pos
+      @trampolines.writeable!
+      asm.write_to @trampolines
+      @trampolines.executable!
+      addr
     end
   end
 end

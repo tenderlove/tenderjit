@@ -10,6 +10,10 @@ class TenderJIT
       @out    = out
     end
 
+    def rclass
+      @out.rclass
+    end
+
     def definitions
       arg1.definitions + arg2.definitions + out.definitions
     end

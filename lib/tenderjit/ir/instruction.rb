@@ -20,6 +20,10 @@ class TenderJIT
       def lr2;    arg2.live_range; end
       def lr_out; out.live_range; end
 
+      def inspect
+        "#<#{self.class.name} #{op} #{out} #{arg1} #{arg2}>"
+      end
+
       def put_label?
         op == :put_label
       end

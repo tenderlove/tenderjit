@@ -3,6 +3,9 @@ require "tenderjit/util"
 class TenderJIT
   class Compiler
     class Context
+      class EmptyStackError < TenderJIT::Error
+      end
+
       class StackItem < Util::ClassGen.pos(:type, :depth, :reg)
         def depth_b; depth * Fiddle::SIZEOF_VOIDP; end
 
@@ -76,6 +79,7 @@ class TenderJIT
       end
 
       def pop
+        raise EmptyStackError if @stack.empty?
         @stack.pop
       end
     end

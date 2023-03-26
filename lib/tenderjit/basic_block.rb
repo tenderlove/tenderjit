@@ -182,6 +182,7 @@ class TenderJIT
       @dominators   = nil
       @df           = nil
       @phis         = []
+      @finish       = start
     end
 
     def add_phi phi
@@ -200,6 +201,7 @@ class TenderJIT
     end
 
     def add_instruction insn
+      raise ArgumentError unless insn
       insn.bb = self
       @finish = insn
     end
@@ -220,6 +222,7 @@ class TenderJIT
       # UE means "upward exposed"
       ue_vars = Set.new
       iter = start
+      raise unless finish
       loop do
         if ue = iter.used_variables
           ue.each do |ue_var|
@@ -241,8 +244,10 @@ class TenderJIT
       # UE means "upward exposed"
       killed_vars = []
       iter = start
-      while iter != finish
+      loop do
         killed_vars << iter.set_variable if iter.set_variable
+
+        break if iter == finish
         iter = iter._next
       end
       killed_vars
@@ -286,7 +291,7 @@ class TenderJIT
 
     def add_jump ir, label
       raise ArgumentError unless label
-      @finish = ir.insert_jump finish, label
+      add_instruction ir.insert_jump(finish, label)
     end
 
     def remove_predecessor block
@@ -407,6 +412,9 @@ class TenderJIT
 
       # Convert this SSA instruction to machine code
       asm.handle insn, vr3.pr, vr1.pr, vr2.pr
+    rescue TenderJIT::Error, NoMethodError
+      $stderr.puts TenderJIT::BasicBlock::Printer.new(head).to_ascii
+      raise
     end
 
     EMPTY_SET = Set.new

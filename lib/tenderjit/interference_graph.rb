@@ -7,10 +7,12 @@ class TenderJIT
   class InterferenceGraph
     attr_reader :size
 
-    def initialize size
-      @size      = size
-      @bm        = TenderJIT::BitMatrix.new(size)
-      @adjacency = TenderJIT::AdjacencyList.new
+    def initialize live_ranges
+      @live_ranges = live_ranges
+      @lr_lut      = live_ranges.each_with_object([]) { |lr, lut| lut[lr.name] = lr }
+      @size        = live_ranges.max_by(&:name).name + 1
+      @bm          = TenderJIT::BitMatrix.new(@size)
+      @adjacency   = TenderJIT::AdjacencyList.new
     end
 
     def initialize_copy other
@@ -35,7 +37,7 @@ class TenderJIT
     end
 
     def neighbors x
-      @adjacency.neighbors(x)
+      @adjacency.neighbors(x).map { |idx| @lr_lut[idx] }
     end
 
     def remove x

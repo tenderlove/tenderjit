@@ -13,7 +13,7 @@ class TenderJIT
     end
 
     def test_method_call
-      jit.compile method(:call_function_simple)
+      compile method(:call_function_simple), recv: self
       assert_equal 2, jit.compiled_methods
       assert_equal 0, jit.executed_methods
       assert_equal 0, jit.exits
