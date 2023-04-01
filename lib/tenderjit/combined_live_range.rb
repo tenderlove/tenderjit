@@ -22,6 +22,10 @@ class TenderJIT
       true
     end
 
+    def param?
+      false
+    end
+
     def name
       out.name
     end

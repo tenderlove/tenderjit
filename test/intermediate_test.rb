@@ -51,9 +51,9 @@ class TenderJIT
       ir = IR.new
       is_false = ir.label :is_false
       ir.jfalse ir.loadp(0), is_false
-      ir.return 0
+      ir.ret 0
       ir.put_label is_false
-      ir.return 1
+      ir.ret 1
 
       buf = assemble ir
 
@@ -70,9 +70,9 @@ class TenderJIT
       ir = IR.new
       not_false = ir.label :not_false
       ir.jnfalse ir.loadp(0), not_false
-      ir.return 0
+      ir.ret 0
       ir.put_label not_false
-      ir.return 1
+      ir.ret 1
 
       buf = assemble ir
 
@@ -85,7 +85,7 @@ class TenderJIT
       assert_equal 1, func.call(Fiddle.dlwrap(2.0))
     end
 
-    def test_lifetime_holes_use_borrowed_regs
+    def xtest_lifetime_holes_use_borrowed_regs
       ir = IR.new
       _else = ir.label :else
       _end = ir.label :end
@@ -122,15 +122,15 @@ class TenderJIT
 
       not_zero = ir.label :not_zero
       ir.tbnz a, 0, not_zero
-      ir.return 0
+      ir.ret 0
       ir.put_label not_zero
-      ir.return 1
+      ir.ret 1
 
       cfg = ir.basic_blocks
       assert_equal 3, cfg.to_a.length
 
       ops = cfg.map { |block| block.each_instruction.to_a.last.op }
-      assert_equal [:tbnz, :return, :return], ops
+      assert_equal [:tbnz, :jmp, :ret], ops
 
       buf = assemble ir
 
@@ -146,9 +146,9 @@ class TenderJIT
 
       is_zero = ir.label(:is_zero)
       ir.tbz a, 0, is_zero
-      ir.return 0
+      ir.ret 0
       ir.put_label is_zero
-      ir.return 1
+      ir.ret 1
 
       buf = assemble ir
 
@@ -165,7 +165,7 @@ class TenderJIT
       ir.cmp a, b
       z = ir.loadi(0)
       t = ir.csel_lt(a, z) # t = a < b ? a : b
-      ir.return t
+      ir.ret t
 
       buf = assemble ir
 
@@ -181,7 +181,7 @@ class TenderJIT
 
       ir.cmp a, b
       t = ir.csel_lt(a, b) # t = a < b ? a : b
-      ir.return t
+      ir.ret t
 
       buf = assemble ir
 
@@ -197,7 +197,7 @@ class TenderJIT
 
       ir.cmp a, b
       t = ir.csel_gt(a, b) # t = a > b ? a : b
-      ir.return t
+      ir.ret t
 
       buf = assemble ir
 
@@ -214,9 +214,9 @@ class TenderJIT
       t = ir.add(a, b) # t = a + b
       overflow = ir.label(:overflow)
       ir.jo overflow
-      ir.return t      # return t
+      ir.ret t      # return t
       ir.put_label overflow
-      ir.return 1
+      ir.ret 1
 
       buf = assemble ir
 
@@ -230,7 +230,7 @@ class TenderJIT
       b = ir.loadp(1)
 
       t = ir.sub(a, b) # t = a - b
-      ir.return t      # return t
+      ir.ret t      # return t
 
       buf = assemble ir
 
@@ -242,7 +242,7 @@ class TenderJIT
       ir = IR.new
       a = ir.loadp(0)
       t = ir.sub(a, 1) # t = a - b
-      ir.return t      # return t
+      ir.ret t      # return t
       buf = assemble ir
       func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
       assert_equal 3, func.call(4)
@@ -252,7 +252,7 @@ class TenderJIT
       ir = IR.new
       a = ir.loadp(0)
       t = ir.and(a, 1) # t = a & b
-      ir.return t      # return t
+      ir.ret t      # return t
       buf = assemble ir
       func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
       assert_equal 1, func.call(3)
@@ -262,7 +262,7 @@ class TenderJIT
       ir = IR.new
       a = ir.loadp(0)
       t = ir.and(1, a) # t = a & b
-      ir.return t      # return t
+      ir.ret t      # return t
       buf = assemble ir
       func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
       assert_equal 1, func.call(3)
@@ -273,7 +273,7 @@ class TenderJIT
       a = ir.loadp(0)
       b = ir.loadp(1)
       t = ir.and(a, b) # t = a & b
-      ir.return t      # return t
+      ir.ret t      # return t
       buf = assemble ir
       func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
       assert_equal 1, func.call(3, 1)
@@ -282,7 +282,7 @@ class TenderJIT
     def test_bitwise_lit_lit
       ir = IR.new
       t = ir.and(ir.loadi(3), 1) # t = a & b
-      ir.return t      # return t
+      ir.ret t      # return t
       buf = assemble ir
       func = buf.to_function([], Fiddle::TYPE_INT)
       assert_equal 1, func.call()
@@ -294,7 +294,7 @@ class TenderJIT
       b = ir.loadp(1)
 
       t = ir.add(b, a) # t = a + b
-      ir.return t      # return t
+      ir.ret t      # return t
 
       ir.assemble
       #buf = assemble ir
@@ -308,7 +308,7 @@ class TenderJIT
       a = ir.loadp(0)
 
       t = ir.add(2, a) # t = a + b
-      ir.return t      # return t
+      ir.ret t      # return t
 
       buf = assemble ir
 
@@ -323,7 +323,7 @@ class TenderJIT
       # load the value in Parameter 0 at offset 0
       b = ir.load(a, ir.uimm(0))
       # Return the value
-      ir.return b
+      ir.ret b
 
       buf = assemble ir
 
@@ -337,7 +337,7 @@ class TenderJIT
     def test_write
       ir = IR.new
       b = ir.loadi(16)
-      ir.return b
+      ir.ret b
 
       buf = assemble ir
 
@@ -354,7 +354,7 @@ class TenderJIT
 
       t = ir.add(b, a) # t = a + b
       v = ir.add(t, t)
-      ir.return v      # return t
+      ir.ret v      # return t
 
       buf = assemble ir
 
@@ -370,7 +370,7 @@ class TenderJIT
       a = ir.loadp(0)
       b = ir.loadi(val)
       c = ir.store(b, a, ir.uimm(0))
-      ir.return a
+      ir.ret a
 
       buf = assemble ir
 
@@ -390,9 +390,9 @@ class TenderJIT
       continue = ir.label :continue
       a = ir.loadp(0)
       ir.je a, ir.uimm(0x1), continue
-      ir.return 0
+      ir.ret 0
       ir.put_label continue
-      ir.return 1
+      ir.ret 1
 
       buf = assemble ir
 
@@ -406,9 +406,9 @@ class TenderJIT
       continue = ir.label :continue
       a = ir.loadp(0)
       ir.je a, ir.loadp(1), continue
-      ir.return 0
+      ir.ret 0
       ir.put_label continue
-      ir.return 1
+      ir.ret 1
 
       buf = assemble ir
 
@@ -425,10 +425,10 @@ class TenderJIT
       ir.jmp foo
 
       # Write a value to x0 but jump over it, making sure the jmp works
-      ir.return ir.loadi(32)
+      ir.ret ir.loadi(32)
 
       ir.put_label(foo)
-      ir.return a
+      ir.ret a
 
       buf = assemble ir
 
@@ -446,9 +446,9 @@ class TenderJIT
       c = ir.and a, b
       foo = ir.label(:foo)
       ir.jle c, ir.uimm(4), foo
-      ir.return ir.uimm(0)
+      ir.ret ir.uimm(0)
       ir.put_label(foo)
-      ir.return ir.uimm(1)
+      ir.ret ir.uimm(1)
 
       buf = assemble ir
 

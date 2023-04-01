@@ -59,8 +59,7 @@ class TenderJIT
         def to_s; sprintf("IMM(%0#4x)", value); end
       end
 
-      class UnsignedInt < Immediate
-      end
+      class UnsignedInt < Immediate; end
 
       class SignedInt < Immediate; end
 
