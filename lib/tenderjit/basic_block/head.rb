@@ -70,6 +70,14 @@ class TenderJIT
         end
       end
 
+      def assemble_patch
+        asm = self.code_generator Util::PLATFORM
+        dfs do |block|
+          block.assemble asm
+        end
+        asm
+      end
+
       def assemble platform = Util::PLATFORM
         if $DEBUG
           $stderr.print "#" * 10

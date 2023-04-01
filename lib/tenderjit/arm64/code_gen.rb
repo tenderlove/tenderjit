@@ -172,19 +172,34 @@ class TenderJIT
 
       def loadi out, val, _
         raise ArgumentError unless val.immediate?
+
+        shift = if val.bits
+                  val.bits / 16
+                else
+                  if val.pr >> 48 > 0
+                    4
+                  else
+                    if val.pr >> 32 > 0
+                      3
+                    else
+                      if val.pr >> 16 > 0
+                        2
+                      else
+                        1
+                      end
+                    end
+                  end
+                end
+
         val = val.pr
 
-        if val == 0
-          asm.mov out.pr, XZR
-        else
-          asm.movz out.pr, val & 0xFFFF
-          val >>= 16
-          shift = 1
-          while val > 0
-            asm.movk out.pr, val & 0xFFFF, lsl: (shift * 16)
-            val >>= 16
-            shift += 1
+        shift.times do |i|
+          if i == 0
+            asm.movz out.pr, val & 0xFFFF, lsl: 0
+          else
+            asm.movk out.pr, val & 0xFFFF, lsl: (i * 16)
           end
+          val >>= 16
         end
       end
 

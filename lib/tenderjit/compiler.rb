@@ -286,8 +286,7 @@ class TenderJIT
       ir.patch_location { |loc|
         @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy)
       }
-      ir.nop
-      func = ir.loadi trampoline(mid, argc, patch_id)
+      func = ir.loadi ir.uimm(trampoline(mid, argc, patch_id), 64)
       @patch_id += 1
 
       ctx.push :unknown, ir.call(func, params)
@@ -485,7 +484,6 @@ class TenderJIT
     class FakeFrame; end
 
     def compile_frame comptime_recv, mid, argc, patch_id
-      p [comptime_recv, Hacks.rb_id2sym(mid), argc, patch_id]
       patch_ctx = @patches.fetch(patch_id)
 
       comptime_recv_class = C.rb_class_of(comptime_recv)
@@ -494,13 +492,10 @@ class TenderJIT
       addr = gen_frame_push cme, patch_ctx, argc
 
       ir = IR.new
-      ir.brk
       ir.storei(addr, patch_ctx.reg)
+      asm = ir.assemble_patch
 
-      asm = ir.assemble
-      disasm buff
       pos = buff.pos
-      puts "PATCH ADDR 0x#{(patch_ctx.buffer_offset + buff.to_i).to_s(16)}"
       buff.seek patch_ctx.buffer_offset
       buff.writeable!
       asm.write_to(buff)
@@ -531,7 +526,6 @@ class TenderJIT
     end
 
     def call_iseq_frame ctx, iseq, argc
-      puts "OMGOMGOMGOMG"
       ir = IR.new
       ec = ir.loadp 0
       caller_cfp = ir.loadp 1 # load the caller's frame

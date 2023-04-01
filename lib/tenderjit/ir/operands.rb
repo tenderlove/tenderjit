@@ -59,9 +59,23 @@ class TenderJIT
         def to_s; sprintf("IMM(%0#4x)", value); end
       end
 
-      class UnsignedInt < Immediate; end
+      class UnsignedInt < Immediate
+        attr_reader :bits
 
-      class SignedInt < Immediate; end
+        def initialize value, bits
+          super(value)
+          @bits = bits
+        end
+      end
+
+      class SignedInt < Immediate
+        attr_reader :bits
+
+        def initialize value, bits
+          super(value)
+          @bits = bits
+        end
+      end
 
       class VirtualRegister < Util::ClassGen.pos(:name, :physical_register, :uses, :ranges)
         attr_writer :physical_register

@@ -49,6 +49,10 @@ class TenderJIT
       basic_blocks.assemble
     end
 
+    def assemble_patch
+      basic_blocks.assemble_patch
+    end
+
     def write_to buffer
       assemble.write_to buffer
     end
@@ -65,12 +69,12 @@ class TenderJIT
       op
     end
 
-    def uimm int
-      Operands::UnsignedInt.new(int)
+    def uimm int, width = nil
+      Operands::UnsignedInt.new(int, width)
     end
 
-    def imm int
-      Operands::SignedInt.new(int)
+    def imm int, width = nil
+      Operands::SignedInt.new(int, width)
     end
 
     def push arg1, arg2 = NONE
@@ -82,7 +86,10 @@ class TenderJIT
     end
 
     def loadi val
-      _push __method__, self.imm(val), NONE
+      val = imm(val) if val.integer?
+      raise unless val.immediate?
+
+      _push __method__, val, NONE
     end
 
     def storei imm, arg
