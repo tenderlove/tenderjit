@@ -17,10 +17,8 @@ class TenderJIT
       end
 
       def handle insn, out, in1, in2
-        send insn.op, out, in1, in2
+        insn.call self, out, in1, in2
       end
-
-      private
 
       def set_param _, arg1, _
         @params << arg1
@@ -38,6 +36,10 @@ class TenderJIT
 
       def tbz dest, reg, bit
         asm.tbz reg, bit, dest
+      end
+
+      def shr dest, reg, amount
+        asm.asr dest, reg, amount
       end
 
       def jle dest, arg1, arg2
@@ -63,11 +65,39 @@ class TenderJIT
         asm.neg out, arg1
       end
 
-      def call _, location, arity
+      PARAM_REGS = 8.times.map { AArch64::Registers.const_get(:"X#{_1}") }.freeze
+
+      def save_params _, arg1, _
+        arg1.times.map.each_slice(2) { |x, y|
+          x = PARAM_REGS[x]
+          y = y ? PARAM_REGS[y] : XZR
+          asm.stp x, y, [SP, -16], :!
+        }
+      end
+
+      def restore_params _, arg1, _
+        arg1.times.map.each_slice(2).to_a.reverse_each { |x, y|
+          puts "HI MOM"
+          x = PARAM_REGS[x]
+          y = y ? PARAM_REGS[y] : XZR
+          asm.ldp x, y, [SP], 16
+        }
+      end
+
+      def call _, location, params
+        params.each_with_index do |param, i|
+          pr = param.pr
+          next if pr == PARAM_REGS[i]
+          asm.mov PARAM_REGS[i], pr
+        end
         # Save these regs
         asm.stp X30, XZR, [SP, -16], :!
         asm.blr location
         asm.ldp X30, XZR, [SP], 16
+      end
+
+      def patch_location block, _, _
+        asm.patch_location(&block)
       end
 
       def and out, arg1, arg2
@@ -154,6 +184,14 @@ class TenderJIT
         end
       end
 
+      def storei out, val, _
+        loadi out, val, _
+      end
+
+      def copy out, val, _
+        asm.mov out, val
+      end
+
       def write out, val, _
         if val.integer?
           loadi out, val, _
@@ -190,6 +228,20 @@ class TenderJIT
       def csel_gt out, in1, in2
         in2 = XZR if in2 == 0
         asm.csel out, in1, in2, :gt
+      end
+
+      def push out, in1, in2
+        in2 = in2.register? ? in2 : XZR
+        asm.stp in1, in2, [SP, -16], :!
+      end
+
+      def pop out, in1, in2
+        if in1.register?
+          in2 = in2.register? ? in2 : XZR
+          asm.ldp in1, in2, [SP], 16
+        else
+          asm.add SP, SP, 16
+        end
       end
 
       def put_label label, _, _

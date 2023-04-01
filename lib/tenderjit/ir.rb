@@ -56,7 +56,7 @@ class TenderJIT
     def loadsp
       sp = Operands::StackPointer.new(@counter)
       @counter += 1
-      push __method__, NONE, NONE, sp
+      _push __method__, NONE, NONE, sp
     end
 
     def var
@@ -73,65 +73,104 @@ class TenderJIT
       Operands::SignedInt.new(int)
     end
 
-    def loadi imm
-      push __method__, self.imm(imm), NONE
+    def push arg1, arg2 = NONE
+      _push __method__, arg1, arg2, NONE
+    end
+
+    def pop
+      _push __method__, NONE, NONE, NONE
+    end
+
+    def loadi val
+      _push __method__, self.imm(val), NONE
     end
 
     def storei imm, arg
-      push __method__, self.imm(imm), arg, NONE
+      _push __method__, self.imm(imm), NONE, arg
+    end
+
+    def shr arg1, arg2
+      _push __method__, arg1, imm(arg2)
     end
 
     def set_param arg1
-      push __method__, arg1, NONE, NONE
+      _push __method__, arg1, NONE
     end
 
     def stack_alloc arg1
-      push __method__, arg1, NONE, NONE
+      _push __method__, arg1, NONE, NONE
+    end
+
+    def save_params arg1
+      _push __method__, uimm(arg1), NONE, NONE
+    end
+
+    def restore_params arg1
+      _push __method__, uimm(arg1), NONE, NONE
     end
 
     def stack_delloc arg1
-      push __method__, arg1, NONE, NONE
+      _push __method__, arg1, NONE, NONE
     end
 
-    def call location
-      push __method__, location, NONE, retvar
+    def patch_location &blk
+      insn = new_insn PatchLocation, :patch_location, NONE, NONE, NONE
+      insn.block = blk
+      @instructions = @instructions.append insn
+      insn.out
+    end
+
+    def call location, params
+      insn = new_insn Call, :call, location, NONE, retvar
+      raise ArgumentError if params.any?(&:integer?)
+      raise ArgumentError unless params.all?(&:register?)
+
+      insn.params = params
+      @instructions = @instructions.append insn
+      insn.out
+    end
+
+    def copy reg
+      raise ArgumentError if reg.integer?
+      raise ArgumentError unless reg.register?
+      _push __method__, reg, NONE
     end
 
     def add arg1, arg2
-      push __method__, arg1, arg2
+      _push __method__, arg1, arg2
     end
 
     def tbz reg, bit_no, dest
       raise ArgumentError unless bit_no.integer?
-      push __method__, reg, bit_no, dest
+      _push __method__, reg, bit_no, dest
       nil
     end
 
     def tbnz reg, bit_no, dest
       raise ArgumentError unless bit_no.integer?
-      push __method__, reg, bit_no, dest
+      _push __method__, reg, bit_no, dest
       nil
     end
 
     def sub arg1, arg2
       raise ArgumentError, "First parameter must be a register" if arg1.integer?
-      push __method__, arg1, arg2
+      _push __method__, arg1, arg2
     end
 
     def dec arg1, arg2
       raise ArgumentError, "First parameter must be a register" if arg1.integer?
-      push __method__, arg1, arg2, NONE
+      _push __method__, arg1, arg2, NONE
     end
 
     def store value, reg, offset
       offset = uimm(offset) if offset.integer?
       raise ArgumentError unless offset.immediate?
-      push __method__, value, reg, offset
+      _push __method__, value, reg, offset
       nil
     end
 
     def ret arg1
-      push __method__, arg1, NONE, NONE
+      _push __method__, arg1, NONE, NONE
       nil
     end
 
@@ -161,21 +200,15 @@ class TenderJIT
 
     def loadp num
       raise ArgumentError unless num.integer?
-      push __method__, NONE, NONE, param(num)
-    end
-
-    def storep num, var
-      raise ArgumentError unless num.integer?
-      x = param(num)
-      push __method__, var, NONE, x
+      _push __method__, NONE, NONE, param(num)
     end
 
     def load arg1, arg2
-      push __method__, arg1, arg2
+      _push __method__, arg1, arg2
     end
 
     def cmp arg1, arg2
-      push __method__, arg1, arg2, NONE
+      _push __method__, arg1, arg2, NONE
       nil
     end
 
@@ -185,74 +218,74 @@ class TenderJIT
 
     def csel_lt arg1, arg2
       raise ArgumentError if arg1.integer? || arg2.integer?
-      push __method__, arg1, arg2
+      _push __method__, arg1, arg2
     end
 
     def csel_gt arg1, arg2
       raise ArgumentError if arg1.integer? || arg2.integer?
-      push __method__, arg1, arg2
+      _push __method__, arg1, arg2
     end
 
     def jle arg1, arg2, dest
-      push __method__, arg1, arg2, dest
+      _push __method__, arg1, arg2, dest
       nil
     end
 
     def jne arg1, arg2, dest
-      push __method__, arg1, arg2, dest
+      _push __method__, arg1, arg2, dest
       nil
     end
 
     def je arg1, arg2, dest
-      push __method__, arg1, arg2, dest
+      _push __method__, arg1, arg2, dest
       nil
     end
 
     def jmp location
-      push __method__, NONE, NONE, location
+      _push __method__, NONE, NONE, location
       nil
     end
 
     def jo location
-      push __method__, NONE, NONE, location
+      _push __method__, NONE, NONE, location
       nil
     end
 
     def brk
-      push __method__, NONE, NONE, NONE
+      _push __method__, NONE, NONE, NONE
       nil
     end
 
     def neg arg1
-      push __method__, arg1, NONE
+      _push __method__, arg1, NONE
     end
 
     def and arg1, arg2
-      push __method__, arg1, arg2
+      _push __method__, arg1, arg2
     end
 
     ##
     # Jump if not false or Qnil
     def jnfalse arg1, dest
-      push __method__, arg1, NONE, dest
+      _push __method__, arg1, NONE, dest
       nil
     end
 
     ##
     # Jump if false or Qnil
     def jfalse arg1, dest
-      push __method__, arg1, NONE, dest
+      _push __method__, arg1, NONE, dest
       nil
     end
 
     def put_label name
       raise unless name.is_a?(Operands::Label)
-      push __method__, NONE, NONE, name
+      _push __method__, NONE, NONE, name
       nil
     end
 
     def nop
-      push __method__, NONE, NONE, NONE
+      _push __method__, NONE, NONE, NONE
     end
 
     def create name, a, b, out = self.var
@@ -261,7 +294,7 @@ class TenderJIT
 
     private
 
-    def push name, a, b, out = self.var
+    def _push name, a, b, out = self.var
       @instructions = @instructions.append new_insn(Instruction, name, a, b, out)
       out
     end

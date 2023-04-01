@@ -10,18 +10,37 @@ class TenderJIT
   class IRTest < Test
     include Fiddle::Types
 
+    MINUS = Class.new(Fiddle::Closure) {
+      def call x, y
+        x - y
+      end
+    }.create(INT, [INT, INT])
+
     FUNC = Class.new(Fiddle::Closure) {
       def call x
         x + 5
       end
     }.create(INT, [INT])
 
+    def test_call_with_two_params
+      ir = IR.new
+
+      param1 = ir.loadi(400)
+      param2 = ir.loadi(200)
+      func = ir.loadi MINUS.to_i
+      ir.ret ir.call(func, [param1, param2])
+
+      buf = assemble ir
+      func = buf.to_function([], INT)
+      assert_equal 200, func.call
+    end
+
     def test_call
       ir = IR.new
 
-      param = ir.storep(0, 123)
+      param = ir.loadi(123)
       func = ir.loadi FUNC.to_i
-      ir.ret ir.call(func)
+      ir.ret ir.call(func, [param])
 
       buf = assemble ir
       func = buf.to_function([], INT)

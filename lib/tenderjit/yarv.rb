@@ -19,6 +19,7 @@ class TenderJIT
       attr_writer :bb
 
       def phi?; false; end
+      def call?; false; end
 
       def put_label?
         op == :put_label

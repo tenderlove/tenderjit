@@ -23,7 +23,7 @@ class TenderJIT
         bb.add_instruction finish
 
         while finish._next
-          break if finish.jump? || finish.return?
+          break if finish.jump? || finish.return? || finish.call?
           break if finish._next.put_label?
           _next = finish._next
           bb.add_phi finish if finish.phi?
@@ -42,7 +42,7 @@ class TenderJIT
           bb.predecessors << last_bb
         end
 
-        unless last_bb.jumps? || last_bb.returns?
+        unless last_bb.jumps? || last_bb.returns? || last_bb.calls?
           last_bb.add_jump ir, bb.label
         end
 
@@ -192,12 +192,16 @@ class TenderJIT
 
     def phis
       phis = []
-      iter = start._next
-      while iter.op == :phi
-        phis << iter
+      iter = start
+      loop do
+        if iter.op == :phi
+          phis << iter
+        end
+        break if iter == finish
         iter = iter._next
       end
       phis.freeze
+      phis
     end
 
     def add_instruction insn
@@ -385,6 +389,10 @@ class TenderJIT
 
     def returns?
       finish.return?
+    end
+
+    def calls?
+      finish.call?
     end
 
     def jump_target_label

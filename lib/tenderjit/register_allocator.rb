@@ -9,9 +9,13 @@ class TenderJIT
       def initialize
         @register_classes = {}
         @classes_to_colors = {}
-        @reg_lut = []
+        @reg_lut = [] # maps colors to registers
+        @color_lut = [] # maps live ranges to colors
         @interference_classes = {}
-        @assigned_colors = {}
+      end
+
+      def all_colors
+        @reg_lut.compact.map(&:to_i).sort
       end
 
       def add_overlap c1, c2
@@ -21,10 +25,9 @@ class TenderJIT
 
       def add_regs klass, regs
         @interference_classes[klass] = [klass]
-        @assigned_colors[klass] = []
         @register_classes[klass] = regs
         add_colors klass, regs
-        @reg_lut += regs
+        regs.each { |reg| @reg_lut[reg.to_i] = reg }
       end
 
       def overlap lr
@@ -41,31 +44,29 @@ class TenderJIT
       end
 
       def assign_color lr, this_color
-        @assigned_colors[lr.rclass][lr.name] = this_color
+        @color_lut[lr.name] = this_color
       end
 
       def assigned_color lr
-        overlapping_classes = overlap(lr)
-        overlapping_classes.each do |klass|
-          m = @assigned_colors.fetch(klass)[lr.name]
-          return m if m
-        end
-        nil
+        @color_lut[lr.name]
+      end
+
+      def [] i
+        @color_lut[i]
       end
 
       def available_colors klass
         @register_classes.fetch(klass)
       end
 
-      def color_for lr
-        @reg_lut.fetch(@assigned_colors[lr.rclass][lr.name])
+      def pr_for lr
+        @reg_lut.fetch(assigned_color(lr))
       end
 
       private
 
       def add_colors klass, regs
-        i = @classes_to_colors.values.flatten.length
-        @classes_to_colors[klass] = regs.length.times.map { |j| i + j }
+        @classes_to_colors[klass] = regs.map(&:to_i)
       end
     end
 
@@ -118,7 +119,7 @@ class TenderJIT
       spills = select ig, stack, color_map
 
       if $DEBUG
-        #File.binwrite("if_graph.#{counter}.dot", ig.to_dot("Interference Graph #{counter}", lr_colors))
+        File.binwrite("if_graph.#{counter}.dot", ig.to_dot("Interference Graph #{counter}", color_map))
         File.binwrite("cfg.#{counter}.dot", BasicBlock::Printer.new(bbs).to_dot)
       end
 
@@ -140,7 +141,7 @@ class TenderJIT
         stack_adjust
       else
         live_ranges.each do |lr|
-          pr = color_map.color_for(lr)
+          pr = color_map.pr_for(lr)
           lr.physical_register = pr
           lr.freeze
         end
@@ -153,6 +154,7 @@ class TenderJIT
     ##
     # Insert spills
     def insert_spill spill, counter, ir
+      puts "Spilling #{spill}"
       if spill.spill_cost.infinite?
         raise "Can't solve this interference graph"
       end
@@ -256,8 +258,7 @@ class TenderJIT
             end
           end
 
-          live_now << insn.arg1.live_range if insn.arg1.variable?
-          live_now << insn.arg2.live_range if insn.arg2.variable?
+          insn.used_variables.each { |var| live_now << var }
         end
       end
 

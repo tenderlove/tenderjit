@@ -17,6 +17,12 @@ class TenderJIT
       return unless rb_iseq # it's a C func
 
       iseq = method_to_iseq_t(rb_iseq)
+      cov_ptr = iseq.body.variable.coverage.to_i
+
+      unless cov_ptr == 0 || cov_ptr == Fiddle::Qnil
+        iseq.body.variable.coverage = 0
+      end
+
       iseq.body.jit_func = 0
     end
 
@@ -27,13 +33,46 @@ class TenderJIT
       C.rb_iseq_t.new addr
     end
 
-    attr_reader :iseq
+    def self.new iseq
+      cov_ptr = iseq.body.variable.coverage.to_i
+
+      ary = nil
+      if cov_ptr == 0 || cov_ptr == Fiddle::Qnil
+        ary = []
+        ary_addr = Fiddle.dlwrap(ary)
+        iseq.body.variable.coverage = ary_addr
+        Hacks.rb_gc_writebarrier(iseq, ary_addr)
+      else
+        ary = Fiddle.dlunwrap(iseq.body.variable.coverage)
+      end
+
+      # COVERAGE_INDEX_LINES is 0
+      # COVERAGE_INDEX_BRANCHES is 1
+      # 2 is unused so we'll use it. :D
+
+      # Cache the iseq compiler for this iseq inside the code coverage array.
+      if ary[2]
+        puts "this shouldn't happen, I don't think"
+      else
+       iseq_compiler = super
+        ary[2] = iseq_compiler
+      end
+
+      ary[2]
+    end
+
+    PatchCtx = Util::ClassGen.pos(:stack, :buffer_offset, :reg)
+
+    attr_reader :iseq, :buff
 
     def initialize iseq
       @iseq = iseq
       @trampolines = JITBuffer.new 4096
+      @buff = JITBuffer.new 4096
       @yarv_labels = {}
       @trampoline_index = []
+      @patches = []
+      @patch_id = 0
     end
 
     def yarv
@@ -52,7 +91,8 @@ class TenderJIT
       ec  = ir.loadp(0)
       cfp = ir.loadp(1)
 
-      buff = JITBuffer.new 4096
+      ec = ir.copy ec
+
       ctx = Context.new(buff, ec, cfp, comptime_frame)
 
       # Increment executed method count
@@ -234,15 +274,23 @@ class TenderJIT
       argc  = C.vm_ci_argc(cd.ci)
       flags = C.vm_ci_flag(cd.ci)
 
-      ir.brk
-      ir.storei(0, ctx.peek(argc).reg)
-      ir.storei(1, argc)
-      argc.times do |i|
-        ir.storei(2 + i, ctx.pop.reg)
-      end
-      ctx.pop
-      func = ir.loadi trampoline(2 + argc)
-      ir.call func
+      params = [ ctx.ec, ctx.cfp ]
+      callee_params = argc.times.map { ctx.pop.reg }
+      params << ctx.pop.reg # recv
+      params += callee_params
+
+      patch_id = @patch_id
+      patch_ctx = ctx.dup
+
+      func = nil
+      ir.patch_location { |loc|
+        @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy)
+      }
+      ir.nop
+      func = ir.loadi trampoline(mid, argc, patch_id)
+      @patch_id += 1
+
+      ctx.push :unknown, ir.call(func, params)
     end
 
     def opt_lt ctx, ir, insn
@@ -434,18 +482,138 @@ class TenderJIT
       @yarv_labels[label.name] ||= ir.label("YARV: #{label.name}")
     end
 
-    def trampoline len
+    class FakeFrame; end
+
+    def compile_frame comptime_recv, mid, argc, patch_id
+      p [comptime_recv, Hacks.rb_id2sym(mid), argc, patch_id]
+      patch_ctx = @patches.fetch(patch_id)
+
+      comptime_recv_class = C.rb_class_of(comptime_recv)
+      cme = C.rb_callable_method_entry(comptime_recv_class, mid)
+
+      addr = gen_frame_push cme, patch_ctx, argc
+
       ir = IR.new
       ir.brk
-      sp = ir.loadsp
-      ir.dec(sp, ((len * 8) + 7) & -8)
-      loads = len.times.map do |i|
-        ir.loadp(i)
+      ir.storei(addr, patch_ctx.reg)
+
+      asm = ir.assemble
+      disasm buff
+      pos = buff.pos
+      puts "PATCH ADDR 0x#{(patch_ctx.buffer_offset + buff.to_i).to_s(16)}"
+      buff.seek patch_ctx.buffer_offset
+      buff.writeable!
+      asm.write_to(buff)
+      buff.executable!
+      buff.seek pos
+
+      # need:
+      #   * receiver
+      #   * method id
+      #   * number of params
+      # Generated frame's calling convention
+      #   push_frame(ec, cfp, recv, param1, param2, ...)
+      addr
+    end
+
+    def gen_frame_push cme, patch_ctx, argc
+      case cme.def.type
+      when C::VM_METHOD_TYPE_ISEQ
+        iseq = cme.def.body.iseq.iseqptr
+        if iseq.body.jit_func == 0
+          comp = TenderJIT::Compiler.new iseq
+          iseq.body.jit_func = comp.compile FakeFrame.new
+        end
+        call_iseq_frame patch_ctx.stack, iseq, argc
+      else
+        raise
       end
-      loads.each_with_index do |p, i|
-        ir.store(p, sp, i * 8)
+    end
+
+    def call_iseq_frame ctx, iseq, argc
+      puts "OMGOMGOMGOMG"
+      ir = IR.new
+      ec = ir.loadp 0
+      caller_cfp = ir.loadp 1 # load the caller's frame
+
+      local_size = 0 # FIXME: reserve room for locals
+
+      # Move the stack pointer forward enough that the callee won't
+      # interfere with the caller's stack, just in case the caller had to write
+      # to the stack
+      sp = ir.load(caller_cfp, C.rb_control_frame_t.offsetof(:__bp__))
+      sp = ir.add(sp, ctx.stack_depth_b)
+
+      offset = (argc - 1) * C.VALUE.size
+
+      argc.times do |i|
+        ir.store(ir.loadp(i + 3), sp, offset)
+        offset -= C.VALUE.size
       end
-      ir.ret 1
+
+      # FIXME:
+      # /* setup ep with managing data */
+      # *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
+      # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
+      # *sp++ = type;       /* ep[-0] / ENV_FLAGS */
+
+      sp = ir.add(sp, (argc + local_size + 3) * C.VALUE.size)
+
+      pc = 123
+
+      callee_cfp = ir.sub(caller_cfp, C.rb_control_frame_t.size)
+      ir.store(ir.loadi(pc), callee_cfp, C.rb_control_frame_t.offsetof(:pc))
+      ir.store(sp, callee_cfp, C.rb_control_frame_t.offsetof(:sp))
+      ir.store(sp, callee_cfp, C.rb_control_frame_t.offsetof(:__bp__))
+      ir.store(
+        ir.sub(sp, C.VALUE.size),
+        callee_cfp, C.rb_control_frame_t.offsetof(:ep)
+      )
+      ir.store(ir.loadi(iseq.to_i), callee_cfp, C.rb_control_frame_t.offsetof(:iseq))
+      ir.store(ir.loadp(2), callee_cfp, C.rb_control_frame_t.offsetof(:self))
+      ir.store(ir.loadi(0), callee_cfp, C.rb_control_frame_t.offsetof(:jit_return))
+      ir.store(ir.loadi(0), callee_cfp, C.rb_control_frame_t.offsetof(:block_code))
+      ir.store(callee_cfp, ec, C.rb_execution_context_t.offsetof(:cfp))
+
+      callee_iseq = iseq.body.jit_func
+      iseq_location = ir.loadi(callee_iseq)
+      ir.ret ir.call(iseq_location, [ec, callee_cfp])
+
+      asm = ir.assemble
+      buff.writeable!
+      entry = buff.pos + buff.to_i
+      asm.write_to buff
+      buff.executable!
+
+      entry
+    end
+
+    def trampoline mid, argc, patch_id
+      ir = IR.new
+
+      # push ec and cfp on stack
+
+      ir.save_params argc + 2 + 1
+
+      # Push parameters for rb_funcallv on the stack
+      ir.push(ir.loadi(Fiddle.dlwrap(argc)), ir.loadi(Fiddle.dlwrap(patch_id)))
+      ir.push(ir.loadp(2), ir.loadi(Fiddle.dlwrap(mid)))
+      argv = ir.copy(ir.loadsp)
+      func = ir.loadi Fiddle::Handle::DEFAULT["rb_funcallv"]
+      recv = ir.loadi Fiddle.dlwrap(self)
+      callback = ir.loadi Hacks.rb_intern_str("compile_frame")
+
+      # self.compile_frame(recv, method_id, argc)
+      res = ir.call func, [recv, callback, ir.loadi(4), argv]
+      res = ir.shr res, 1
+      ir.pop
+      ir.pop
+
+      ir.restore_params argc + 2 + 1
+
+      m = ir.call(res, (argc + 2 + 1).times.map { |i| ir.loadp(i) })
+      ir.ret m
+
       asm = ir.assemble
       addr = @trampolines.to_i + @trampolines.pos
       @trampolines.writeable!

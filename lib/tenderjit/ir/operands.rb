@@ -25,6 +25,7 @@ class TenderJIT
         def definition= _; end
         def add_use _; end
         def unwrap; self; end
+        def remove_use _; end
       end
 
       class Immediate < Util::ClassGen.pos(:value, :definition, :uses)
@@ -58,7 +59,9 @@ class TenderJIT
         def to_s; sprintf("IMM(%0#4x)", value); end
       end
 
-      class UnsignedInt < Immediate; end
+      class UnsignedInt < Immediate
+      end
+
       class SignedInt < Immediate; end
 
       class VirtualRegister < Util::ClassGen.pos(:name, :physical_register, :uses, :ranges)
@@ -87,6 +90,10 @@ class TenderJIT
 
         def combined?
           false
+        end
+
+        def copy
+          self.class.new(name, physical_register)
         end
 
         def add_use insn

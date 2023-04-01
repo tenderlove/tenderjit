@@ -168,7 +168,7 @@ class TenderJIT
           live_now = live.dup
 
           bi.reverse_each_instruction do |insn|
-            insn.variables.each { |var| live_now << var }
+            insn.used_variables.each { |var| live_now << var }
 
             live_var_map[insn] = live_now.dup
 
