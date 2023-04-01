@@ -459,6 +459,19 @@ class TenderJIT
       assert_equal 0, func.call(Fiddle.dlwrap(Object.new))
     end
 
+    def test_shr
+      ir = IR.new
+      ir.ret ir.shr(ir.loadp(0), 1)
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT], INT)
+
+      assert_equal 1, func.call(3)
+      assert_equal 1, func.call(2)
+    end
+
     private
 
     def assemble ir

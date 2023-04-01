@@ -419,7 +419,7 @@ class TenderJIT
       vr3 = insn.out
 
       # Convert this SSA instruction to machine code
-      asm.handle insn, vr3.pr, vr1.pr, vr2.pr
+      asm.handle insn, vr3, vr1, vr2
     rescue TenderJIT::Error, NoMethodError
       $stderr.puts TenderJIT::BasicBlock::Printer.new(head).to_ascii
       raise

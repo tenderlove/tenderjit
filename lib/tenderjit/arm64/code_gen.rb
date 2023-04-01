@@ -25,26 +25,26 @@ class TenderJIT
       end
 
       def jnfalse dest, reg, _
-        asm.tst reg, ~Fiddle::Qnil
-        asm.b dest, cond: :ne
+        asm.tst reg.pr, ~Fiddle::Qnil
+        asm.b dest.pr, cond: :ne
       end
 
       def jfalse dest, reg, _
-        asm.tst reg, ~Fiddle::Qnil
-        asm.b dest, cond: :eq
+        asm.tst reg.pr, ~Fiddle::Qnil
+        asm.b dest.pr, cond: :eq
       end
 
       def tbz dest, reg, bit
-        asm.tbz reg, bit, dest
+        asm.tbz reg.pr, bit.pr, dest.pr
       end
 
       def shr dest, reg, amount
-        asm.asr dest, reg, amount
+        asm.asr dest.pr, reg.pr, amount.pr
       end
 
       def jle dest, arg1, arg2
-        asm.cmp arg1, arg2
-        asm.b dest, cond: :le
+        asm.cmp arg1.pr, arg2.pr
+        asm.b dest.pr, cond: :le
       end
 
       def jne dest, arg1, arg2
@@ -53,22 +53,22 @@ class TenderJIT
       end
 
       def tbnz dest, arg1, arg2
-        asm.tbnz arg1, arg2, dest
+        asm.tbnz arg1.pr, arg2.pr, dest.pr
       end
 
       def je dest, arg1, arg2
-        asm.cmp arg1, arg2
-        asm.b dest, cond: :eq
+        asm.cmp arg1.pr, arg2.pr
+        asm.b dest.pr, cond: :eq
       end
 
       def neg out, arg1, _
-        asm.neg out, arg1
+        asm.neg out.pr, arg1.pr
       end
 
       PARAM_REGS = 8.times.map { AArch64::Registers.const_get(:"X#{_1}") }.freeze
 
       def save_params _, arg1, _
-        arg1.times.map.each_slice(2) { |x, y|
+        arg1.pr.times.map.each_slice(2) { |x, y|
           x = PARAM_REGS[x]
           y = y ? PARAM_REGS[y] : XZR
           asm.stp x, y, [SP, -16], :!
@@ -76,8 +76,7 @@ class TenderJIT
       end
 
       def restore_params _, arg1, _
-        arg1.times.map.each_slice(2).to_a.reverse_each { |x, y|
-          puts "HI MOM"
+        arg1.pr.times.map.each_slice(2).to_a.reverse_each { |x, y|
           x = PARAM_REGS[x]
           y = y ? PARAM_REGS[y] : XZR
           asm.ldp x, y, [SP], 16
@@ -92,7 +91,7 @@ class TenderJIT
         end
         # Save these regs
         asm.stp X30, XZR, [SP, -16], :!
-        asm.blr location
+        asm.blr location.pr
         asm.ldp X30, XZR, [SP], 16
       end
 
@@ -101,58 +100,60 @@ class TenderJIT
       end
 
       def and out, arg1, arg2
-        if arg1.integer? && arg2.integer?
-          asm.movk(out, arg1 & arg2)
+        if arg1.immediate? && arg2.immediate?
+          asm.movk(out.pr, arg1.pr & arg2.pr)
         else
-          if arg1.integer?
-            asm.movk(out, arg1)
+          if arg1.immediate?
+            asm.movk(out.pr, arg1.pr)
             arg1 = out
           end
 
-          if arg2.integer?
-            asm.movk(out, arg2)
+          if arg2.immediate?
+            asm.movk(out.pr, arg2.pr)
             arg2 = out
           end
 
-          asm.and out, arg1, arg2
+          asm.and out.pr, arg1.pr, arg2.pr
         end
       end
 
       def add out, arg1, arg2
-        if arg1.integer?
+        if arg1.immediate?
           arg1, arg2 = arg2, arg1
         end
 
-        asm.adds out, arg1, arg2
+        asm.adds out.pr, arg1.pr, arg2.pr
       end
 
       def sub out, arg1, arg2
-        if arg1.integer? && arg2.integer?
-          asm.movz out, arg1 - arg2
+        if arg1.immediate? && arg2.immediate?
+          asm.movz out.pr, arg1.pr - arg2.pr
           return
         else
-          if arg1.integer?
+          if arg1.immediate?
             raise
           end
         end
 
-        asm.sub out, arg1, arg2
+        asm.sub out.pr, arg1.pr, arg2.pr
       end
 
       def ret _, arg1, _
-        if arg1 != AArch64::Registers::X0 || arg1.integer?
-          asm.mov AArch64::Registers::X0, arg1
+        if arg1.immediate?
+          asm.mov AArch64::Registers::X0, arg1.pr
+        elsif arg1 != AArch64::Registers::X0
+          asm.mov AArch64::Registers::X0, arg1.pr
         end
 
         asm.ret
       end
 
       def store offset, val, dst
-        asm.stur val, [dst, offset]
+        asm.stur val.pr, [dst.pr, offset.pr]
       end
 
       def load out, src, offset
-        asm.ldur out, [src, offset]
+        asm.ldur out.pr, [src.pr, offset.pr]
       end
 
       def loadp _, _, _
@@ -170,14 +171,17 @@ class TenderJIT
       end
 
       def loadi out, val, _
+        raise ArgumentError unless val.immediate?
+        val = val.pr
+
         if val == 0
-          asm.mov out, XZR
+          asm.mov out.pr, XZR
         else
-          asm.movz out, val & 0xFFFF
+          asm.movz out.pr, val & 0xFFFF
           val >>= 16
           shift = 1
           while val > 0
-            asm.movk out, val & 0xFFFF, lsl: (shift * 16)
+            asm.movk out.pr, val & 0xFFFF, lsl: (shift * 16)
             val >>= 16
             shift += 1
           end
@@ -189,7 +193,7 @@ class TenderJIT
       end
 
       def copy out, val, _
-        asm.mov out, val
+        asm.mov out.pr, val.pr
       end
 
       def write out, val, _
@@ -217,28 +221,28 @@ class TenderJIT
       end
 
       def cmp _, in1, in2
-        asm.cmp in1, in2
+        asm.cmp in1.pr, in2.pr
       end
 
       def csel_lt out, in1, in2
-        in2 = XZR if in2 == 0
-        asm.csel out, in1, in2, :lt
+        in2 = in2.pr == 0 ? XZR : in2.pr
+        asm.csel out.pr, in1.pr, in2, :lt
       end
 
       def csel_gt out, in1, in2
-        in2 = XZR if in2 == 0
-        asm.csel out, in1, in2, :gt
+        in2 = in2.pr == 0 ? XZR : in2.pr
+        asm.csel out.pr, in1.pr, in2, :gt
       end
 
       def push out, in1, in2
-        in2 = in2.register? ? in2 : XZR
-        asm.stp in1, in2, [SP, -16], :!
+        in2 = in2.register? ? in2.pr : XZR
+        asm.stp in1.pr, in2, [SP, -16], :!
       end
 
       def pop out, in1, in2
         if in1.register?
-          in2 = in2.register? ? in2 : XZR
-          asm.ldp in1, in2, [SP], 16
+          in2 = in2.register? ? in2.pr : XZR
+          asm.ldp in1.pr, in2, [SP], 16
         else
           asm.add SP, SP, 16
         end

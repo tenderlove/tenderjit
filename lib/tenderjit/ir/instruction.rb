@@ -115,13 +115,13 @@ class TenderJIT
         pushed = []
         (bb.live_out - [self.out]).each_slice(2) do |a, b|
           pushed << [a, b]
-          cg.push(NONE, a.pr, (b || NONE).pr)
+          cg.push(NONE, a, b || NONE)
         end
 
         x = cg.call out, in1, params
 
         pushed.reverse_each do |a, b|
-          cg.pop(NONE, a.pr, (b || NONE).pr)
+          cg.pop(NONE, a, b || NONE)
         end
 
         x
