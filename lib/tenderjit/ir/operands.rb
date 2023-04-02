@@ -101,6 +101,14 @@ class TenderJIT
           [definition]
         end
 
+        def hash
+          name.hash
+        end
+
+        def eql? other
+          name == other.name
+        end
+
         def combined?
           false
         end

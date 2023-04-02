@@ -82,7 +82,7 @@ class TenderJIT
     def compile comptime_frame
       # method name
       label = iseq.body.location.label
-      puts "Compiling #{label}" if $DEBUG
+      puts "COMPILING #{label}" if $DEBUG
 
       STATS.compiled_methods += 1
 
@@ -109,12 +109,11 @@ class TenderJIT
       buff.writeable!
       asm.write_to buff
 
-      if $DEBUG
-        disasm buff
-      end
+      disasm buff if $DEBUG
 
       buff.executable!
 
+      puts "DONE COMPILING #{label}" if $DEBUG
       buff.to_i
     end
 
@@ -272,7 +271,7 @@ class TenderJIT
       cd = insn.opnds.first
       mid   = C.vm_ci_mid(cd.ci)
       argc  = C.vm_ci_argc(cd.ci)
-      flags = C.vm_ci_flag(cd.ci)
+      #flags = C.vm_ci_flag(cd.ci)
 
       params = [ ctx.ec, ctx.cfp ]
       callee_params = argc.times.map { ctx.pop.reg }
@@ -289,7 +288,7 @@ class TenderJIT
       func = ir.loadi ir.uimm(trampoline(mid, argc, patch_id), 64)
       @patch_id += 1
 
-      ctx.push :unknown, ir.call(func, params)
+      ctx.push :unknown, ir.copy(ir.call(func, params))
     end
 
     def opt_lt ctx, ir, insn

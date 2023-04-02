@@ -4,6 +4,8 @@ require "tenderjit/interference_graph"
 
 class TenderJIT
   class RegisterAllocator
+    class InvalidInterference < TenderJIT::Error; end
+
     # Maps register classes to colors
     class ColorMap
       def initialize
@@ -254,6 +256,7 @@ class TenderJIT
           if insn.out.variable?
             live_now.each do |ln|
               x, y = ln.name, insn.lr_out.name
+              raise InvalidInterference, "Live range #{x} cannot interfere with itself" if x == y
               graph.add(x, y)
             end
           end

@@ -85,7 +85,7 @@ class TenderJIT
       assert_equal 1, func.call(Fiddle.dlwrap(2.0))
     end
 
-    def xtest_lifetime_holes_use_borrowed_regs
+    def test_lifetime_holes_use_borrowed_regs
       ir = IR.new
       _else = ir.label :else
       _end = ir.label :end
@@ -130,7 +130,7 @@ class TenderJIT
       assert_equal 3, cfg.to_a.length
 
       ops = cfg.map { |block| block.each_instruction.to_a.last.op }
-      assert_equal [:tbnz, :jmp, :ret], ops
+      assert_equal [:tbnz, :ret, :ret], ops
 
       buf = assemble ir
 

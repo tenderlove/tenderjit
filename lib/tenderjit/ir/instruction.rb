@@ -48,7 +48,7 @@ class TenderJIT
       end
 
       def return?
-        op == :return
+        op == :ret
       end
 
       def unconditional_jump?

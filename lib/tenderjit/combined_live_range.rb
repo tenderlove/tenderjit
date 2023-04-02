@@ -26,6 +26,14 @@ class TenderJIT
       false
     end
 
+    def hash
+      name.hash
+    end
+
+    def eql? other
+      name == other.name
+    end
+
     def name
       out.name
     end

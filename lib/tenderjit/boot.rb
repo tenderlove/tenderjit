@@ -8,3 +8,5 @@ module RubyVM::RJIT
     end
   })
 end
+
+RubyVM::RJIT.resume
