@@ -596,7 +596,6 @@ class TenderJIT
       recv = ir.loadi Fiddle.dlwrap(self)
       callback = ir.loadi Hacks.rb_intern_str("compile_frame")
 
-      # self.compile_frame(recv, method_id, argc)
       res = ir.call func, [recv, callback, ir.loadi(4), argv]
       res = ir.shr res, 1
       ir.pop

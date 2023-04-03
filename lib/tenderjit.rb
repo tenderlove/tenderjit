@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "tenderjit/fiddle_hacks"
-require "tenderjit/mjit_hacks"
 require "tenderjit/c_funcs"
 require "tenderjit/ir"
 require "tenderjit/compiler"
