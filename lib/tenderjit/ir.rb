@@ -231,6 +231,11 @@ class TenderJIT
       Operands::Label.new(name)
     end
 
+    def csel_eq arg1, arg2
+      raise ArgumentError if arg1.integer? || arg2.integer?
+      _push __method__, arg1, arg2
+    end
+
     def csel_lt arg1, arg2
       raise ArgumentError if arg1.integer? || arg2.integer?
       _push __method__, arg1, arg2

@@ -11,7 +11,7 @@ class TenderJIT
     def test_opt_eq
       expected = is_equal
 
-      jit.compile method(:is_equal)
+      compile method(:is_equal), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 

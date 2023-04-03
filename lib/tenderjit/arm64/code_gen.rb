@@ -246,6 +246,11 @@ class TenderJIT
         asm.cmp in1.pr, in2.pr
       end
 
+      def csel_eq out, in1, in2
+        in2 = in2.pr == 0 ? XZR : in2.pr
+        asm.csel out.pr, in1.pr, in2, :eq
+      end
+
       def csel_lt out, in1, in2
         in2 = in2.pr == 0 ? XZR : in2.pr
         asm.csel out.pr, in1.pr, in2, :lt

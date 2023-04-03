@@ -159,7 +159,8 @@ class TenderJIT
       add_insn __method__, pc, insn, local_name(ops)
     end
 
-    def opt_eq pc, insn, ops
+    def opt_eq pc, insn
+      ops = [C.rb_call_data.new(readop(:ptr, pc, 0))]
       add_insn __method__, pc, insn, ops
     end
 

@@ -157,6 +157,22 @@ class TenderJIT
       assert_equal 1, func.call(2)
     end
 
+    def test_csel_eq
+      ir = IR.new
+      a = ir.loadp(0)
+      b = ir.loadp(1)
+
+      ir.cmp a, b
+      out = ir.csel_eq ir.loadi(Fiddle::Qtrue), ir.loadi(Fiddle::Qfalse)
+      ir.ret out
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal Fiddle::Qfalse, func.call(30, 2)
+      assert_equal Fiddle::Qtrue, func.call(2, 2)
+    end
+
     def test_csel_lt_xchg_x86
       ir = IR.new
       a = ir.loadp(0)

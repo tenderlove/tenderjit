@@ -20,6 +20,8 @@ class TenderJIT
     end
 
     def compile method, recv:, locals: []
+      rb_iseq = RubyVM::InstructionSequence.of(method)
+      method = Compiler.method_to_iseq_t rb_iseq
       cfp = C.rb_control_frame_t.new
       cfp.self = Fiddle.dlwrap(recv)
       @jit.compile method, cfp
