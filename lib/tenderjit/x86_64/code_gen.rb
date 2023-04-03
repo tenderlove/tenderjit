@@ -3,6 +3,8 @@ require "fisk"
 class TenderJIT
   module X86_64
     class CodeGen
+      include Fisk::Registers
+
       attr_reader :asm
 
       def initialize
@@ -15,37 +17,38 @@ class TenderJIT
       end
 
       def handle insn, out, in1, in2
-        send insn.op, out, in1, in2
+        insn.call self, out, in1, in2
       end
-
-      private
 
       def set_param _, arg1, _
         @params << arg1
       end
 
-      def call _, location, arity
-        @params.pop(arity).each_with_index do |param, i|
-          param_reg = PARAM_REGS[i]
-          if param != param_reg
-            param = @asm.uimm(param) if param.integer?
-            asm.mov param_reg, param
-          end
+      def call _, location, params
+        asm.mov RAX, location.pr
+        params.each_with_index do |param, i|
+          pr = param.pr
+          next if pr == PARAM_REGS[i]
+          asm.mov PARAM_REGS[i], pr
         end
-        asm.call location
+        asm.call RAX
       end
 
       def neg out, arg1, _
-        if out != arg1
-          @asm.mov out, arg1
+        raise ArgumentError unless out.register?
+        raise ArgumentError unless arg1.register?
+
+        if out.pr != arg1.pr
+          @asm.mov out.pr, arg1.pr
         end
 
-        @asm.neg out
+        @asm.neg out.pr
       end
 
       def and out, arg1, arg2
-        arg1 = @asm.uimm(arg1) if arg1.integer?
-        arg2 = @asm.uimm(arg2) if arg2.integer?
+        arg1 = _unwrap(arg1)
+        arg2 = _unwrap(arg2)
+        out  = _unwrap(out)
 
         case out
         when arg1
@@ -59,32 +62,53 @@ class TenderJIT
       end
 
       def sub out, arg1, arg2
-        arg2 = @asm.uimm(arg2) if arg2.integer?
-
-        if out != arg1
-          @asm.mov out, arg1
+        if arg2.immediate?
+          arg2 = @asm.uimm(arg2.pr)
+        else
+          arg2 = arg2.pr
         end
 
-        @asm.sub out, arg2
+        if out.pr != arg1.pr
+          @asm.mov out.pr, arg1.pr
+        end
+
+        @asm.sub out.pr, arg2
       end
 
       def add out, arg1, arg2
-        arg1 = @asm.uimm(arg1) if arg1.integer?
-        arg2 = @asm.uimm(arg2) if arg2.integer?
+        arg1 = if arg1.immediate?
+                 asm.uimm(arg1.pr)
+               else
+                 arg1.pr
+               end
 
-        case out
+        arg2 = if arg2.immediate?
+                 asm.uimm(arg2.pr)
+               else
+                 arg2.pr
+               end
+
+        case out.pr
         when arg1
-          @asm.add out, arg2
+          @asm.add out.pr, arg2
         when arg2
-          @asm.add out, arg1
+          @asm.add out.pr, arg1
         else
-          @asm.mov out, arg1
-          @asm.add out, arg2
+          @asm.mov out.pr, arg1
+          @asm.add out.pr, arg2
         end
       end
 
       def load out, src, offset
-        @asm.mov out, @asm.m64(src, offset)
+        raise ArgumentError unless offset.immediate?
+        raise ArgumentError unless src.register?
+        raise ArgumentError unless out.register?
+
+        @asm.mov out.pr, @asm.m64(src.pr, offset.pr)
+      end
+
+      def patch_location block, _, _
+        asm.lazy(&block)
       end
 
       PARAM_REGS = [
@@ -96,26 +120,93 @@ class TenderJIT
         Fisk::Registers::R9,
       ]
 
-      def loadp out, offset, _
-        unless out == PARAM_REGS[offset]
-          @asm.mov out, PARAM_REGS[offset]
+      def save_params _, arg1, _
+        arg1.pr.times.map.each_slice(2) { |x, y|
+          x = PARAM_REGS[x]
+          y = y ? PARAM_REGS[y] : x
+          asm.push x
+          asm.push y
+        }
+      end
+
+      def restore_params _, arg1, _
+        arg1.pr.times.map.each_slice(2).to_a.reverse_each { |x, y|
+          x = PARAM_REGS[x]
+          y = y ? PARAM_REGS[y] : x
+          asm.pop y
+          asm.pop x
+        }
+      end
+
+      def push out, in1, in2
+        raise ArgumentError unless in1.register?
+
+        in2 = in2.register? ? in2.pr : in1.pr
+        asm.push in2
+        asm.push in1.pr
+      end
+
+      def pop out, in1, in2
+        if in1.register?
+          in2 = in2.register? ? in2.pr : in1.pr
+          asm.pop in1.pr
+          asm.pop in2
+        else
+          asm.add RSP, asm.uimm(16)
         end
       end
 
+      def loadp out, offset, _
+      end
+
+      def loadsp _, _, _
+      end
+
+      def copy out, val, _
+        asm.mov out.pr, val.pr
+      end
+
       def loadi out, val, _
-        @asm.mov out, @asm.uimm(val)
+        raise ArgumentError unless val.immediate?
+
+        val = if val.bits == 64
+                asm.imm64 val.pr
+              else
+                asm.uimm val.pr
+              end
+
+        @asm.mov out.pr, val
+      end
+
+      def storei out, val, _
+        loadi out, val, _
       end
 
       def store offset, val, dst
-        @asm.mov @asm.m64(dst, offset), val
+        raise ArgumentError unless offset.immediate?
+        raise ArgumentError unless dst.register?
+
+        @asm.mov @asm.m64(dst.pr, offset.pr), val.pr
+      end
+
+      def shr dest, reg, amount
+        dest = _unwrap(dest)
+        reg = _unwrap(reg)
+        amount = _unwrap(amount)
+
+        if dest != reg
+          asm.mov dest, reg
+        end
+
+        asm.shr dest, amount
       end
 
       def jle dest, arg1, arg2
-        arg2 = @asm.uimm(arg2) if arg2.integer?
-        arg1 = @asm.uimm(arg1) if arg1.integer?
+        arg2 = _unwrap(arg2)
+        arg1 = _unwrap(arg1)
 
         @asm.cmp arg1, arg2
-        @asm.jle asm.label(dest)
+        @asm.jle asm.label(dest.pr)
       end
 
       def jmp dest, _, _
@@ -127,11 +218,20 @@ class TenderJIT
       end
 
       def je dest, arg1, arg2
-        arg2 = @asm.uimm(arg2) if arg2.integer?
-        arg1 = @asm.uimm(arg1) if arg1.integer?
+        if arg2.immediate?
+          arg2 = @asm.uimm(arg2.pr)
+        else
+          arg2 = arg2.pr
+        end
+
+        if arg1.immediate?
+          arg1 = @asm.uimm(arg1.pr)
+        else
+          arg1 = arg1.pr
+        end
 
         asm.cmp arg1, arg2
-        asm.je asm.label(dest)
+        asm.je asm.label(dest.pr)
       end
 
       def put_label label, _, _
@@ -143,63 +243,88 @@ class TenderJIT
       end
 
       def cmp _, in1, in2
-        asm.cmp in1, in2
+        asm.cmp in1.pr, in2.pr
       end
 
       def tbnz dest, arg1, arg2
-        raise ArgumentError unless arg2.integer?
+        raise ArgumentError unless arg2.immediate?
         raise ArgumentError unless arg1.register?
 
-        mask = (1 << arg2)
+        mask = (1 << arg2.pr)
 
         arg2 = @asm.uimm(mask)
 
-        asm.test arg1, arg2
-        asm.jnz @asm.label(dest)
+        asm.test arg1.pr, arg2
+        asm.jnz @asm.label(dest.pr)
       end
 
       def tbz dest, arg1, arg2
-        raise ArgumentError unless arg2.integer?
+        raise ArgumentError unless arg2.immediate?
         raise ArgumentError unless arg1.register?
 
-        mask = (1 << arg2)
+        mask = (1 << arg2.pr)
 
         arg2 = @asm.uimm(mask)
 
-        asm.test arg1, arg2
-        asm.jz @asm.label(dest)
+        asm.test arg1.pr, arg2
+        asm.jz @asm.label(dest.pr)
       end
 
+      ##
+      # If the condition holds, then out == in1.
+      # Otherwise in2
       def csel_lt out, in1, in2
         raise ArgumentError unless in1.register?
         raise ArgumentError unless in2.register?
 
-        if out != in1
-          asm.mov out, in2
-        end
+        out = _unwrap(out)
+        in1 = _unwrap(in1)
+        in2 = _unwrap(in2)
 
-        asm.cmovl out, in1
+        # Make sure false case (in2) is in out
+        if out == in1
+          # puts the false case in out.  True case should be in in2
+          asm.xchg in1, in2
+          asm.cmovl out, in2
+        else
+          if out != in2
+            asm.mov out, in2
+          end
+
+          asm.cmovl out, in1
+        end
       end
 
       def csel_gt out, in1, in2
         raise ArgumentError unless in1.register?
         raise ArgumentError unless in2.register?
 
-        if out != in1
-          asm.mov out, in2
-        end
+        out = _unwrap(out)
+        in1 = _unwrap(in1)
+        in2 = _unwrap(in2)
 
-        asm.cmovg out, in1
+        # Make sure false case (in2) is in out
+        if out == in1
+          # puts the false case in out.  True case should be in in2
+          asm.xchg in1, in2
+          asm.cmovg out, in2
+        else
+          if out != in2
+            asm.mov out, in2
+          end
+
+          asm.cmovg out, in1
+        end
       end
 
       def jnfalse dest, reg, _
-        asm.test reg, asm.imm(~Fiddle::Qnil)
-        asm.jne asm.label(dest)
+        asm.test reg.pr, asm.imm(~Fiddle::Qnil)
+        asm.jne asm.label(dest.pr)
       end
 
       def jfalse dest, reg, _
-        asm.test reg, asm.imm(~Fiddle::Qnil)
-        asm.je asm.label(dest)
+        asm.test reg.pr, asm.imm(~Fiddle::Qnil)
+        asm.je asm.label(dest.pr)
       end
 
       def stack_alloc _, amount, _
@@ -218,10 +343,11 @@ class TenderJIT
         end
       end
 
-      def return _, arg1, _
-        if arg1 != Fisk::Registers::RAX || arg1.integer?
-          arg1 = @asm.uimm(arg1) if arg1.integer?
-          asm.mov Fisk::Registers::RAX, arg1
+      def ret _, arg1, _
+        if arg1.immediate?
+          asm.mov RAX, asm.uimm(arg1.pr)
+        elsif arg1.pr != RAX
+          asm.mov RAX, arg1.pr
         end
 
         asm.ret
@@ -229,6 +355,16 @@ class TenderJIT
 
       def brk _, _, _
         asm.int asm.lit(3)
+      end
+
+      private
+
+      def _unwrap vr
+        if vr.immediate?
+          asm.uimm(vr.pr)
+        else
+          vr.pr
+        end
       end
     end
   end

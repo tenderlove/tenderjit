@@ -141,7 +141,7 @@ class TenderJIT
       def ret _, arg1, _
         if arg1.immediate?
           asm.mov AArch64::Registers::X0, arg1.pr
-        elsif arg1 != AArch64::Registers::X0
+        elsif arg1.pr != AArch64::Registers::X0
           asm.mov AArch64::Registers::X0, arg1.pr
         end
 

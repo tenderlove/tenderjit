@@ -6,8 +6,8 @@ class TenderJIT
     PARAM_REGS = Fisk::Registers::CALLER_SAVED.dup.freeze
 
     FREE_REGS = [
-      Fisk::Registers::R13,
-      Fisk::Registers::R12,
+      Fisk::Registers::R11,
+      Fisk::Registers::R10,
       Fisk::Registers::R9,
       Fisk::Registers::R8,
       Fisk::Registers::RCX,
@@ -17,8 +17,10 @@ class TenderJIT
     ].freeze
 
     class RegisterAllocator < TenderJIT::RegisterAllocator
+      include Fisk::Registers
+
       def initialize
-        super(Fisk::Registers::RSP, PARAM_REGS, FREE_REGS)
+        super(RSP, PARAM_REGS, FREE_REGS, RAX)
       end
     end
   end

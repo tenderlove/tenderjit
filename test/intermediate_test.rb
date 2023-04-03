@@ -157,6 +157,38 @@ class TenderJIT
       assert_equal 1, func.call(2)
     end
 
+    def test_csel_lt_xchg_x86
+      ir = IR.new
+      a = ir.loadp(0)
+      b = ir.loadp(1)
+
+      ir.cmp a, b
+      out = ir.csel_lt ir.loadi(Fiddle::Qtrue), ir.loadi(Fiddle::Qfalse)
+      ir.ret out
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal Fiddle::Qfalse, func.call(30, 2)
+      assert_equal Fiddle::Qtrue, func.call(1, 2)
+    end
+
+    def test_csel_gt_xchg_x86
+      ir = IR.new
+      a = ir.loadp(0)
+      b = ir.loadp(1)
+
+      ir.cmp a, b
+      out = ir.csel_gt ir.loadi(Fiddle::Qtrue), ir.loadi(Fiddle::Qfalse)
+      ir.ret out
+
+      buf = assemble ir
+
+      func = buf.to_function([Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      assert_equal Fiddle::Qtrue, func.call(30, 2)
+      assert_equal Fiddle::Qfalse, func.call(1, 2)
+    end
+
     def test_csel_lt_0
       ir = IR.new
       a = ir.loadp(0)
@@ -472,7 +504,33 @@ class TenderJIT
       assert_equal 1, func.call(2)
     end
 
+    def test_stack_alloc_and_funcallv
+      ir = IR.new
+
+      # Function params
+      ir.push(ir.loadi(Fiddle.dlwrap(3)), ir.loadi(Fiddle.dlwrap(4)))
+      ir.push(ir.loadi(Fiddle.dlwrap(1)), ir.loadi(Fiddle.dlwrap(2)))
+      argv = ir.copy(ir.loadsp)
+
+      func = ir.loadi Fiddle::Handle::DEFAULT["rb_funcallv"]
+      recv = ir.loadi Fiddle.dlwrap(self)
+      callback = ir.loadi Hacks.rb_intern_str("four_param")
+
+      var = ir.call(func, [recv, callback, ir.loadi(4), argv])
+      ir.pop
+      ir.pop
+      ir.ret var
+
+      buf = assemble ir
+      func = Fiddle::Function.new(buf.to_i, [], VOIDP, need_gvl: true)
+      assert_equal [1, 2, 3, 4], Fiddle.dlunwrap(func.call())
+    end
+
     private
+
+    def four_param a, b, c, d
+      [a, b, c, d]
+    end
 
     def assemble ir
       asm = ir.assemble
