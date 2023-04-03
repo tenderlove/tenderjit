@@ -291,6 +291,32 @@ class TenderJIT
       ctx.push :unknown, ir.copy(ir.call(func, params))
     end
 
+    def opt_mod ctx, ir, insn
+      r_type = ctx.peek(0)
+      l_type = ctx.peek(1)
+
+      exit_label = ir.label(:exit)
+
+      right = r_type.reg
+
+      guard_fixnum ir, right, exit_label unless r_type.fixnum?
+
+      left = l_type.reg
+
+      guard_fixnum ir, left, exit_label unless l_type.fixnum?
+
+      unless l_type.fixnum? && r_type.fixnum?
+        # Generate an exit
+        generate_exit ctx, ir, insn.pc, exit_label
+      end
+
+      out = ir.mod left, right
+
+      ctx.pop
+      ctx.pop
+      ctx.push(Hacks.basic_type(123), out)
+    end
+
     def opt_lt ctx, ir, insn
       r_type = ctx.peek(0)
       l_type = ctx.peek(1)

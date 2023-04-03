@@ -125,6 +125,13 @@ class TenderJIT
         asm.adds out.pr, arg1.pr, arg2.pr
       end
 
+      def mod out, arg1, arg2
+        asm.str X24, [SP, -16], :!
+        asm.udiv X24, arg1.pr, arg2.pr
+        asm.msub out.pr, X24, arg2.pr, arg1.pr
+        asm.ldr X24, [SP], 16
+      end
+
       def sub out, arg1, arg2
         if arg1.immediate? && arg2.immediate?
           asm.movz out.pr, arg1.pr - arg2.pr

@@ -17,7 +17,7 @@ class TenderJIT
 
       assert_has_insn meth, insn: :opt_mod
 
-      jit.compile(meth)
+      compile(meth, recv: self)
       jit.enable!
       result = meth.call
       jit.disable!
@@ -32,13 +32,13 @@ class TenderJIT
 
       assert_has_insn meth, insn: :opt_mod
 
-      jit.compile(meth)
+      compile(meth, recv: self)
       jit.enable!
       result = meth.call
       jit.disable!
 
       assert_equal 1, jit.compiled_methods
-      assert_equal 0, jit.exits
+      assert_equal 1, jit.exits
       assert_equal 1.0, result
     end
   end

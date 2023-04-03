@@ -526,6 +526,18 @@ class TenderJIT
       assert_equal [1, 2, 3, 4], Fiddle.dlunwrap(func.call())
     end
 
+    def test_mod
+      ir = IR.new
+      ir.ret ir.mod(ir.loadp(0), ir.loadp(1))
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT, INT], INT)
+
+      assert_equal 1, func.call(3, 2)
+    end
+
     private
 
     def four_param a, b, c, d

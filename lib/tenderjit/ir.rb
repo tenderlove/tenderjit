@@ -144,6 +144,14 @@ class TenderJIT
     end
 
     def add arg1, arg2
+      if arg2.integer? && arg2 == 0
+        return arg1
+      end
+
+      _push __method__, arg1, arg2
+    end
+
+    def mod arg1, arg2
       _push __method__, arg1, arg2
     end
 
