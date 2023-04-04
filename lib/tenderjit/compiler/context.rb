@@ -12,6 +12,10 @@ class TenderJIT
         def fixnum?
           type == :T_FIXNUM
         end
+
+        def array?
+          type == :T_ARRAY
+        end
       end
 
       LocalItem = Util::ClassGen.pos(:type, :reg)

@@ -21,7 +21,7 @@ class TenderJIT
     end
 
     def test_splatarray
-      jit.compile(method(:splat_empty_array))
+      compile(method(:splat_empty_array), recv: self)
       jit.enable!
       v = splat_empty_array
       jit.disable!
@@ -29,6 +29,54 @@ class TenderJIT
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.exits
       assert_equal [], v
+    end
+
+    def splat_param a
+      [*a]
+    end
+
+    def test_splat_param_not_array
+      compile(method(:splat_param), recv: self)
+      jit.enable!
+      v = splat_param 1
+      jit.disable!
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.exits
+      assert_equal [1], v
+    end
+
+    def test_splat_param_array
+      compile(method(:splat_param), recv: self)
+      jit.enable!
+      v = splat_param [:a, :b]
+      jit.disable!
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.exits
+      assert_equal [:a, :b], v
+    end
+
+    def splat_bad_param a
+      m = 5
+      m + [*a].first
+    end
+
+    class Foo; def to_a; 1; end end
+
+    def test_splat_exception
+      compile(method(:splat_bad_param), recv: self)
+      jit.enable!
+      v = begin
+            splat_bad_param Foo.new
+          rescue TypeError
+            :great
+          end
+      jit.disable!
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.exits
+      assert_equal :great, v
     end
   end
 end

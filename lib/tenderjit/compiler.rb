@@ -291,6 +291,33 @@ class TenderJIT
       ctx.push :unknown, ir.copy(ir.call(func, params))
     end
 
+    def splatarray ctx, ir, insn
+      l_type = ctx.peek(0)
+
+      return if l_type.array? && insn.opnds.first == 0
+
+      # load the stack pointer
+      sp = ir.load(ctx.cfp, C.rb_control_frame_t.offsetof(:sp))
+
+      # Flush the stack
+      ctx.each_with_index do |item, index|
+        depth = index * Fiddle::SIZEOF_VOIDP
+        ir.store(item.reg, sp, ir.uimm(depth))
+      end
+
+      # Splatting an array can raise an exception, so we need to flush
+      # the PC and the stack
+      ir.store(ir.loadi(insn.pc), ctx.cfp, C.rb_control_frame_t.offsetof(:pc))
+
+      # `rb_check_to_array` can raise an exception, so we need to flush
+      # the stack
+      func = ir.loadi C.rb_vm_splat_array
+      res = ir.copy ir.call(func, [ir.loadi(insn.opnds.first), l_type.reg])
+
+      ctx.pop
+      ctx.push Hacks.basic_type([]), res
+    end
+
     def newarray ctx, ir, insn
       ary_size = insn.opnds.first
 
@@ -308,8 +335,8 @@ class TenderJIT
 
         argv = ir.copy(ir.loadsp)
         argc = ir.loadi(ary_size)
-        func = ir.loadi Fiddle::Handle::DEFAULT["rb_ary_new_from_values"]
-        ary = ir.call(func, [argc, argv])
+        func = ir.loadi C.rb_ec_ary_new_from_values
+        ary = ir.call(func, [ctx.ec, argc, argv])
         ((ary_size + 1) / 2).times { ir.pop }
         ctx.push Hacks.basic_type([]), ir.copy(ary)
       end

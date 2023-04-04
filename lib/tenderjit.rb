@@ -51,8 +51,9 @@ class TenderJIT
 
   # Entry point for manually compiling a method
   def compile iseq, cfp
-    compiler = TenderJIT::Compiler.new iseq
+    return if iseq.body.jit_func != 0
 
+    compiler = TenderJIT::Compiler.new iseq
     jit_addr = compiler.compile cfp
 
     @compiled_iseq_addrs << compiler.iseq.to_i
@@ -62,6 +63,7 @@ class TenderJIT
   def uncompile_iseqs
     @compiled_iseq_addrs.each do |addr|
       C.rb_iseq_t.new(addr).body.jit_func = 0
+      C.rb_iseq_t.new(addr).body.variable.coverage = 0
     end
   end
 
