@@ -4,18 +4,20 @@ require "helper"
 
 class TenderJIT
   class NewarrayTest < JITTest
-    def bar; 1; end
+    def one; 1; end
+    def two; 2; end
+    def three; 3; end
 
     def empty_array
       []
     end
 
     def filled_array
-      [bar, bar, bar]
+      [one, two, three]
     end
 
     def test_empty_array
-      jit.compile(method(:empty_array))
+      compile(method(:empty_array), recv: self)
       jit.enable!
       v = empty_array
       jit.disable!
@@ -26,14 +28,14 @@ class TenderJIT
     end
 
     def test_newarray_filled
-      jit.compile(method(:filled_array))
+      compile(method(:filled_array), recv: self)
       jit.enable!
       v = filled_array
       jit.disable!
 
-      assert_equal 2, jit.compiled_methods
+      assert_equal 4, jit.compiled_methods
       assert_equal 0, jit.exits
-      assert_equal [1, 1, 1], v
+      assert_equal [1, 2, 3], v
     end
   end
 end

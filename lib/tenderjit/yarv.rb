@@ -231,7 +231,8 @@ class TenderJIT
       add_insn __method__, pc, insn, ops
     end
 
-    def newarray pc, insn, ops
+    def newarray pc, insn
+      ops = [readop(:int, pc, 0)]
       add_insn __method__, pc, insn, ops
     end
 

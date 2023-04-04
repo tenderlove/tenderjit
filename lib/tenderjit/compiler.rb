@@ -291,6 +291,30 @@ class TenderJIT
       ctx.push :unknown, ir.copy(ir.call(func, params))
     end
 
+    def newarray ctx, ir, insn
+      ary_size = insn.opnds.first
+
+      if ary_size == 0
+        func = ir.loadi Fiddle::Handle::DEFAULT["rb_ary_new"]
+        res = ir.call func, []
+        ctx.push Hacks.basic_type([]), ir.copy(res)
+      else
+        stack = ary_size.times.map { |i| ctx.peek(i).reg }
+
+        # make sure it's divisible by 2
+        stack.unshift IR::NONE if ary_size % 2 > 0
+
+        stack.each_slice(2) { |a, b| ir.push(b, a) }
+
+        argv = ir.copy(ir.loadsp)
+        argc = ir.loadi(ary_size)
+        func = ir.loadi Fiddle::Handle::DEFAULT["rb_ary_new_from_values"]
+        ary = ir.call(func, [argc, argv])
+        ((ary_size + 1) / 2).times { ir.pop }
+        ctx.push Hacks.basic_type([]), ir.copy(ary)
+      end
+    end
+
     def opt_mod ctx, ir, insn
       r_type = ctx.peek(0)
       l_type = ctx.peek(1)

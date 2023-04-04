@@ -262,8 +262,9 @@ class TenderJIT
       end
 
       def push out, in1, in2
+        in1 = in1.register? ? in1.pr : XZR
         in2 = in2.register? ? in2.pr : XZR
-        asm.stp in1.pr, in2, [SP, -16], :!
+        asm.stp in1, in2, [SP, -16], :!
       end
 
       def pop out, in1, in2
