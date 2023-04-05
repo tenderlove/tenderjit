@@ -172,6 +172,13 @@ class TenderJIT
       _push __method__, arg1, arg2
     end
 
+    def or arg1, arg2
+      raise ArgumentError, "First parameter must be a register" unless arg1.register?
+      arg2 = uimm(arg2) if arg2.integer?
+
+      _push __method__, arg1, arg2
+    end
+
     def dec arg1, arg2
       raise ArgumentError, "First parameter must be a register" if arg1.integer?
       _push __method__, arg1, arg2, NONE
@@ -244,6 +251,16 @@ class TenderJIT
     def csel_gt arg1, arg2
       raise ArgumentError if arg1.integer? || arg2.integer?
       _push __method__, arg1, arg2
+    end
+
+    def jz arg1, dest
+      _push __method__, arg1, NONE, dest
+      nil
+    end
+
+    def jnz arg1, dest
+      _push __method__, arg1, NONE, dest
+      nil
     end
 
     def jle arg1, arg2, dest
@@ -322,7 +339,7 @@ class TenderJIT
     def new_insn klass, name, a, b, out
       a = uimm(a) if a.integer?
       b = uimm(b) if b.integer?
-      raise if a.label? || b.label?
+      raise ArgumentError, "labels should only be outputs" if a.label? || b.label?
 
       insn = klass.new name, a, b, out
       a.add_use insn

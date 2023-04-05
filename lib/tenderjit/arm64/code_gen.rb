@@ -5,6 +5,12 @@ class TenderJIT
     class CodeGen
       include AArch64::Registers
 
+      class ZR
+        def self.pr
+          ::AArch64::Registers::XZR
+        end
+      end
+
       attr_reader :asm
 
       def initialize
@@ -42,14 +48,22 @@ class TenderJIT
         asm.asr dest.pr, reg.pr, amount.pr
       end
 
+      def jz dest, arg1, _
+        je dest, arg1, ZR
+      end
+
+      def jnz dest, arg1, _
+        jne dest, arg1, ZR
+      end
+
       def jle dest, arg1, arg2
-        asm.cmp arg1.pr, arg2.pr
+        cmp nil, arg1, arg2
         asm.b dest.pr, cond: :le
       end
 
       def jne dest, arg1, arg2
-        asm.cmp arg1, arg2
-        asm.b dest, cond: :ne
+        cmp nil, arg1, arg2
+        asm.b dest.pr, cond: :ne
       end
 
       def tbnz dest, arg1, arg2
@@ -57,7 +71,7 @@ class TenderJIT
       end
 
       def je dest, arg1, arg2
-        asm.cmp arg1.pr, arg2.pr
+        cmp nil, arg1, arg2
         asm.b dest.pr, cond: :eq
       end
 
@@ -97,6 +111,10 @@ class TenderJIT
 
       def patch_location block, _, _
         asm.patch_location(&block)
+      end
+
+      def or out, arg1, arg2
+        asm.orr out.pr, arg1.pr, arg2.pr
       end
 
       def and out, arg1, arg2

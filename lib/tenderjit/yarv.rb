@@ -195,6 +195,11 @@ class TenderJIT
       add_insn __method__, pc, insn, EMPTY
     end
 
+    def getblockparamproxy pc, insn
+      ops = [readop(:int, pc, 0), readop(:int, pc, 1)]
+      add_insn __method__, pc, insn, ops
+    end
+
     def putobject pc, insn
       ops = [Fiddle.dlunwrap(readop(:ptr, pc, 0))]
       add_insn __method__, pc, insn, ops

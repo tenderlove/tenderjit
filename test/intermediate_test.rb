@@ -47,6 +47,40 @@ class TenderJIT
       assert_equal 128, func.call
     end
 
+    def test_jnz
+      ir = IR.new
+      not_zero = ir.label :not_zero
+      ir.jnz ir.loadp(0), not_zero
+      ir.ret ir.loadi(0)
+      ir.put_label not_zero
+      ir.ret ir.loadi(1)
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT], INT)
+      assert_equal 0, func.call(0)
+      assert_equal 1, func.call(1)
+      assert_equal 1, func.call(123)
+    end
+
+    def test_jz
+      ir = IR.new
+      zero = ir.label :zero
+      ir.jz ir.loadp(0), zero
+      ir.ret ir.loadi(1)
+      ir.put_label zero
+      ir.ret ir.loadi(0)
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT], INT)
+      assert_equal 0, func.call(0)
+      assert_equal 1, func.call(1)
+      assert_equal 1, func.call(123)
+    end
+
     def test_jfalse
       ir = IR.new
       is_false = ir.label :is_false
@@ -552,6 +586,30 @@ class TenderJIT
       func = buf.to_function([INT, INT], INT)
 
       assert_equal 1, func.call(3, 2)
+    end
+
+    def test_or_immediate
+      ir = IR.new
+      ir.ret ir.or(ir.loadp(0), 1)
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT], INT)
+
+      assert_equal 3, func.call(2)
+    end
+
+    def test_or_reg
+      ir = IR.new
+      ir.ret ir.or(ir.loadp(0), ir.loadp(1))
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT, INT], INT)
+
+      assert_equal 3, func.call(2, 1)
     end
 
     private
