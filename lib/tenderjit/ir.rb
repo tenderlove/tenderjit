@@ -97,7 +97,11 @@ class TenderJIT
     end
 
     def shr arg1, arg2
-      _push __method__, arg1, imm(arg2)
+      _push __method__, arg1, arg2
+    end
+
+    def shl arg1, arg2
+      _push __method__, arg1, arg2
     end
 
     def set_param arg1
@@ -109,11 +113,11 @@ class TenderJIT
     end
 
     def save_params arg1
-      _push __method__, uimm(arg1), NONE, NONE
+      _push __method__, arg1, NONE, NONE
     end
 
     def restore_params arg1
-      _push __method__, uimm(arg1), NONE, NONE
+      _push __method__, arg1, NONE, NONE
     end
 
     def stack_delloc arg1
@@ -268,6 +272,11 @@ class TenderJIT
       nil
     end
 
+    def jgt arg1, arg2, dest
+      _push __method__, arg1, arg2, dest
+      nil
+    end
+
     def jne arg1, arg2, dest
       _push __method__, arg1, arg2, dest
       nil
@@ -298,6 +307,15 @@ class TenderJIT
     end
 
     def and arg1, arg2
+      arg2 = uimm(arg2) if arg2.integer?
+
+      _push __method__, arg1, arg2
+    end
+
+    def mul arg1, arg2
+      raise ArgumentError if arg1.integer? || arg2.integer?
+      raise ArgumentError if arg1.immediate? || arg2.immediate?
+
       _push __method__, arg1, arg2
     end
 

@@ -340,16 +340,6 @@ class TenderJIT
       assert_equal 1, func.call(3)
     end
 
-    def test_bitwise_lit_l
-      ir = IR.new
-      a = ir.loadp(0)
-      t = ir.and(1, a) # t = a & b
-      ir.ret t      # return t
-      buf = assemble ir
-      func = buf.to_function([Fiddle::TYPE_INT], Fiddle::TYPE_INT)
-      assert_equal 1, func.call(3)
-    end
-
     def test_bitwise
       ir = IR.new
       a = ir.loadp(0)
@@ -554,6 +544,18 @@ class TenderJIT
       assert_equal 1, func.call(2)
     end
 
+    def test_shr_reg
+      ir = IR.new
+      ir.ret ir.shr(ir.loadp(0), ir.loadp(1))
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT, INT], INT)
+
+      assert_equal 1, func.call(3, 1)
+    end
+
     def test_stack_alloc_and_funcallv
       ir = IR.new
 
@@ -610,6 +612,43 @@ class TenderJIT
       func = buf.to_function([INT, INT], INT)
 
       assert_equal 3, func.call(2, 1)
+    end
+
+    def test_mul
+      ir = IR.new
+      ir.ret ir.mul(ir.loadp(0), ir.loadp(1))
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT, INT], INT)
+
+      assert_equal 2, func.call(2, 1)
+      assert_equal(-2, func.call(2, -1))
+    end
+
+    def test_shl
+      ir = IR.new
+      ir.ret ir.shl(ir.loadp(0), 1)
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT], INT)
+
+      assert_equal(2, func.call(1))
+    end
+
+    def test_shl_reg
+      ir = IR.new
+      ir.ret ir.shl(ir.loadp(0), ir.loadp(1))
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT, INT], INT)
+
+      assert_equal((1 << 2), func.call(1, 2))
     end
 
     private

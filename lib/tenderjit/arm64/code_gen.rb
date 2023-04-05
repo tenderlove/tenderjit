@@ -48,6 +48,10 @@ class TenderJIT
         asm.asr dest.pr, reg.pr, amount.pr
       end
 
+      def shl dest, reg, amount
+        asm.lsl dest.pr, reg.pr, amount.pr
+      end
+
       def jz dest, arg1, _
         je dest, arg1, ZR
       end
@@ -59,6 +63,11 @@ class TenderJIT
       def jle dest, arg1, arg2
         cmp nil, arg1, arg2
         asm.b dest.pr, cond: :le
+      end
+
+      def jgt dest, arg1, arg2
+        cmp nil, arg1, arg2
+        asm.b dest.pr, cond: :gt
       end
 
       def jne dest, arg1, arg2
@@ -118,21 +127,9 @@ class TenderJIT
       end
 
       def and out, arg1, arg2
-        if arg1.immediate? && arg2.immediate?
-          asm.movk(out.pr, arg1.pr & arg2.pr)
-        else
-          if arg1.immediate?
-            asm.movk(out.pr, arg1.pr)
-            arg1 = out
-          end
+        raise if arg1.immediate?
 
-          if arg2.immediate?
-            asm.movk(out.pr, arg2.pr)
-            arg2 = out
-          end
-
-          asm.and out.pr, arg1.pr, arg2.pr
-        end
+        asm.and out.pr, arg1.pr, arg2.pr
       end
 
       def add out, arg1, arg2
@@ -141,6 +138,10 @@ class TenderJIT
         end
 
         asm.adds out.pr, arg1.pr, arg2.pr
+      end
+
+      def mul out, arg1, arg2
+        asm.mul out.pr, arg1.pr, arg2.pr
       end
 
       def mod out, arg1, arg2
