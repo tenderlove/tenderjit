@@ -62,6 +62,7 @@ class TenderJIT
     end
 
     PatchCtx = Util::ClassGen.pos(:stack, :buffer_offset, :reg)
+    PatchCtx = Util::ClassGen.pos(:stack, :buffer_offset, :reg, :ci)
 
     attr_reader :iseq, :buff
 
@@ -283,7 +284,7 @@ class TenderJIT
 
       func = nil
       ir.patch_location { |loc|
-        @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy)
+        @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy, cd.ci)
       }
       func = ir.loadi ir.uimm(trampoline(mid, argc, patch_id), 64)
       @patch_id += 1
@@ -586,8 +587,12 @@ class TenderJIT
 
     class FakeFrame; end
 
-    def compile_frame comptime_recv, mid, argc, patch_id
+    def compile_frame comptime_recv, patch_id
       patch_ctx = @patches.fetch(patch_id)
+
+      ci = patch_ctx.ci
+      mid   = C.vm_ci_mid(ci)
+      argc  = C.vm_ci_argc(ci)
 
       comptime_recv_class = C.rb_class_of(comptime_recv)
       cme = C.rb_callable_method_entry(comptime_recv_class, mid)
@@ -693,16 +698,14 @@ class TenderJIT
       ir.save_params argc + 2 + 1
 
       # Push parameters for rb_funcallv on the stack
-      ir.push(ir.loadi(Fiddle.dlwrap(argc)), ir.loadi(Fiddle.dlwrap(patch_id)))
-      ir.push(ir.loadp(2), ir.loadi(Fiddle.dlwrap(mid)))
+      ir.push(ir.loadp(2), ir.loadi(Fiddle.dlwrap(patch_id)))
       argv = ir.copy(ir.loadsp)
       func = ir.loadi Fiddle::Handle::DEFAULT["rb_funcallv"]
       recv = ir.loadi Fiddle.dlwrap(self)
       callback = ir.loadi Hacks.rb_intern_str("compile_frame")
 
-      res = ir.call func, [recv, callback, ir.loadi(4), argv]
+      res = ir.call func, [recv, callback, ir.loadi(2), argv]
       res = ir.shr res, 1
-      ir.pop
       ir.pop
 
       ir.restore_params argc + 2 + 1
