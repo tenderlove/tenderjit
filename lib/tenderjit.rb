@@ -49,7 +49,7 @@ class TenderJIT
     @compiled_iseq_addrs    = []
   end
 
-  # Entry point for manually compiling a method
+  # Entry point for compiling a method from RJIT hooks
   def compile iseq, cfp
     return if iseq.body.jit_func != 0
 
@@ -58,6 +58,17 @@ class TenderJIT
 
     @compiled_iseq_addrs << compiler.iseq.to_i
     iseq.body.jit_func = jit_addr
+  end
+
+  # Compile a method.  For example:
+  def compile_method method, recv:
+    rb_iseq = RubyVM::InstructionSequence.of(method)
+    method = Compiler.method_to_iseq_t rb_iseq
+    cfp = C.rb_control_frame_t.new
+    cfp.self = Fiddle.dlwrap(recv)
+    compile method, cfp
+  ensure
+    Fiddle.free cfp.to_i
   end
 
   def uncompile_iseqs

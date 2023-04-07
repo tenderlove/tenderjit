@@ -6,6 +6,8 @@ require "tenderjit/yarv"
 
 class TenderJIT
   class Compiler
+    include RubyVM::RJIT
+
     def self.for_method method
       rb_iseq = RubyVM::InstructionSequence.of(method)
       return unless rb_iseq # it's a C func
@@ -54,7 +56,7 @@ class TenderJIT
       if ary[2]
         puts "this shouldn't happen, I don't think"
       else
-       iseq_compiler = super
+        iseq_compiler = super
         ary[2] = iseq_compiler
       end
 
@@ -191,7 +193,11 @@ class TenderJIT
     def translate_block block, ir, context
       block.each_instruction do |insn|
         puts insn.op if $DEBUG
-        send insn.op, context, ir, insn
+        if insn.op == :send
+          raise
+        else
+          send insn.op, context, ir, insn
+        end
       end
     end
 
@@ -231,6 +237,22 @@ class TenderJIT
       yarv.peephole_optimize!
 
       yarv
+    end
+
+    def getblockparamproxy ctx, ir, insn
+      idx, level = insn.opnds
+
+      ep = ir.load(ctx.cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
+
+      level.times { |i|
+        raise
+        tmp = ir.load(ep, C::VM_ENV_DATA_INDEX_SPECVAL)
+        ep = ir.and(tmp, ~0x03)
+      }
+
+      proxy = ir.copy ir.call(ir.loadi(Compiler.getblockparamproxy), [ep, ir.loadi(idx)])
+
+      ctx.push :blockparam, proxy
     end
 
     def branchunless ctx, ir, insn
@@ -286,7 +308,7 @@ class TenderJIT
       ir.patch_location { |loc|
         @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy, cd.ci)
       }
-      func = ir.loadi ir.uimm(trampoline(mid, argc, patch_id), 64)
+      func = ir.loadi ir.uimm(trampoline(argc, patch_id), 64)
       @patch_id += 1
 
       ctx.push :unknown, ir.copy(ir.call(func, params))
@@ -323,7 +345,7 @@ class TenderJIT
       ary_size = insn.opnds.first
 
       if ary_size == 0
-        func = ir.loadi Fiddle::Handle::DEFAULT["rb_ary_new"]
+        func = ir.loadi Hacks::FunctionPointers.rb_ary_new
         res = ir.call func, []
         ctx.push Hacks.basic_type([]), ir.copy(res)
       else
@@ -690,17 +712,15 @@ class TenderJIT
       entry
     end
 
-    def trampoline mid, argc, patch_id
+    def trampoline argc, patch_id
       ir = IR.new
-
-      # push ec and cfp on stack
 
       ir.save_params argc + 2 + 1
 
       # Push parameters for rb_funcallv on the stack
       ir.push(ir.loadp(2), ir.loadi(Fiddle.dlwrap(patch_id)))
       argv = ir.copy(ir.loadsp)
-      func = ir.loadi Fiddle::Handle::DEFAULT["rb_funcallv"]
+      func = ir.loadi Hacks::FunctionPointers.rb_funcallv
       recv = ir.loadi Fiddle.dlwrap(self)
       callback = ir.loadi Hacks.rb_intern_str("compile_frame")
 

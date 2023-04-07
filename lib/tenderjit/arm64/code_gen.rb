@@ -44,6 +44,11 @@ class TenderJIT
         asm.tbz reg.pr, bit.pr, dest.pr
       end
 
+      def int2num dest, in1, _
+        asm.lsl dest.pr, in1.pr, 1
+        asm.orr dest.pr, dest.pr, 1
+      end
+
       def shr dest, reg, amount
         asm.asr dest.pr, reg.pr, amount.pr
       end
@@ -179,7 +184,11 @@ class TenderJIT
       end
 
       def load out, src, offset
-        asm.ldur out.pr, [src.pr, offset.pr]
+        if offset.immediate?
+          asm.ldur out.pr, [src.pr, offset.pr]
+        else
+          asm.ldr out.pr, [src.pr, offset.pr]
+        end
       end
 
       def loadp _, _, _

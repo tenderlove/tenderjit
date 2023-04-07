@@ -77,6 +77,10 @@ class TenderJIT
       Operands::SignedInt.new(int, width)
     end
 
+    def int2num arg1
+      _push __method__, arg1, NONE
+    end
+
     def push arg1, arg2 = NONE
       _push __method__, arg1, arg2, NONE
     end

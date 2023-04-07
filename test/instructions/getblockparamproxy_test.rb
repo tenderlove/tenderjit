@@ -12,7 +12,7 @@ class TenderJIT
       assert_has_insn method(:takes_symbol), insn: :getblockparamproxy
       expected = takes_symbol(&:nil?)
 
-      jit.compile(method(:takes_symbol))
+      compile(method(:takes_symbol), recv: self)
 
       jit.enable!
       takes_symbol(&:nil?)
@@ -40,7 +40,7 @@ class TenderJIT
       x = "omgomgomg"
       expected = takes_symbol2(Foo.new, &:"omg#{x}?")
 
-      jit.compile(method(:takes_symbol2))
+      compile(method(:takes_symbol2), recv: self)
 
       jit.enable!
       takes_symbol2(Foo.new, &:"omg#{x}?")
@@ -52,6 +52,26 @@ class TenderJIT
       assert_equal expected, actual
     end
 
+    def calls_with_params &blk
+      blk.call(1, 2)
+    end
+
+    def test_getblockparamproxy_iseq_params
+      assert_has_insn method(:takes_iseq), insn: :getblockparamproxy
+      expected = calls_with_params { |a, b| a + b }
+
+      compile(method(:calls_with_params), recv: self)
+
+      jit.enable!
+      calls_with_params { |a, b| a + b }
+      actual = calls_with_params { |a, b| a + b }
+      jit.disable!
+
+      assert_equal expected, actual
+      assert_equal 2, jit.compiled_methods
+      assert_equal 0, jit.exits
+    end
+
     def takes_iseq &blk
       blk.call
     end
@@ -60,7 +80,7 @@ class TenderJIT
       assert_has_insn method(:takes_iseq), insn: :getblockparamproxy
       expected = takes_iseq { "foo" }
 
-      jit.compile(method(:takes_iseq))
+      compile(method(:takes_iseq), recv: self)
 
       jit.enable!
       takes_iseq { "foo" }
@@ -70,6 +90,26 @@ class TenderJIT
       assert_equal 2, jit.compiled_methods
       assert_equal 0, jit.exits
       assert_equal expected, actual
+    end
+
+    def takes_nil &blk
+      blk.call if blk
+    end
+
+    def test_getblockparamproxy_nil
+      assert_has_insn method(:takes_iseq), insn: :getblockparamproxy
+      expected = takes_nil
+
+      compile(method(:takes_nil), recv: self)
+
+      jit.enable!
+      takes_nil
+      actual = takes_nil
+      jit.disable!
+
+      assert_equal 1, jit.compiled_methods
+      assert_equal 0, jit.exits
+      assert_nil actual
     end
   end
 end

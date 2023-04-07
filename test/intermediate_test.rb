@@ -406,6 +406,24 @@ class TenderJIT
       assert_equal ra64(Fiddle.dlwrap(o)), func.call(Fiddle.dlwrap(o))
     end
 
+    def test_load_reg_offset
+      ir = IR.new
+      a = ir.loadp(0)
+
+      # load the value in Parameter 0 at offset 0
+      b = ir.load(a, ir.loadp(1))
+      # Return the value
+      ir.ret b
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+
+      o = Object.new
+      assert_equal ra64(Fiddle.dlwrap(o)), func.call(Fiddle.dlwrap(o), 0)
+    end
+
     def test_write
       ir = IR.new
       b = ir.loadi(16)
@@ -554,6 +572,18 @@ class TenderJIT
       func = buf.to_function([INT, INT], INT)
 
       assert_equal 1, func.call(3, 1)
+    end
+
+    def test_int2num
+      ir = IR.new
+      ir.ret ir.int2num(ir.loadp(0))
+
+      buf = assemble ir
+
+      # Convert the JIT buffer to a function
+      func = buf.to_function([INT], INT)
+
+      assert_equal 3, func.call(1)
     end
 
     def test_stack_alloc_and_funcallv
