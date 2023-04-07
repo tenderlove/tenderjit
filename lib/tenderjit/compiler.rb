@@ -63,7 +63,154 @@ class TenderJIT
       ary[2]
     end
 
-    PatchCtx = Util::ClassGen.pos(:stack, :buffer_offset, :reg)
+    UINTPTR_MAX = 0xFFFFFFFFFFFFFFFF
+    RBIMPL_VALUE_FULL = UINTPTR_MAX
+
+    def self.vm_block_handler_type
+      ir = IR.new
+      block_handler = ir.loadp(0)
+      # iseq
+      unmask = ir.and(block_handler, ir.uimm(0x3))
+      _next = ir.label :_next
+      ir.jne(unmask, ir.uimm(0x1), _next)
+      ir.ret 0 # block_handler_type_iseq
+
+      # ifunc
+      ir.put_label _next
+      _next = ir.label :_next
+      ir.jne(unmask, ir.uimm(0x3), _next)
+      ir.ret 1 # block_handler_type_ifunc
+
+      # static symbol
+      ir.put_label _next
+      mask = (~(RBIMPL_VALUE_FULL << C::RUBY_SPECIAL_SHIFT)) & UINTPTR_MAX
+      masked = ir.and block_handler, ir.loadi(ir.uimm(mask))
+      _next = ir.label :_next
+      ir.jne(masked, ir.loadi(C::RUBY_SYMBOL_FLAG), _next)
+      ir.ret 2 # block_handler_type_symbol (static symbol)
+
+      # dynamic symbol
+      ir.put_label _next
+      _next = ir.label :_next
+      ir.jz block_handler, _next # Qfalse
+      imm = ir.and block_handler, ir.loadi(C::RUBY_IMMEDIATE_MASK)
+      ir.jnz imm, _next          # Special const
+      flags = ir.load block_handler, C.RBasic.offsetof(:flags)
+      t_type = ir.and flags, ir.loadi(C::RUBY_T_MASK)
+      ir.jne t_type, ir.loadi(C::RUBY_T_SYMBOL), _next
+      ir.ret 2
+
+      # proc.  It must be a proc type
+      ir.put_label _next
+      ir.ret 3 # block_handler_type_proc
+
+      buff = JITBuffer.new 4096
+      asm = ir.assemble
+      buff.writeable!
+      asm.write_to buff
+      buff.executable!
+      buff.to_i
+    end
+
+    def self.getblockparamproxy
+      # takes EP, and idx
+      ir = IR.new
+
+      ep = ir.copy ir.loadp(0)
+      idx = ir.loadp(1)
+
+      flags = ir.load(ep, (C::VM_ENV_DATA_INDEX_FLAGS * C.VALUE.size))
+      modified = ir.and(flags, C::VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM)
+
+      load_bh = ir.label :load_bh
+      ir.jnz(modified, load_bh)
+
+      # VALUE block_handler = VM_ENV_BLOCK_HANDLER(ep);
+      block_handler = ir.load(ep, C::VM_ENV_DATA_INDEX_SPECVAL * C.VALUE.size)
+
+      get_handler = ir.label :get_handler
+      ir.jnz block_handler, get_handler
+
+      # No block provided
+      nil_handler = ir.loadi(Fiddle::Qnil)
+      offset = ir.mul(idx, ir.loadi(C.VALUE.size))
+      ir.store nil_handler, ir.add(ep, offset), 0
+      ir.store ir.or(flags, C::VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM),
+               ep,
+               (C::VM_ENV_DATA_INDEX_FLAGS * C.VALUE.size)
+
+      ir.ret nil_handler
+
+      ir.put_label get_handler
+      block_handler_type = ir.copy ir.call(ir.loadi(Compiler.vm_block_handler_type), [block_handler])
+      _next = ir.label :_next
+      # block_handler_type_iseq == 0
+      # block_handler_type_ifunc == 1
+      ir.jgt(block_handler_type, ir.loadi(1), _next)
+      ir.ret ir.loadi C.rb_block_param_proxy
+
+      ir.put_label _next
+      _next = ir.label :_next
+      # block_handler_type_symbol == 2
+      ir.jne(block_handler_type, ir.loadi(2), _next)
+
+      bh_sym = ir.call(ir.loadi(C.rb_sym_to_proc), [block_handler])
+      offset = ir.mul(idx, ir.loadi(C.VALUE.size))
+      ir.store bh_sym, ir.add(ep, offset), 0
+      ir.store ir.or(flags, C::VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM),
+               ep,
+               (C::VM_ENV_DATA_INDEX_FLAGS * C.VALUE.size)
+      ir.jmp load_bh
+      ir.brk
+      ir.nop
+
+      ir.put_label _next
+      ir.jne(block_handler_type, ir.loadi(3), _next) # type_proc
+      offset = ir.mul(idx, ir.loadi(C.VALUE.size))
+      ir.store block_handler, ir.add(ep, offset), 0
+      ir.store ir.or(flags, C::VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM),
+               ep,
+               (C::VM_ENV_DATA_INDEX_FLAGS * C.VALUE.size)
+      ir.jmp load_bh
+
+      ir.brk
+
+      ir.put_label _next
+
+      #ir.jmp modify_block_param
+
+      #use_proxy = ir.label :use_proxy
+      #ir.jle block_handler_type, ir.loadi(1), use_proxy
+
+      #block_handler_type_proc = ir.label :block_handler_type_proc
+      #ir.je block_handler_type, ir.loadi(3), block_handler_type_proc
+      #ir.nop
+      #ir.nop
+      #ir.nop
+      #ir.brk
+
+      #ir.put_label block_handler_type_proc
+
+      #ir.brk
+      #ir.nop
+
+      #ir.put_label modify_block_param
+
+      #ir.put_label use_proxy
+      #proxy = ir.loadi C.rb_block_param_proxy
+      ir.put_label load_bh
+      offset = ir.mul(idx, ir.loadi(C.VALUE.size))
+      ir.ret ir.load(ep, offset)
+
+      buff = JITBuffer.new 4096
+      asm = ir.assemble
+      buff.writeable!
+      asm.write_to buff
+      buff.executable!
+      buff.to_i
+    end
+
+
     PatchCtx = Util::ClassGen.pos(:stack, :buffer_offset, :reg, :ci)
 
     attr_reader :iseq, :buff
