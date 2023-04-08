@@ -439,7 +439,7 @@ class TenderJIT
 
     def opt_send_without_block ctx, ir, insn
       cd = insn.opnds.first
-      mid   = C.vm_ci_mid(cd.ci)
+      #mid   = C.vm_ci_mid(cd.ci)
       argc  = C.vm_ci_argc(cd.ci)
       #flags = C.vm_ci_flag(cd.ci)
 
@@ -756,7 +756,7 @@ class TenderJIT
 
     class FakeFrame; end
 
-    def compile_frame comptime_recv, patch_id
+    def compile_frame ec, cfp, comptime_recv, patch_id
       patch_ctx = @patches.fetch(patch_id)
 
       ci = patch_ctx.ci
@@ -796,13 +796,14 @@ class TenderJIT
           comp = TenderJIT::Compiler.new iseq
           iseq.body.jit_func = comp.compile FakeFrame.new
         end
-        call_iseq_frame patch_ctx.stack, iseq, argc
+        type = C::VM_FRAME_MAGIC_METHOD | C::VM_ENV_FLAG_LOCAL
+        call_iseq_frame patch_ctx.stack, type, iseq, argc
       else
         raise
       end
     end
 
-    def call_iseq_frame ctx, iseq, argc
+    def call_iseq_frame ctx, type, iseq, argc
       ir = IR.new
       ec = ir.loadp 0
       caller_cfp = ir.loadp 1 # load the caller's frame
@@ -829,6 +830,9 @@ class TenderJIT
       # *sp++ = type;       /* ep[-0] / ENV_FLAGS */
 
       sp = ir.add(sp, (argc + local_size + 3) * C.VALUE.size)
+      ir.store(ir.loadi(0), sp, -24)
+      ir.store(ir.loadi(0), sp, -16)
+      ir.store(ir.loadi(type), sp, -8)
 
       pc = 123
 
@@ -866,13 +870,15 @@ class TenderJIT
 
       # Push parameters for rb_funcallv on the stack
       ir.push(ir.loadp(2), ir.loadi(Fiddle.dlwrap(patch_id)))
+      ir.push(ir.int2num(ir.loadp(0)), ir.int2num(ir.loadp(1)))
       argv = ir.copy(ir.loadsp)
       func = ir.loadi Hacks::FunctionPointers.rb_funcallv
       recv = ir.loadi Fiddle.dlwrap(self)
       callback = ir.loadi Hacks.rb_intern_str("compile_frame")
 
-      res = ir.call func, [recv, callback, ir.loadi(2), argv]
+      res = ir.call func, [recv, callback, ir.loadi(4), argv]
       res = ir.shr res, 1
+      ir.pop
       ir.pop
 
       ir.restore_params argc + 2 + 1
