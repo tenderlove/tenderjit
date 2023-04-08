@@ -178,6 +178,15 @@ class TenderJIT
         @asm.mov out.pr, val
       end
 
+      def int2num dest, in1, _
+        if dest.pr != in1.pr
+          asm.mov dest.pr, in1.pr
+        end
+
+        asm.shl dest.pr, asm.uimm(1)
+        asm.or dest.pr, asm.uimm(1)
+      end
+
       def storei out, val, _
         loadi out, val, _
       end
