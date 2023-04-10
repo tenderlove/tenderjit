@@ -81,6 +81,10 @@ class TenderJIT
       _push __method__, arg1, NONE
     end
 
+    def num2int arg1
+      _push __method__, arg1, NONE
+    end
+
     def push arg1, arg2 = NONE
       _push __method__, arg1, arg2, NONE
     end

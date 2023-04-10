@@ -762,19 +762,17 @@ class TenderJIT
       @yarv_labels[label.name] ||= ir.label("YARV: #{label.name}")
     end
 
+    EMPTY = [].freeze
+
     class FakeFrame; end
 
-    def compile_frame ec, cfp, comptime_recv, patch_id
+    def compile_frame ec, cfp, comptime_recv, params, patch_id
       patch_ctx = @patches.fetch(patch_id)
 
-      ci = patch_ctx.ci
-      mid   = C.vm_ci_mid(ci)
-      argc  = C.vm_ci_argc(ci)
-
       comptime_recv_class = C.rb_class_of(comptime_recv)
-      cme = C.rb_callable_method_entry(comptime_recv_class, mid)
+      cme = C.rb_callable_method_entry(comptime_recv_class, patch_ctx.mid)
 
-      addr = gen_frame_push cme, patch_ctx, argc
+      addr = gen_frame_push ec, cfp, comptime_recv, params, cme, patch_ctx
 
       ir = IR.new
       ir.storei(addr, patch_ctx.reg)
@@ -796,7 +794,7 @@ class TenderJIT
       addr
     end
 
-    def gen_frame_push cme, patch_ctx, argc
+    def gen_frame_push ec, cfp, comptime_recv, comptime_params, cme, patch_ctx
       case cme.def.type
       when C::VM_METHOD_TYPE_ISEQ
         iseq = cme.def.body.iseq.iseqptr
@@ -805,13 +803,50 @@ class TenderJIT
           iseq.body.jit_func = comp.compile FakeFrame.new
         end
         type = C::VM_FRAME_MAGIC_METHOD | C::VM_ENV_FLAG_LOCAL
-        call_iseq_frame patch_ctx.stack, type, iseq, argc
+        call_iseq_frame patch_ctx, type, iseq
+      when C::VM_METHOD_TYPE_OPTIMIZED
+        gen_optimized_frame ec, cfp, comptime_recv, comptime_params, cme, patch_ctx
       else
-        raise
+        raise "Unhandled frame type #{cme.def.type}"
       end
     end
 
-    def call_iseq_frame ctx, type, iseq, argc
+    def gen_optimized_frame ec, caller_frame, comptime_recv, comptime_params, cme, ctx
+      case cme.def.body.optimized.type
+      when C::OPTIMIZED_METHOD_TYPE_CALL
+        x = C.rb_control_frame_t.new caller_frame
+        block_handler = C.rb_vm_ep_local_ep(x.ep)[C::VM_ENV_DATA_INDEX_SPECVAL]
+        p block_handler
+        p comptime_recv
+        p comptime_params.first
+        comptime_recv = comptime_params.first
+        comptime_recv_class = C.rb_class_of(comptime_recv)
+        p comptime_recv_class
+        p Hacks.rb_id2sym(ctx.mid)
+        cme = C.rb_callable_method_entry(comptime_recv_class, ctx.mid)
+        p cme
+        exit!
+
+      when C::OPTIMIZED_METHOD_TYPE_BLOCK_CALL
+        x = C.rb_control_frame_t.new caller_frame
+        block_handler = C.rb_vm_ep_local_ep(x.ep)[C::VM_ENV_DATA_INDEX_SPECVAL]
+        block_handler = block_handler & ~0x3
+        captured = C.rb_captured_block.new block_handler
+        iseq = captured.code.iseq
+
+        if iseq.body.jit_func == 0
+          comp = TenderJIT::Compiler.new iseq
+          iseq.body.jit_func = comp.compile FakeFrame.new
+        end
+
+        type = C::VM_FRAME_MAGIC_BLOCK
+        call_iseq_frame ctx, type, iseq
+      else
+        raise "Unknown optimized type #{cme.def.body.optimized.type}"
+      end
+    end
+
+    def call_iseq_frame ctx, type, iseq
       ir = IR.new
       ec = ir.loadp 0
       caller_cfp = ir.loadp 1 # load the caller's frame
@@ -822,11 +857,11 @@ class TenderJIT
       # interfere with the caller's stack, just in case the caller had to write
       # to the stack
       sp = ir.load(caller_cfp, C.rb_control_frame_t.offsetof(:__bp__))
-      sp = ir.add(sp, ctx.stack_depth_b)
+      sp = ir.add(sp, ctx.stack.stack_depth_b)
 
-      offset = (argc - 1) * C.VALUE.size
+      offset = (ctx.argc - 1) * C.VALUE.size
 
-      argc.times do |i|
+      ctx.argc.times do |i|
         ir.store(ir.loadp(i + 3), sp, offset)
         offset -= C.VALUE.size
       end
@@ -837,7 +872,7 @@ class TenderJIT
       # *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
       # *sp++ = type;       /* ep[-0] / ENV_FLAGS */
 
-      sp = ir.add(sp, (argc + local_size + 3) * C.VALUE.size)
+      sp = ir.add(sp, (ctx.argc + local_size + 3) * C.VALUE.size)
       ir.store(ir.loadi(0), sp, -24)
       ir.store(ir.loadi(0), sp, -16)
       ir.store(ir.loadi(type), sp, -8)
@@ -876,16 +911,47 @@ class TenderJIT
 
       ir.save_params argc + 2 + 1
 
+      ec = ir.copy ir.loadp 0
+      cfp = ir.copy ir.loadp 1
+      recv = ir.copy ir.loadp 2
+
+      ary = if argc == 0
+              ir.loadi(Fiddle.dlwrap(EMPTY))
+            else
+              ir.loadi(Fiddle.dlwrap(EMPTY))
+              ## Push receiver plus parameters on the stack so we can
+              ## We're rounding argc up to the nearest multiple of 2, then iterating.
+              i = (argc + 1) & -2
+
+              (i / 2).times {
+                if i > argc
+                  ir.push(ir.loadp(3 + i - 1))
+                else
+                  ir.push(ir.loadp(3 + i - 1), ir.loadp(3 + i - 2))
+                end
+                i -= 2
+              }
+
+              func = ir.loadi C.rb_ec_ary_new_from_values
+              sp = ir.copy ir.loadsp
+              x = ir.copy ir.call(func, [ec, ir.loadi(argc), sp])
+              i = (argc + 1) & -2
+              (i / 2).times { ir.pop }
+              x
+            end
+
       # Push parameters for rb_funcallv on the stack
-      ir.push(ir.loadp(2), ir.loadi(Fiddle.dlwrap(patch_id)))
-      ir.push(ir.int2num(ir.loadp(0)), ir.int2num(ir.loadp(1)))
+      ir.push(ir.loadi(Fiddle.dlwrap(patch_id)))
+      ir.push(recv, ary)
+      ir.push(ir.int2num(ec), ir.int2num(cfp))
+
       argv = ir.copy(ir.loadsp)
       func = ir.loadi Hacks::FunctionPointers.rb_funcallv
       recv = ir.loadi Fiddle.dlwrap(self)
       callback = ir.loadi Hacks.rb_intern_str("compile_frame")
+      res = ir.num2int ir.call(func, [recv, callback, ir.loadi(5), argv])
 
-      res = ir.call func, [recv, callback, ir.loadi(4), argv]
-      res = ir.shr res, 1
+      ir.pop
       ir.pop
       ir.pop
 

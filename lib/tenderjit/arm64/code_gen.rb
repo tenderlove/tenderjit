@@ -49,6 +49,10 @@ class TenderJIT
         asm.orr dest.pr, dest.pr, 1
       end
 
+      def num2int dest, in1, _
+        asm.asr dest.pr, in1.pr, 1
+      end
+
       def shr dest, reg, amount
         asm.asr dest.pr, reg.pr, amount.pr
       end
