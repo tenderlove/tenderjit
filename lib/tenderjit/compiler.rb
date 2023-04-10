@@ -940,7 +940,7 @@ class TenderJIT
 
               (i / 2).times {
                 if i > argc
-                  ir.push(ir.loadp(3 + i - 1))
+                  ir.push(ir.loadp(3 + i - 2))
                 else
                   ir.push(ir.loadp(3 + i - 1), ir.loadp(3 + i - 2))
                 end

@@ -98,7 +98,6 @@ class TenderJIT
 
     def test_getblockparamproxy_nil
       assert_has_insn method(:takes_iseq), insn: :getblockparamproxy
-      expected = takes_nil
 
       compile(method(:takes_nil), recv: self)
 
@@ -118,7 +117,6 @@ class TenderJIT
 
     def test_getblockparamproxy_returns_self
       assert_has_insn method(:takes_iseq), insn: :getblockparamproxy
-      expected = takes_nil
 
       compile(method(:returns_self), recv: self)
 
