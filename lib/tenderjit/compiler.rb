@@ -211,7 +211,15 @@ class TenderJIT
     end
 
 
-    PatchCtx = Util::ClassGen.pos(:stack, :buffer_offset, :reg, :ci)
+    class PatchCtx < Util::ClassGen.pos(:stack, :buffer_offset, :reg, :ci)
+      def argc
+        C.vm_ci_argc(ci)
+      end
+
+      def mid
+        C.vm_ci_mid(ci)
+      end
+    end
 
     attr_reader :iseq, :buff
 
