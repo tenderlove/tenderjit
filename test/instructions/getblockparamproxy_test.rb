@@ -111,5 +111,25 @@ class TenderJIT
       assert_equal 0, jit.exits
       assert_nil actual
     end
+
+    def returns_self &blk
+      blk.call
+    end
+
+    def test_getblockparamproxy_returns_self
+      assert_has_insn method(:takes_iseq), insn: :getblockparamproxy
+      expected = takes_nil
+
+      compile(method(:returns_self), recv: self)
+
+      jit.enable!
+      returns_self { self }
+      actual = returns_self { self }
+      jit.disable!
+
+      assert_equal 2, jit.compiled_methods
+      assert_equal 0, jit.exits
+      assert_equal self, actual
+    end
   end
 end

@@ -764,7 +764,13 @@ class TenderJIT
 
     EMPTY = [].freeze
 
-    class FakeFrame; end
+    class FakeFrame
+      attr_reader :self
+
+      def initialize comptime_self
+        @self = Fiddle.dlwrap(comptime_self)
+      end
+    end
 
     def compile_frame ec, cfp, comptime_recv, params, patch_id
       patch_ctx = @patches.fetch(patch_id)
@@ -800,7 +806,7 @@ class TenderJIT
         iseq = cme.def.body.iseq.iseqptr
         if iseq.body.jit_func == 0
           comp = TenderJIT::Compiler.new iseq
-          iseq.body.jit_func = comp.compile FakeFrame.new
+          iseq.body.jit_func = comp.compile FakeFrame.new(comptime_recv)
         end
         type = C::VM_FRAME_MAGIC_METHOD | C::VM_ENV_FLAG_LOCAL
         call_iseq_frame patch_ctx, type, iseq
@@ -836,20 +842,29 @@ class TenderJIT
 
         if iseq.body.jit_func == 0
           comp = TenderJIT::Compiler.new iseq
-          iseq.body.jit_func = comp.compile FakeFrame.new
+          iseq.body.jit_func = comp.compile FakeFrame.new(captured.self)
         end
 
         type = C::VM_FRAME_MAGIC_BLOCK
-        call_iseq_frame ctx, type, iseq
+        call_iseq_frame ctx, type, iseq, block: true
       else
         raise "Unknown optimized type #{cme.def.body.optimized.type}"
       end
     end
 
-    def call_iseq_frame ctx, type, iseq
+    def call_iseq_frame ctx, type, iseq, block: false
       ir = IR.new
       ec = ir.loadp 0
       caller_cfp = ir.loadp 1 # load the caller's frame
+
+      recv = if block
+               ep = ir.load(caller_cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
+               specval = ir.load(ep, C::VM_ENV_DATA_INDEX_SPECVAL * C.VALUE.size)
+               block = ir.and(specval, ~0x3)
+               ir.load(block, C.rb_captured_block.offsetof(:self))
+             else
+               ir.loadp 2
+             end
 
       local_size = 0 # FIXME: reserve room for locals
 
@@ -888,7 +903,7 @@ class TenderJIT
         callee_cfp, C.rb_control_frame_t.offsetof(:ep)
       )
       ir.store(ir.loadi(iseq.to_i), callee_cfp, C.rb_control_frame_t.offsetof(:iseq))
-      ir.store(ir.loadp(2), callee_cfp, C.rb_control_frame_t.offsetof(:self))
+      ir.store(recv, callee_cfp, C.rb_control_frame_t.offsetof(:self))
       ir.store(ir.loadi(0), callee_cfp, C.rb_control_frame_t.offsetof(:jit_return))
       ir.store(ir.loadi(0), callee_cfp, C.rb_control_frame_t.offsetof(:block_code))
       ir.store(callee_cfp, ec, C.rb_execution_context_t.offsetof(:cfp))
