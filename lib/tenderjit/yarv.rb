@@ -164,6 +164,11 @@ class TenderJIT
       add_insn __method__, pc, insn, ops
     end
 
+    def opt_getconstant_path pc, insn
+      ops = [C.iseq_inline_constant_cache.new(readop(:ptr, pc, 0))]
+      add_insn __method__, pc, insn, ops
+    end
+
     def setlocal_WC_0 pc, insn
       add_insn :setlocal, pc, insn, local_name([readop(:uint, pc, 0), 0])
     end

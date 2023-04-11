@@ -520,6 +520,22 @@ class TenderJIT
       end
     end
 
+    def opt_getconstant_path ctx, ir, insn
+      ic = insn.opnds.first
+
+      exit_label = ir.label(:exit)
+      ic = ir.loadi ic.to_i
+      ep = ir.load(ctx.cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
+      func = ir.loadi C.rb_vm_ic_hit_p
+
+      ir.tbz ir.call(func, [ic, ep]), 0, exit_label
+      generate_exit ctx, ir, insn.pc, exit_label
+
+      ice = ir.load ic, C.IC.offsetof(:entry)
+      const_value = ir.load ice, C.iseq_inline_constant_cache_entry.offsetof(:value)
+      ctx.push :unknown, const_value
+    end
+
     def opt_mod ctx, ir, insn
       r_type = ctx.peek(0)
       l_type = ctx.peek(1)
