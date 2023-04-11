@@ -49,7 +49,7 @@ class TenderJIT
     alias :mm :call_p
 
     def test_call_p
-      jit.compile method(:call_p)
+      compile method(:call_p), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
       assert_equal 0, jit.exits
@@ -111,6 +111,7 @@ class TenderJIT
     end
 
     def cfunc x
+      a = 1
       Fiddle.dlwrap x
     end
 
@@ -118,25 +119,14 @@ class TenderJIT
       obj = Object.new
       expected = Fiddle.dlwrap obj
 
-      success = false
-      jit.compile(method(:cfunc))
-      5.times do
-        recompiles = jit.recompiles
-        exits = jit.exits
-        jit.enable!
-        cfunc(obj)
-        jit.disable!
-        if recompiles == jit.recompiles && exits == jit.exits
-          success = true
-          break
-        end
-      end
-
-      assert success, "method couldn't be heated"
+      compile(method(:cfunc), recv: self)
 
       jit.enable!
+      cfunc(obj)
       v = cfunc(obj)
       jit.disable!
+      assert_equal 1, jit.compiled_methods
+      assert_equal 2, jit.executed_methods
       assert_equal expected, v
     end
 

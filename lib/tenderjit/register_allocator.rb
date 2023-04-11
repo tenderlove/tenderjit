@@ -94,6 +94,9 @@ class TenderJIT
         break unless stack_adjust
       end
       adjust
+    rescue
+      $stderr.puts BasicBlock::Printer.new(bbs).to_ascii
+      raise
     end
 
     def doit bbs, ir, counter

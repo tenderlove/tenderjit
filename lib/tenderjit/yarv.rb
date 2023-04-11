@@ -196,6 +196,11 @@ class TenderJIT
       add_insn __method__, pc, insn, ops
     end
 
+    def opt_not pc, insn
+      ops = [C.rb_call_data.new(readop(:ptr, pc, 0))]
+      add_insn __method__, pc, insn, ops
+    end
+
     def leave pc, insn
       add_insn __method__, pc, insn, EMPTY
     end

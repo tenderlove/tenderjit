@@ -359,6 +359,10 @@ class TenderJIT
     def phi context, ir, insn
     end
 
+    def pop context, ir, insn
+      context.pop
+    end
+
     def yarv_ir iseq
       jit_pc = 0
 
@@ -534,6 +538,10 @@ class TenderJIT
       ice = ir.load ic, C.IC.offsetof(:entry)
       const_value = ir.load ice, C.iseq_inline_constant_cache_entry.offsetof(:value)
       ctx.push :unknown, const_value
+    end
+
+    def opt_not ctx, ir, insn
+      opt_send_without_block ctx, ir, insn
     end
 
     def opt_mod ctx, ir, insn
@@ -828,9 +836,77 @@ class TenderJIT
         call_iseq_frame patch_ctx, type, iseq
       when C::VM_METHOD_TYPE_OPTIMIZED
         gen_optimized_frame ec, cfp, comptime_recv, comptime_params, cme, patch_ctx
+      when C::VM_METHOD_TYPE_CFUNC
+        push_cfunc_frame ec, cfp, comptime_recv, comptime_params, cme, patch_ctx
       else
         raise "Unhandled frame type #{cme.def.type}"
       end
+    end
+
+    def push_cfunc_frame ec, cfp, comptime_recv, comptime_params, cme, ctx
+      type = C::VM_FRAME_MAGIC_CFUNC | C::VM_FRAME_FLAG_CFRAME | C::VM_ENV_FLAG_LOCAL
+      ir = IR.new
+
+      ec         = ir.copy ir.loadp 0
+      caller_cfp = ir.copy ir.loadp 1
+
+      # Move the stack pointer forward enough that the callee won't
+      # interfere with the caller's stack, just in case the caller had to write
+      # to the stack
+      sp = ir.load(caller_cfp, C.rb_control_frame_t.offsetof(:__bp__))
+      sp = ir.add(sp, ctx.stack.stack_depth_b)
+
+      # add enough room to the SP to write magic EP values
+      sp = ir.add(sp, 3 * C.VALUE.size)
+      ir.store(ir.loadi(cme.to_i), sp, -24)
+      ir.store(ir.loadi(0), sp, -16) # FIXME: block handler or prev env ptr */;
+      ir.store(ir.loadi(type), sp, -8)
+
+      callee_cfp = ir.sub(caller_cfp, C.rb_control_frame_t.size)
+      ir.store(sp, callee_cfp, C.rb_control_frame_t.offsetof(:sp))
+      ir.store(sp, callee_cfp, C.rb_control_frame_t.offsetof(:__bp__))
+      ir.store(
+        ir.sub(sp, C.VALUE.size),
+        callee_cfp, C.rb_control_frame_t.offsetof(:ep)
+      )
+      ir.store(ir.loadp(2), callee_cfp, C.rb_control_frame_t.offsetof(:self))
+      ir.store(ir.loadi(0), callee_cfp, C.rb_control_frame_t.offsetof(:jit_return))
+      ir.store(ir.loadi(0), callee_cfp, C.rb_control_frame_t.offsetof(:block_code))
+      ir.store(callee_cfp, ec, C.rb_execution_context_t.offsetof(:cfp))
+
+      ## Push receiver plus parameters on the stack so we can
+      ## We're rounding argc up to the nearest multiple of 2, then iterating.
+      argc = ctx.argc
+      i = (argc + 1) & -2
+
+      (i / 2).times {
+        if i > argc
+          ir.push(ir.loadp(3 + i - 2))
+        else
+          ir.push(ir.loadp(3 + i - 1), ir.loadp(3 + i - 2))
+        end
+        i -= 2
+      }
+      argv = ir.copy ir.loadsp
+      cfunc = cme.def.body.cfunc
+      callable = ir.loadi cfunc.invoker.to_i
+      recv = ir.copy ir.loadp(2)
+
+      val = ir.call(callable, [recv, ir.loadi(argc), argv, ir.loadi(cfunc.func.to_i)])
+
+      (((argc + 1) & -2) / 2).times { ir.pop }
+
+      ir.store(callee_cfp, ec, C.rb_execution_context_t.offsetof(:cfp))
+
+      ir.ret val
+
+      buff.writeable!
+      asm = ir.assemble
+      entry = buff.pos + buff.to_i
+      asm.write_to buff
+      buff.executable!
+
+      entry
     end
 
     def gen_optimized_frame ec, caller_frame, comptime_recv, comptime_params, cme, ctx
@@ -892,6 +968,7 @@ class TenderJIT
 
       offset = (ctx.argc - 1) * C.VALUE.size
 
+      # write out parameters to the stack
       ctx.argc.times do |i|
         ir.store(ir.loadp(i + 3), sp, offset)
         offset -= C.VALUE.size
@@ -905,7 +982,7 @@ class TenderJIT
 
       sp = ir.add(sp, (ctx.argc + local_size + 3) * C.VALUE.size)
       ir.store(ir.loadi(0), sp, -24)
-      ir.store(ir.loadi(0), sp, -16)
+      ir.store(ir.loadi(0), sp, -16) # FIXME: block handler or prev env ptr */;
       ir.store(ir.loadi(type), sp, -8)
 
       pc = 123
