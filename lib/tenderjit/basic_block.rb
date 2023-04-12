@@ -224,13 +224,14 @@ class TenderJIT
 
     def ue_vars
       # UE means "upward exposed"
-      ue_vars = Set.new
+      ue_vars = []
+      killed = killed_vars
       iter = start
       raise unless finish
       loop do
         if ue = iter.used_variables
           ue.each do |ue_var|
-            ue_vars << ue_var unless killed_vars.include?(ue_var)
+            ue_vars << ue_var unless killed.include?(ue_var)
           end
         end
 
@@ -238,10 +239,10 @@ class TenderJIT
         iter = iter._next
       end
 
-      ue_vars |= child_phis out1
-      ue_vars |= child_phis out2
+      ue_vars |= child_phis(out1).reject { |var| killed.include?(var) }
+      ue_vars |= child_phis(out2).reject { |var| killed.include?(var) }
 
-      ue_vars
+      Set.new ue_vars
     end
 
     def killed_vars
@@ -433,9 +434,9 @@ class TenderJIT
       if successor.phis.any?
         live_phi = successor.phis.flat_map(&:inputs) &
           dominators.flat_map(&:killed_vars)
-        Set.new(live_phi)
+        live_phi
       else
-        EMPTY_SET
+        []
       end
     end
 
