@@ -866,7 +866,10 @@ class TenderJIT
       unless ctx.have_local?(local.name)
         # If the local hasn't been loaded yet, load it
         ep = ir.load(ctx.cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
-        index, _ = local.ops
+        index, level = local.ops
+        level.times do
+          ep = ir.and(ir.load(ep, C::VM_ENV_DATA_INDEX_SPECVAL * C.VALUE.size), ~0x03)
+        end
         var = ir.load(ep, ir.imm(-index * Fiddle::SIZEOF_VOIDP))
         ctx.set_local local.name, :unknown, var
       end

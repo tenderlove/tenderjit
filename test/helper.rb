@@ -41,8 +41,7 @@ class TenderJIT
     end
 
     def assert_jit method, compiled:, executed:, exits:
-      jit = TenderJIT.new
-      jit.compile method
+      compile method, recv: self
 
       before_executed = jit.executed_methods
 

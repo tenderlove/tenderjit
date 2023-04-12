@@ -159,6 +159,10 @@ class TenderJIT
       add_insn :getlocal, pc, insn, local_name([readop(:uint, pc, 0), 0])
     end
 
+    def getlocal_WC_1 pc, insn
+      add_insn :getlocal, pc, insn, local_name([readop(:uint, pc, 0), 1])
+    end
+
     def getlocal pc, insn, ops
       add_insn __method__, pc, insn, local_name(ops)
     end
