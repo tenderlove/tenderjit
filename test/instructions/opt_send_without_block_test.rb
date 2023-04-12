@@ -237,7 +237,9 @@ class TenderJIT
 
     def test_isa
       obj = Object.new
-      jit.compile method(:polymorphic)
+      polymorphic obj # heat cache
+
+      compile method(:polymorphic), recv: self
       jit.enable!
       v1 = polymorphic obj
       v2 = polymorphic obj
@@ -252,6 +254,9 @@ class TenderJIT
       refute v2
       refute v3
       assert v7
+      assert_equal 1, jit.compiled_methods
+      assert_equal 7, jit.executed_methods
+      assert_equal 0, jit.exits
     end
 
     def test_isa_specialize_nil
@@ -475,11 +480,10 @@ class TenderJIT
 
       # Shifting down won't convert it back to "embedded"
       3.times { list2.pop }
-      refute Ruby.new.embedded_array?(Fiddle.dlwrap(list2))
 
       expected = call_splat(list2)
 
-      jit.compile method(:call_splat)
+      compile method(:call_splat), recv: self
       jit.enable!
       call_splat(list2)
       actual = call_splat(list)

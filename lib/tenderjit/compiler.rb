@@ -219,6 +219,10 @@ class TenderJIT
       def mid
         C.vm_ci_mid(ci)
       end
+
+      def splat?
+        C.vm_ci_flag(ci) & C::VM_CALL_ARGS_SPLAT > 0
+      end
     end
 
     attr_reader :iseq, :buff
@@ -833,7 +837,7 @@ class TenderJIT
           iseq.body.jit_func = comp.compile FakeFrame.new(comptime_recv)
         end
         type = C::VM_FRAME_MAGIC_METHOD | C::VM_ENV_FLAG_LOCAL
-        call_iseq_frame patch_ctx, type, iseq
+        call_iseq_frame ec, cfp, comptime_recv, comptime_params, cme, patch_ctx, type, iseq
       when C::VM_METHOD_TYPE_OPTIMIZED
         gen_optimized_frame ec, cfp, comptime_recv, comptime_params, cme, patch_ctx
       when C::VM_METHOD_TYPE_CFUNC
@@ -938,13 +942,13 @@ class TenderJIT
         end
 
         type = C::VM_FRAME_MAGIC_BLOCK
-        call_iseq_frame ctx, type, iseq, block: true
+        call_iseq_frame ec, cfp, comptime_recv, comptime_params, cme, patch_ctx, type, iseq, block: true
       else
         raise "Unknown optimized type #{cme.def.body.optimized.type}"
       end
     end
 
-    def call_iseq_frame ctx, type, iseq, block: false
+    def call_iseq_frame ec, cfp, comptime_recv, comptime_params, cme, ctx, type, iseq, block: false
       ir = IR.new
       ec = ir.loadp 0
       caller_cfp = ir.loadp 1 # load the caller's frame
@@ -966,6 +970,10 @@ class TenderJIT
       sp = ir.load(caller_cfp, C.rb_control_frame_t.offsetof(:__bp__))
       sp = ir.add(sp, ctx.stack.stack_depth_b)
 
+      raise if ctx.splat?
+      #p comptime_params
+      # Fixme probably should bail on wrong params
+      #p cme.def.body.iseq.iseqptr.body.param.lead_num
       offset = (ctx.argc - 1) * C.VALUE.size
 
       # write out parameters to the stack
