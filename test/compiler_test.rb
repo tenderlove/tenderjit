@@ -2,6 +2,94 @@ require "helper"
 
 class TenderJIT
   class CompilerTest < Test
+    def test_array_aref_oob
+      ir = IR.new
+      ary = ir.loadp(0)
+      idx = ir.loadp(1)
+      item = Compiler.rarray_aref ir, ary, idx
+      ir.ret item
+
+      buf = JITBuffer.new 4096
+      asm = ir.assemble
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
+
+      func = Fiddle::Function.new(buf.to_i, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT], Fiddle::TYPE_VOIDP)
+      assert_nil Fiddle.dlunwrap(func.call(Fiddle.dlwrap([1, 2, 5]), 3))
+    end
+
+    def test_array_aref_extended
+      ir = IR.new
+      ary = ir.loadp(0)
+      idx = ir.loadp(1)
+      item = Compiler.rarray_aref ir, ary, idx
+      ir.ret item
+
+      buf = JITBuffer.new 4096
+      asm = ir.assemble
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
+
+      ary = []
+      20.times { |i| ary << i + 3 }
+
+      func = Fiddle::Function.new(buf.to_i, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT], Fiddle::TYPE_VOIDP)
+      assert_equal 5, Fiddle.dlunwrap(func.call(Fiddle.dlwrap(ary), 2))
+    end
+
+    def test_array_aref_embedded
+      ir = IR.new
+      ary = ir.loadp(0)
+      idx = ir.loadp(1)
+      item = Compiler.rarray_aref ir, ary, idx
+      ir.ret item
+
+      buf = JITBuffer.new 4096
+      asm = ir.assemble
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
+
+      func = Fiddle::Function.new(buf.to_i, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT], Fiddle::TYPE_VOIDP)
+      assert_equal 5, Fiddle.dlunwrap(func.call(Fiddle.dlwrap([1, 2, 5]), 2))
+    end
+
+    def test_array_len_embedded
+      ir = IR.new
+      ary = ir.loadp(0)
+      item = Compiler.rarray_len ir, ary
+      ir.ret item
+
+      buf = JITBuffer.new 4096
+      asm = ir.assemble
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
+
+      func = Fiddle::Function.new(buf.to_i, [Fiddle::TYPE_VOIDP], Fiddle::TYPE_INT)
+      assert_equal 3, func.call(Fiddle.dlwrap([1, 2, 5]))
+    end
+
+    def test_array_len_extended
+      ir = IR.new
+      ary = ir.loadp(0)
+      item = Compiler.rarray_len ir, ary
+      ir.ret item
+
+      buf = JITBuffer.new 4096
+      asm = ir.assemble
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
+
+      ary = []
+      20.times { |i| ary << i + 3 }
+      func = Fiddle::Function.new(buf.to_i, [Fiddle::TYPE_VOIDP], Fiddle::TYPE_INT)
+      assert_equal 20, func.call(Fiddle.dlwrap(ary))
+    end
+
     def test_compile_foo
       compiler = Compiler.for_method method(:foo)
       cfg = compiler.yarv.cfg

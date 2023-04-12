@@ -528,6 +528,55 @@ class TenderJIT
       end
     end
 
+    def self.rarray_len ir, ary
+      ary = ir.copy ary
+
+      not_embedded = ir.label :not_embedded
+      finish = ir.label :finish
+
+      flags = ir.load ary, C.RBasic.offsetof(:flags)
+      embedded_p = ir.and(flags, C::RARRAY_EMBED_FLAG)
+      ir.jz(embedded_p, not_embedded)
+      flags = ir.and(flags, C::RARRAY_EMBED_LEN_MASK)
+      embed_len = ir.shr(flags, C::RARRAY_EMBED_LEN_SHIFT)
+      ir.jmp finish
+      ir.put_label not_embedded
+      extend_len = ir.load(ary, C.RArray.offsetof(:as, :heap, :len))
+      ir.put_label finish
+      ir.phi(embed_len, extend_len)
+    end
+
+    def self.rarray_aref ir, ary, idx
+      ary = ir.copy ary
+      idx = ir.copy idx
+
+      not_embedded = ir.label :not_embedded
+      got_len = ir.label :got_len
+      return_nil = ir.label :return_nil
+      finish = ir.label :finish
+
+      flags = ir.load ary, C.RBasic.offsetof(:flags)
+      embedded_p = ir.and(flags, C::RARRAY_EMBED_FLAG)
+      ir.jz(embedded_p, not_embedded)
+      flags = ir.and(flags, C::RARRAY_EMBED_LEN_MASK)
+      embed_len = ir.shr(flags, C::RARRAY_EMBED_LEN_SHIFT)
+      embed_ary_head = ir.add(ary, C.RArray.offsetof(:as, :ary))
+      ir.jmp got_len
+      ir.put_label not_embedded
+      extend_len = ir.load(ary, C.RArray.offsetof(:as, :heap, :len))
+      extend_ary_head = ir.load(ary, C.RArray.offsetof(:as, :heap, :ptr))
+      ir.put_label got_len
+      len = ir.phi(embed_len, extend_len)
+      buf = ir.phi(embed_ary_head, extend_ary_head)
+      ir.jle(len, idx, return_nil)
+      item = ir.load(buf, ir.mul(idx, ir.loadi(C.VALUE.size)))
+      ir.jmp finish
+      ir.put_label return_nil
+      _nil = ir.loadi(Fiddle::Qnil)
+      ir.put_label finish
+      ir.phi(item, _nil)
+    end
+
     def opt_getconstant_path ctx, ir, insn
       ic = insn.opnds.first
 
