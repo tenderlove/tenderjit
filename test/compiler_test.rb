@@ -2,6 +2,49 @@ require "helper"
 
 class TenderJIT
   class CompilerTest < Test
+    def test_array_empty
+      ir = IR.new
+      ary = ir.loadp(0)
+      idx = ir.loadp(1)
+      item = Compiler.rarray_aref ir, ary, idx
+      ir.ret item
+
+      buf = JITBuffer.new 4096
+      asm = ir.assemble
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
+
+      list = []
+      idx = 2
+      item = list[idx]
+
+      func = Fiddle::Function.new(buf.to_i, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT], Fiddle::TYPE_VOIDP)
+      assert_nil Fiddle.dlunwrap(func.call(Fiddle.dlwrap(list), idx))
+    end
+
+    def test_array_aref_neg
+      skip "PENDING"
+      ir = IR.new
+      ary = ir.loadp(0)
+      idx = ir.loadp(1)
+      item = Compiler.rarray_aref ir, ary, idx
+      ir.ret item
+
+      buf = JITBuffer.new 4096
+      asm = ir.assemble
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
+
+      list = [1, 2, 5]
+      idx = -2
+      item = list[idx]
+
+      func = Fiddle::Function.new(buf.to_i, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT], Fiddle::TYPE_VOIDP)
+      assert_equal item, Fiddle.dlunwrap(func.call(Fiddle.dlwrap(list), idx))
+    end
+
     def test_array_aref_oob
       ir = IR.new
       ary = ir.loadp(0)

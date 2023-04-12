@@ -31,7 +31,7 @@ class TenderJIT
     end
 
     def test_opt_aref
-      jit.compile method(:aref)
+      compile method(:aref), recv: self
 
       jit.enable!
       v = aref([1, 2, 3], 2)

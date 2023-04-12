@@ -164,6 +164,11 @@ class TenderJIT
       add_insn __method__, pc, insn, ops
     end
 
+    def opt_aref pc, insn
+      ops = [C.rb_call_data.new(readop(:ptr, pc, 0))]
+      add_insn __method__, pc, insn, ops
+    end
+
     def opt_getconstant_path pc, insn
       ops = [C.iseq_inline_constant_cache.new(readop(:ptr, pc, 0))]
       add_insn __method__, pc, insn, ops

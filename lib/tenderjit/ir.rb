@@ -280,7 +280,17 @@ class TenderJIT
       nil
     end
 
+    def jge arg1, arg2, dest
+      _push __method__, arg1, arg2, dest
+      nil
+    end
+
     def jgt arg1, arg2, dest
+      _push __method__, arg1, arg2, dest
+      nil
+    end
+
+    def jlt arg1, arg2, dest
       _push __method__, arg1, arg2, dest
       nil
     end

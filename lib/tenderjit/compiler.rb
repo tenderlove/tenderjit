@@ -528,6 +528,92 @@ class TenderJIT
       end
     end
 
+    def opt_aref ctx, ir, insn
+      cd = insn.opnds.first
+      patch_id = @patch_id
+      patch_ctx = ctx.dup
+
+      func = nil
+      ir.patch_location { |loc|
+        @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy, cd.ci)
+      }
+      func = ir.loadi ir.uimm(opt_aref_trampoline(patch_id), 64)
+      @patch_id += 1
+
+      idx = ctx.pop.reg
+      recv = ctx.pop.reg
+      params = [ctx.ec, ctx.cfp, recv, idx ]
+      ctx.push :unknown, ir.copy(ir.call(func, params))
+    end
+
+    def opt_aref_trampoline patch_id
+      # opt_aref takes 2 stack items, the receiver and the index
+      # but our calling convention is func(ec, cfp, recv, param1, param2 ... )
+      # so we know this function will be 4 parameters: the ec, cfp, recv, and
+      # the array index.
+      ir = IR.new
+      ir.save_params    1 + 1 + 2 # recv, param, ec, cfp
+
+      ec = ir.copy ir.loadp 0
+      cfp = ir.copy ir.loadp 1
+      recv = ir.copy ir.loadp 2
+
+      ir.push(ir.loadi(Fiddle.dlwrap(patch_id)))
+      ir.push(recv, ir.loadp(3))
+      ir.push(ir.int2num(ec), ir.int2num(cfp))
+
+      argv = ir.copy(ir.loadsp)
+      func = ir.loadi Hacks::FunctionPointers.rb_funcallv
+      recv = ir.loadi Fiddle.dlwrap(self)
+      callback = ir.loadi Hacks.rb_intern_str("compile_opt_aref")
+      res = ir.num2int ir.call(func, [recv, callback, ir.loadi(5), argv])
+
+      ir.pop
+      ir.pop
+      ir.pop
+
+      ir.restore_params 1 + 1 + 2
+
+      m = ir.call(res, (1 + 2 + 1).times.map { |i| ir.loadp(i) })
+      ir.ret m
+
+      asm = ir.assemble
+      addr = @trampolines.to_i + @trampolines.pos
+      @trampolines.writeable!
+      asm.write_to @trampolines
+      @trampolines.executable!
+      addr
+    end
+
+    def compile_opt_aref ec, cfp, recv, param, patch_id
+      ctx = @patches.fetch(patch_id)
+
+      recv_klass = C.rb_class_of recv
+      param_klass = C.rb_class_of param
+      if recv_klass == Array && param_klass == Integer
+        ir = IR.new
+        ir.ret self.class.rarray_aref(ir, ir.loadp(2), ir.num2int(ir.loadp(3)))
+        entry = buff.pos + buff.to_i
+        buff.writeable!
+        ir.assemble.write_to buff
+        buff.executable!
+
+        ir = IR.new
+        ir.storei(entry, ctx.reg)
+        asm = ir.assemble_patch
+
+        pos = buff.pos
+        buff.seek ctx.buffer_offset
+        buff.writeable!
+        asm.write_to(buff)
+        buff.executable!
+        buff.seek pos
+        entry
+      else
+        p "wat"
+      end
+    end
+
     def self.rarray_len ir, ary
       ary = ir.copy ary
 
