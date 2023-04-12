@@ -861,6 +861,13 @@ class TenderJIT
       ctx.set_local local.name, item.type, item.reg
     end
 
+    def duparray ctx, ir, insn
+      func = ir.loadi C.rb_ary_resurrect
+      ary = ir.loadi insn.opnds.first.to_i
+      ret = ir.call(func, [ary])
+      ctx.push Hacks.basic_type([]), ir.copy(ret)
+    end
+
     def getlocal ctx, ir, insn
       local = insn.opnds
       unless ctx.have_local?(local.name)
