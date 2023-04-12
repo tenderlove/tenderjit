@@ -21,7 +21,7 @@ class TenderJIT
     # project, so only exit/error-free execution is tested.
     #
     def test_nop
-      jit.compile method(:nop)
+      compile method(:nop), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
       assert_equal 0, jit.exits

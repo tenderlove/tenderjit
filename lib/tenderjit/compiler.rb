@@ -504,6 +504,9 @@ class TenderJIT
       ctx.push Hacks.basic_type([]), res
     end
 
+    def nop ctx, ir, insn
+    end
+
     def newarray ctx, ir, insn
       ary_size = insn.opnds.first
 
