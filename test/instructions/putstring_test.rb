@@ -14,7 +14,7 @@ class TenderJIT
       m = method(:foo)
       assert_has_insn m, insn: :putstring
 
-      jit.compile(method(:foo))
+      compile(method(:foo), recv: self)
       jit.enable!
       v = foo
       jit.disable!

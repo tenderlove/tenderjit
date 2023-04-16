@@ -780,6 +780,13 @@ class TenderJIT
       ctx.push(:BOOLEAN, out)
     end
 
+    def putstring ctx, ir, insn
+      func = ir.loadi C.rb_ec_str_resurrect
+      str = ir.loadi Fiddle.dlwrap(insn.opnds.first)
+      out = ir.copy ir.call(func, [ctx.ec, str])
+      ctx.push(Hacks.basic_type(''), out)
+    end
+
     def opt_neq ctx, ir, insn
       r_type = ctx.peek(0)
       l_type = ctx.peek(1)
