@@ -4,6 +4,126 @@ require "helper"
 
 class TenderJIT
   class ExpandarrayTest < JITTest
+    def test_expand_array_generic
+      mem = Fiddle.malloc(1024)
+      list = [1,2,3,4]
+      ir = IR.new
+      param = ir.loadi Fiddle.dlwrap(list)
+      items = Compiler.expand_array ir, param, 3
+
+      # expanding array to 3 elements should return 3 items
+      assert_equal 3, items.length
+      mem_loc = ir.loadi(mem.to_i)
+      ir.store(items[0], mem_loc, 0)
+      ir.store(items[1], mem_loc, 8)
+      ir.store(items[2], mem_loc, 16)
+      ir.ret 0
+
+      buf = JITBuffer.new 4096
+      asm = ir.assemble
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
+
+      func = buf.to_function([], Fiddle::TYPE_INT)
+      assert_equal 0, func.call
+      ptr = Fiddle::Pointer.new mem
+
+      assert_equal [1, 2, 3], ptr[0, 8 * 3].unpack('QQQ').map { |z| Fiddle.dlunwrap z }
+    ensure
+      Fiddle.free mem
+    end
+
+    def test_expand_array_too_short_generic
+      mem = Fiddle.malloc(1024)
+      list = [1,2]
+      ir = IR.new
+      param = ir.loadi Fiddle.dlwrap(list)
+      items = Compiler.expand_array ir, param, 3
+
+      # expanding array to 3 elements should return 3 items
+      assert_equal 3, items.length
+      mem_loc = ir.loadi(mem.to_i)
+      ir.store(items[0], mem_loc, 0)
+      ir.store(items[1], mem_loc, 8)
+      ir.store(items[2], mem_loc, 16)
+      ir.ret 0
+
+      buf = JITBuffer.new 4096
+      asm = ir.assemble
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
+
+      func = buf.to_function([], Fiddle::TYPE_INT)
+      assert_equal 0, func.call
+      ptr = Fiddle::Pointer.new mem
+
+      assert_equal [1, 2, nil], ptr[0, 8 * 3].unpack('QQQ').map { |z| Fiddle.dlunwrap z }
+    ensure
+      Fiddle.free mem
+    end
+
+    def test_expand_array_empty_generic
+      mem = Fiddle.malloc(1024)
+      list = []
+      ir = IR.new
+      param = ir.loadi Fiddle.dlwrap(list)
+      items = Compiler.expand_array ir, param, 3
+
+      # expanding array to 3 elements should return 3 items
+      assert_equal 3, items.length
+      mem_loc = ir.loadi(mem.to_i)
+      ir.store(items[0], mem_loc, 0)
+      ir.store(items[1], mem_loc, 8)
+      ir.store(items[2], mem_loc, 16)
+      ir.ret 0
+
+      buf = JITBuffer.new 4096
+      asm = ir.assemble
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
+
+      func = buf.to_function([], Fiddle::TYPE_INT)
+      assert_equal 0, func.call
+      ptr = Fiddle::Pointer.new mem
+
+      assert_equal [nil, nil, nil], ptr[0, 8 * 3].unpack('QQQ').map { |z| Fiddle.dlunwrap z }
+    ensure
+      Fiddle.free mem
+    end
+
+    def test_expand_array_just_right
+      mem = Fiddle.malloc(1024)
+      list = [3,2,1]
+      ir = IR.new
+      param = ir.loadi Fiddle.dlwrap(list)
+      items = Compiler.expand_array ir, param, 3
+
+      # expanding array to 3 elements should return 3 items
+      assert_equal 3, items.length
+      mem_loc = ir.loadi(mem.to_i)
+      ir.store(items[0], mem_loc, 0)
+      ir.store(items[1], mem_loc, 8)
+      ir.store(items[2], mem_loc, 16)
+      ir.ret 0
+
+      buf = JITBuffer.new 4096
+      asm = ir.assemble
+      buf.writeable!
+      asm.write_to buf
+      buf.executable!
+
+      func = buf.to_function([], Fiddle::TYPE_INT)
+      assert_equal 0, func.call
+      ptr = Fiddle::Pointer.new mem
+
+      assert_equal [3,2,1], ptr[0, 8 * 3].unpack('QQQ').map { |z| Fiddle.dlunwrap z }
+    ensure
+      Fiddle.free mem
+    end
+
     def expandarray list
       a, b, c = list
       [a, b, c]

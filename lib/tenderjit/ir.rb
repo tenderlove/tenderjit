@@ -352,7 +352,7 @@ class TenderJIT
     end
 
     def put_label name
-      raise unless name.is_a?(Operands::Label)
+      raise ArgumentError, "label is not a Label" unless name.is_a?(Operands::Label)
       _push __method__, NONE, NONE, name
       nil
     end

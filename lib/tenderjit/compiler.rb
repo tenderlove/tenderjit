@@ -210,6 +210,43 @@ class TenderJIT
       buff.to_i
     end
 
+    def self.expand_array ir, ary, len
+      ary = ir.copy ary
+
+      not_embedded = ir.label :not_embedded
+      got_len = ir.label :got_len
+      return_nil = ir.label :return_nil
+      finish = ir.label :finish
+
+      flags = ir.load ary, C.RBasic.offsetof(:flags)
+      embedded_p = ir.and(flags, C::RARRAY_EMBED_FLAG)
+      ir.jz(embedded_p, not_embedded)
+
+      flags = ir.and(flags, C::RARRAY_EMBED_LEN_MASK)
+      embed_len = ir.shr(flags, C::RARRAY_EMBED_LEN_SHIFT)
+      embed_ary_head = ir.add(ary, C.RArray.offsetof(:as, :ary))
+      ir.jmp got_len
+
+      ir.put_label not_embedded
+      extend_len = ir.load(ary, C.RArray.offsetof(:as, :heap, :len))
+      extend_ary_head = ir.load(ary, C.RArray.offsetof(:as, :heap, :ptr))
+
+      ir.put_label got_len
+      runtime_len = ir.phi(embed_len, extend_len)
+      buf = ir.phi(embed_ary_head, extend_ary_head)
+
+      len.times.map { |i|
+        load_nil = ir.label :load_nil
+        loaded = ir.label :loaded
+        ir.jle runtime_len, ir.loadi(i), load_nil
+        item = ir.load(buf, ir.loadi(C.VALUE.size * i))
+        ir.jmp loaded
+        ir.put_label load_nil
+        null = ir.loadi(Fiddle::Qnil)
+        ir.put_label loaded
+        ir.phi item, null
+      }
+    end
 
     class PatchCtx < Util::ClassGen.pos(:stack, :buffer_offset, :reg, :ci)
       def argc
