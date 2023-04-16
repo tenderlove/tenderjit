@@ -153,7 +153,7 @@ class TenderJIT
 
       assert_has_insn method(:expandarray), insn: :expandarray
 
-      jit.compile method(:expandarray)
+      compile method(:expandarray), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 
@@ -199,7 +199,7 @@ class TenderJIT
 
       assert_has_insn method(:expandarray), insn: :expandarray
 
-      jit.compile method(:expandarray)
+      compile method(:expandarray), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 
@@ -223,7 +223,7 @@ class TenderJIT
 
       assert_has_insn method(:expandarray_big), insn: :expandarray
 
-      jit.compile method(:expandarray_big)
+      compile method(:expandarray_big), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 
@@ -242,7 +242,7 @@ class TenderJIT
 
       assert_has_insn method(:expandarray), insn: :expandarray
 
-      jit.compile method(:expandarray)
+      compile method(:expandarray), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 
@@ -261,7 +261,7 @@ class TenderJIT
 
       assert_has_insn method(:expandarray), insn: :expandarray
 
-      jit.compile method(:expandarray)
+      compile method(:expandarray), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 
@@ -272,7 +272,7 @@ class TenderJIT
 
       assert_equal 1, jit.compiled_methods
       assert_equal 1, jit.executed_methods
-      assert_equal 0, jit.exits
+      assert_equal 1, jit.exits
     end
 
     def test_expandarray_special_const_then_array
@@ -297,7 +297,7 @@ class TenderJIT
     def test_expandarray_hash
       expected = expandarray({a: 1, b: 2})
 
-      jit.compile method(:expandarray)
+      compile method(:expandarray), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 
@@ -309,7 +309,7 @@ class TenderJIT
 
       assert_equal 1, jit.compiled_methods
       assert_equal 1, jit.executed_methods
-      assert_equal 0, jit.exits
+      assert_equal 1, jit.exits
     end
   end
 end

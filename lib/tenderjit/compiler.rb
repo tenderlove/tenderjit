@@ -830,6 +830,33 @@ class TenderJIT
       ctx.push(:BOOLEAN, out)
     end
 
+    def opt_and ctx, ir, insn
+      r_type = ctx.peek(0)
+      l_type = ctx.peek(1)
+
+      exit_label = ir.label(:exit)
+
+      right = r_type.reg
+
+      # Only test the type at runtime if we don't know for sure
+      guard_fixnum ir, right, exit_label unless r_type.fixnum?
+
+      left = l_type.reg
+
+      # Only test the type at runtime if we don't know for sure
+      guard_fixnum ir, left, exit_label unless l_type.fixnum?
+
+      # And them
+      out = ir.and(left, right)
+
+      # Generate an exit in case of overflow or not fixnums
+      generate_exit ctx, ir, insn.pc, exit_label
+
+      ctx.pop
+      ctx.pop
+      ctx.push(Hacks.basic_type(123), out)
+    end
+
     def opt_plus ctx, ir, insn
       r_type = ctx.peek(0)
       l_type = ctx.peek(1)

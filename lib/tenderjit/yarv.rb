@@ -214,6 +214,11 @@ class TenderJIT
       add_insn __method__, pc, insn, ops
     end
 
+    def opt_and pc, insn
+      ops = [C.rb_call_data.new(readop(:ptr, pc, 0))]
+      add_insn __method__, pc, insn, ops
+    end
+
     def opt_minus pc, insn
       ops = [C.rb_call_data.new(readop(:ptr, pc, 0))]
       add_insn __method__, pc, insn, ops

@@ -261,6 +261,8 @@ class TenderJIT
         def variable?; true; end
         def varname; "SP"; end
         def rclass; :sp; end
+
+        def spill_cost; Float::INFINITY; end
       end
 
       class RetVar < VirtualRegister
