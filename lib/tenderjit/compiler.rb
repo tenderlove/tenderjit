@@ -776,6 +776,33 @@ class TenderJIT
       ctx.push(:BOOLEAN, out)
     end
 
+    def opt_neq ctx, ir, insn
+      r_type = ctx.peek(0)
+      l_type = ctx.peek(1)
+
+      exit_label = ir.label(:exit)
+
+      right = r_type.reg
+
+      guard_fixnum ir, right, exit_label unless r_type.fixnum?
+
+      left = l_type.reg
+
+      guard_fixnum ir, left, exit_label unless l_type.fixnum?
+
+      unless l_type.fixnum? && r_type.fixnum?
+        # Generate an exit
+        generate_exit ctx, ir, insn.pc, exit_label
+      end
+
+      ir.cmp left, right
+      out = ir.csel_eq ir.loadi(Fiddle::Qfalse), ir.loadi(Fiddle::Qtrue)
+
+      ctx.pop
+      ctx.pop
+      ctx.push(:BOOLEAN, out)
+    end
+
     def opt_lt ctx, ir, insn
       r_type = ctx.peek(0)
       l_type = ctx.peek(1)
