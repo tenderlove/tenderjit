@@ -586,11 +586,7 @@ class TenderJIT
       ctx.push :unknown, ir.copy(ir.call(func, params))
     end
 
-    def opt_aref_trampoline patch_id
-      # opt_aref takes 2 stack items, the receiver and the index
-      # but our calling convention is func(ec, cfp, recv, param1, param2 ... )
-      # so we know this function will be 4 parameters: the ec, cfp, recv, and
-      # the array index.
+    def trampoline_2 patch_id, callback
       ir = IR.new
       ir.save_params    1 + 1 + 2 # recv, param, ec, cfp
 
@@ -605,7 +601,7 @@ class TenderJIT
       argv = ir.copy(ir.loadsp)
       func = ir.loadi Hacks::FunctionPointers.rb_funcallv
       recv = ir.loadi Fiddle.dlwrap(self)
-      callback = ir.loadi Hacks.rb_intern_str("compile_opt_aref")
+      callback = ir.loadi Hacks.rb_intern_str(callback)
       res = ir.num2int ir.call(func, [recv, callback, ir.loadi(5), argv])
 
       ir.pop
@@ -623,6 +619,14 @@ class TenderJIT
       asm.write_to @trampolines
       @trampolines.executable!
       addr
+    end
+
+    def opt_aref_trampoline patch_id
+      # opt_aref takes 2 stack items, the receiver and the index
+      # but our calling convention is func(ec, cfp, recv, param1, param2 ... )
+      # so we know this function will be 4 parameters: the ec, cfp, recv, and
+      # the array index.
+      trampoline_2 patch_id, "compile_opt_aref"
     end
 
     def compile_opt_aref ec, cfp, recv, param, patch_id
@@ -779,26 +783,70 @@ class TenderJIT
     def opt_neq ctx, ir, insn
       r_type = ctx.peek(0)
       l_type = ctx.peek(1)
+      cd = insn.opnds.first
 
       exit_label = ir.label(:exit)
 
       right = r_type.reg
-
       left = l_type.reg
 
-      guard_is_immediate ir, left, exit_label unless l_type.fixnum? || l_type.symbol?
-
-      unless l_type.fixnum? && r_type.fixnum?
-        # Generate an exit
-        generate_exit ctx, ir, insn.pc, exit_label
-      end
-
-      ir.cmp left, right
-      out = ir.csel_eq ir.loadi(Fiddle::Qfalse), ir.loadi(Fiddle::Qtrue)
+      out = if l_type.fixnum? || l_type.symbol?
+              ir.cmp left, right
+              ir.csel_eq ir.loadi(Fiddle::Qfalse), ir.loadi(Fiddle::Qtrue)
+            else
+              func = nil
+              patch_id = @patch_id
+              patch_ctx = ctx.dup
+              ir.patch_location { |loc|
+                @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy, cd.ci)
+              }
+              @patch_id += 1
+              func = ir.loadi ir.uimm(opt_neq_trampoline(patch_id), 64)
+              params = [ctx.ec, ctx.cfp, left, right]
+              ir.copy ir.call(func, params)
+            end
 
       ctx.pop
       ctx.pop
       ctx.push(:BOOLEAN, out)
+    end
+
+    def opt_neq_trampoline patch_id
+      trampoline_2 patch_id, "compile_opt_neq"
+    end
+
+    def compile_opt_neq ec, cfp, lhs, rhs, patch_id
+      ctx = @patches.fetch(patch_id)
+      comptime_recv_class = C.rb_class_of(lhs)
+      cme = C.rb_callable_method_entry(comptime_recv_class, ctx.mid)
+      be = C.rb_callable_method_entry(BasicObject, ctx.mid)
+      if cme.def.type == C::VM_METHOD_TYPE_CFUNC &&
+          cme.def.body.cfunc.func == be.def.body.cfunc.func
+
+        ir = IR.new
+        ir.cmp ir.loadp(2), ir.loadp(3)
+        val = ir.csel_eq ir.loadi(Fiddle::Qfalse), ir.loadi(Fiddle::Qtrue)
+        ir.ret val
+
+        entry = buff.pos + buff.to_i
+        buff.writeable!
+        ir.assemble.write_to buff
+        buff.executable!
+
+        ir = IR.new
+        ir.storei(entry, ctx.reg)
+        asm = ir.assemble_patch
+
+        pos = buff.pos
+        buff.seek ctx.buffer_offset
+        buff.writeable!
+        asm.write_to(buff)
+        buff.executable!
+        buff.seek pos
+        entry
+      else
+        raise "ugh"
+      end
     end
 
     def opt_lt ctx, ir, insn
