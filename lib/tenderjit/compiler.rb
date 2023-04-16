@@ -784,11 +784,9 @@ class TenderJIT
 
       right = r_type.reg
 
-      guard_fixnum ir, right, exit_label unless r_type.fixnum?
-
       left = l_type.reg
 
-      guard_fixnum ir, left, exit_label unless l_type.fixnum?
+      guard_is_immediate ir, left, exit_label unless l_type.fixnum? || l_type.symbol?
 
       unless l_type.fixnum? && r_type.fixnum?
         # Generate an exit

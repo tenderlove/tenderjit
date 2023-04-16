@@ -13,6 +13,10 @@ class TenderJIT
           type == :T_FIXNUM
         end
 
+        def symbol?
+          type == :T_SYMBOL
+        end
+
         def array?
           type == :T_ARRAY
         end
