@@ -167,6 +167,11 @@ class TenderJIT
       add_insn __method__, pc, insn, local_name(ops)
     end
 
+    def expandarray pc, insn
+      ops = [readop(:uint, pc, 0), readop(:uint, pc, 1)]
+      add_insn __method__, pc, insn, ops
+    end
+
     def duparray pc, insn
       ops = [C.VALUE.new(readop(:ptr, pc, 0))]
       add_insn __method__, pc, insn, ops

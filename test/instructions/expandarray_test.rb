@@ -134,7 +134,7 @@ class TenderJIT
 
       assert_has_insn method(:expandarray), insn: :expandarray
 
-      jit.compile method(:expandarray)
+      compile method(:expandarray), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 
@@ -278,7 +278,7 @@ class TenderJIT
     def test_expandarray_special_const_then_array
       expected = expandarray([1, 2, 3])
 
-      jit.compile method(:expandarray)
+      compile method(:expandarray), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 
@@ -291,7 +291,7 @@ class TenderJIT
 
       assert_equal 1, jit.compiled_methods
       assert_equal 2, jit.executed_methods
-      assert_equal 0, jit.exits
+      assert_equal 1, jit.exits
     end
 
     def test_expandarray_hash

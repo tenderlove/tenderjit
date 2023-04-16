@@ -892,6 +892,19 @@ class TenderJIT
       ctx.push(Hacks.basic_type(123), out)
     end
 
+    def expandarray ctx, ir, insn
+      num, flag = insn.opnds
+
+      expandee = ctx.peek 0
+      exit_label = ir.label(:exit)
+      guard_heap ir, expandee.reg, exit_label
+      guard_type ir, expandee.reg, C::RUBY_T_ARRAY, exit_label
+      generate_exit ctx, ir, insn.pc, exit_label
+
+      items = self.class.expand_array ir, ctx.pop.reg, num
+      items.reverse_each { |item| ctx.push :unknown, item }
+    end
+
     def setlocal ctx, ir, insn
       local = insn.opnds
       item = ctx.pop
@@ -967,6 +980,20 @@ class TenderJIT
 
     def guard_fixnum ir, reg, exit_label
       ir.tbz reg, 0, exit_label # exit if bottom bit is 0
+    end
+
+    # Jumps to exit label if +reg+ is _not_ a heap value
+    def guard_heap ir, reg, exit_label
+      b = ir.neg reg
+      c = ir.and reg, b
+      ir.jle c, ir.uimm(4), exit_label
+    end
+
+    # Jumps to the exit label if +reg+ is _not_ a certain type
+    def guard_type ir, reg, type, exit_label
+      flags = ir.load reg, C.RBasic.offsetof(:flags)
+      t_type = ir.and flags, ir.loadi(C::RUBY_T_MASK)
+      ir.jne t_type, ir.loadi(type), exit_label
     end
 
     ##
