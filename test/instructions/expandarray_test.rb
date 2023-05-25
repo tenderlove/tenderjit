@@ -6,7 +6,7 @@ class TenderJIT
   class ExpandarrayTest < JITTest
     def test_expand_array_generic
       mem = Fiddle.malloc(1024)
-      list = [1,2,3,4]
+      list = [1, 2, 3, 4]
       ir = IR.new
       param = ir.loadi Fiddle.dlwrap(list)
       items = Compiler.expand_array ir, param, 3
@@ -29,14 +29,14 @@ class TenderJIT
       assert_equal 0, func.call
       ptr = Fiddle::Pointer.new mem
 
-      assert_equal [1, 2, 3], ptr[0, 8 * 3].unpack('QQQ').map { |z| Fiddle.dlunwrap z }
+      assert_equal [1, 2, 3], ptr[0, 8 * 3].unpack("QQQ").map { |z| Fiddle.dlunwrap z }
     ensure
       Fiddle.free mem
     end
 
     def test_expand_array_too_short_generic
       mem = Fiddle.malloc(1024)
-      list = [1,2]
+      list = [1, 2]
       ir = IR.new
       param = ir.loadi Fiddle.dlwrap(list)
       items = Compiler.expand_array ir, param, 3
@@ -59,7 +59,7 @@ class TenderJIT
       assert_equal 0, func.call
       ptr = Fiddle::Pointer.new mem
 
-      assert_equal [1, 2, nil], ptr[0, 8 * 3].unpack('QQQ').map { |z| Fiddle.dlunwrap z }
+      assert_equal [1, 2, nil], ptr[0, 8 * 3].unpack("QQQ").map { |z| Fiddle.dlunwrap z }
     ensure
       Fiddle.free mem
     end
@@ -89,7 +89,7 @@ class TenderJIT
       assert_equal 0, func.call
       ptr = Fiddle::Pointer.new mem
 
-      assert_equal [nil, nil, nil], ptr[0, 8 * 3].unpack('QQQ').map { |z| Fiddle.dlunwrap z }
+      assert_equal [nil, nil, nil], ptr[0, 8 * 3].unpack("QQQ").map { |z| Fiddle.dlunwrap z }
     ensure
       Fiddle.free mem
     end
@@ -175,7 +175,7 @@ class TenderJIT
     def test_expandarray_extended_to_embedded
       expected = expandarray([1, 2, 3])
 
-      jit.compile method(:expandarray)
+      compile method(:expandarray), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
 

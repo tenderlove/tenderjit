@@ -16,6 +16,7 @@ class TenderJIT
       def initialize
         @asm = AArch64::Assembler.new
         @params = []
+        @pushes = 0
       end
 
       def write_to buffer
@@ -293,13 +294,31 @@ class TenderJIT
         asm.csel out.pr, in1.pr, in2, :gt
       end
 
+      def stack_alloc _, amount, _
+        asm.sub SP, SP, amount.pr
+      end
+
+      def stack_free _, amount, _
+        asm.add SP, SP, amount.pr
+      end
+
+      def store_spill _, reg, off
+        asm.str reg.pr, [SP, (off.pr + @pushes) * Fiddle::SIZEOF_VOIDP]
+      end
+
+      def load_spill out, off, _
+        asm.ldr out.pr, [SP, (off.pr + @pushes) * Fiddle::SIZEOF_VOIDP]
+      end
+
       def push out, in1, in2
+        @pushes += 2
         in1 = in1.register? ? in1.pr : XZR
         in2 = in2.register? ? in2.pr : XZR
         asm.stp in1, in2, [SP, -16], :!
       end
 
       def pop out, in1, in2
+        @pushes -= 2
         if in1.register?
           in2 = in2.register? ? in2.pr : XZR
           asm.ldp in1.pr, in2, [SP], 16

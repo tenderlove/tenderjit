@@ -340,7 +340,7 @@ class TenderJIT
         asm.sub Fisk::Registers::RSP, asm.uimm(amount)
       end
 
-      def stack_delloc _, amount, _
+      def stack_free _, amount, _
         asm.add Fisk::Registers::RSP, asm.uimm(amount)
       end
 

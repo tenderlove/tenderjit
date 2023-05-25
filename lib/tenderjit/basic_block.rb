@@ -166,7 +166,8 @@ class TenderJIT
     include Enumerable
 
     attr_reader :predecessors
-    attr_accessor :out1, :out2, :live_out, :dominators, :df
+    attr_accessor :out1, :out2
+    attr_accessor :live_out, :dominators, :df
 
     def self.empty name
       new name, nil, nil, nil, nil, nil
@@ -183,6 +184,10 @@ class TenderJIT
       @df           = nil
       @phis         = []
       @finish       = start
+    end
+
+    def reset
+      @live_out = Set.new
     end
 
     def add_phi phi

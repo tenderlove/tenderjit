@@ -1,4 +1,3 @@
-require "set"
 require "tenderjit/error"
 require "tenderjit/interference_graph"
 
@@ -76,9 +75,9 @@ class TenderJIT
 
     def initialize sp, param_regs, scratch_regs, ret
       @parameter_registers = param_regs.dup
-      @scratch_regs        = scratch_regs
-      @sp                  = sp
-      @ret                 = ret
+      @scratch_regs = scratch_regs
+      @sp = sp
+      @ret = ret
     end
 
     def spill?; false; end
@@ -86,10 +85,12 @@ class TenderJIT
     def allocate bbs, ir
       counter = 0
       adjust = 0
-      while true
+      loop do
         stack_adjust = doit bbs, ir, counter
-        adjust += stack_adjust if stack_adjust
-        counter += 1
+        if stack_adjust
+          adjust += stack_adjust
+          counter += 1 if stack_adjust > 0
+        end
         raise "FIXME!" if counter > 7
         break unless stack_adjust
       end
@@ -108,9 +109,9 @@ class TenderJIT
 
       color_map = ColorMap.new
       color_map.add_regs :general, @scratch_regs
-      color_map.add_regs :sp,      [@sp]
-      color_map.add_regs :param,   @parameter_registers
-      color_map.add_regs :ret,     [@ret]
+      color_map.add_regs :sp, [@sp]
+      color_map.add_regs :param, @parameter_registers
+      color_map.add_regs :ret, [@ret]
 
       color_map.add_overlap :param, :ret
 
@@ -130,15 +131,19 @@ class TenderJIT
 
       stack_adjust = 0
       if spills.any?
+        bbs.each(&:reset)
+
         # Eagerly spill negative regs
         cheap_spills = live_ranges.find_all { |x| x.spill_cost < 0 }
         if cheap_spills.length > 0
-          cheap_spills.each { |spill| stack_adjust += insert_spill(spill, counter, ir) }
+          cheap_spills.each { |spill|
+            stack_adjust += insert_spill(spill, counter, ir)
+          }
         else
           spill = spills.first
           # If we couldn't find a good spill, try spilling anything cheap
           if spill.spill_cost.infinite?
-            spill = live_ranges.sort_by(&:spill_cost).first
+            spill = live_ranges.min_by(&:spill_cost)
           end
 
           stack_adjust += insert_spill spill, counter, ir
@@ -172,7 +177,7 @@ class TenderJIT
     def select graph, stack, cm
       spill_list = []
 
-      while lr = stack.shift
+      while (lr = stack.shift)
         overlaps_with = cm.overlap lr
 
         # only consider colors of neighbors that compete with this class

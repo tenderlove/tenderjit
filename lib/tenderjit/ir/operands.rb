@@ -159,19 +159,29 @@ class TenderJIT
               end
 
               insn.bb = use.bb
-              arg1 = use.arg1 == definition.out ? insn.out : use.arg1
-              arg2 = use.arg2 == definition.out ? insn.out : use.arg2
 
               use.prev.append insn
-              use.replace arg1, arg2
+              use.replace definition.out, insn.out
             end
             0
-          when :load, :add, :sub
+          when :load, :add, :sub, :shr
             # Insert a load before all uses
             insert_loads ir, counter
 
             # Insert a store after the definition
-            insn = ir.create :store, definition.out, ir.sp, ir.uimm(counter)
+            insn = ir.create :store_spill, definition.out, ir.uimm(counter), IR::NONE
+            insn.bb = definition.bb
+            definition.append insn
+            1
+          when :copy
+            uses.each do |use|
+              p use
+            end
+            # Insert a load before all uses
+            insert_loads ir, counter
+
+            # Insert a store after the definition
+            insn = ir.create :store_spill, definition.out, ir.uimm(counter), IR::NONE
             insn.bb = definition.bb
             definition.append insn
             1
@@ -184,7 +194,7 @@ class TenderJIT
             definition.unlink
             0
           else
-            raise definition.op NotImplementedError
+            raise NotImplementedError, definition.op.to_s
           end
         end
 
@@ -192,16 +202,14 @@ class TenderJIT
           uses.dup.each do |use|
             next if use.phi?
 
-            load_insn = ir.create :load, ir.sp, ir.uimm(counter)
+            load_insn = ir.create :load_spill, ir.uimm(counter), IR::NONE
             if use.bb.start == use
               use.bb.start = load_insn
             end
             use.prev.append load_insn
             load_insn.bb = use.bb
 
-            arg1 = use.arg1 == self ? load_insn.out : use.arg1
-            arg2 = use.arg2 == self ? load_insn.out : use.arg2
-            use.replace arg1, arg2
+            use.replace self, load_insn.out
           end
 
           uses.clear
@@ -211,7 +219,7 @@ class TenderJIT
           if @uses.length == 1 && @definition._next == @uses.first
             Float::INFINITY
           else
-            if @definition.op == :loadi
+            if @definition.op == :loadi && @uses.length > 1
               -1
             else
               definition_cost + use_cost

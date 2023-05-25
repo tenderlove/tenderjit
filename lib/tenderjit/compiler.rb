@@ -71,37 +71,37 @@ class TenderJIT
       block_handler = ir.loadp(0)
       # iseq
       unmask = ir.and(block_handler, ir.uimm(0x3))
-      _next = ir.label :_next
-      ir.jne(unmask, ir.uimm(0x1), _next)
+      next_ = ir.label :next_
+      ir.jne(unmask, ir.uimm(0x1), next_)
       ir.ret 0 # block_handler_type_iseq
 
       # ifunc
-      ir.put_label _next
-      _next = ir.label :_next
-      ir.jne(unmask, ir.uimm(0x3), _next)
+      ir.put_label next_
+      next_ = ir.label :next_
+      ir.jne(unmask, ir.uimm(0x3), next_)
       ir.ret 1 # block_handler_type_ifunc
 
       # static symbol
-      ir.put_label _next
+      ir.put_label next_
       mask = (~(RBIMPL_VALUE_FULL << C::RUBY_SPECIAL_SHIFT)) & UINTPTR_MAX
       masked = ir.and block_handler, ir.loadi(ir.uimm(mask))
-      _next = ir.label :_next
-      ir.jne(masked, ir.loadi(C::RUBY_SYMBOL_FLAG), _next)
+      next_ = ir.label :next_
+      ir.jne(masked, ir.loadi(C::RUBY_SYMBOL_FLAG), next_)
       ir.ret 2 # block_handler_type_symbol (static symbol)
 
       # dynamic symbol
-      ir.put_label _next
-      _next = ir.label :_next
-      ir.jz block_handler, _next # Qfalse
+      ir.put_label next_
+      next_ = ir.label :next_
+      ir.jz block_handler, next_ # Qfalse
       imm = ir.and block_handler, ir.loadi(C::RUBY_IMMEDIATE_MASK)
-      ir.jnz imm, _next          # Special const
+      ir.jnz imm, next_          # Special const
       flags = ir.load block_handler, C.RBasic.offsetof(:flags)
       t_type = ir.and flags, ir.loadi(C::RUBY_T_MASK)
-      ir.jne t_type, ir.loadi(C::RUBY_T_SYMBOL), _next
+      ir.jne t_type, ir.loadi(C::RUBY_T_SYMBOL), next_
       ir.ret 2
 
       # proc.  It must be a proc type
-      ir.put_label _next
+      ir.put_label next_
       ir.ret 3 # block_handler_type_proc
 
       buff = JITBuffer.new 4096
@@ -136,8 +136,8 @@ class TenderJIT
       offset = ir.mul(idx, ir.loadi(C.VALUE.size))
       ir.store nil_handler, ir.add(ep, offset), 0
       ir.store ir.or(flags, C::VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM),
-               ep,
-               (C::VM_ENV_DATA_INDEX_FLAGS * C.VALUE.size)
+        ep,
+        (C::VM_ENV_DATA_INDEX_FLAGS * C.VALUE.size)
 
       ir.ret nil_handler
 
@@ -158,8 +158,8 @@ class TenderJIT
       offset = ir.mul(idx, ir.loadi(C.VALUE.size))
       ir.store bh_sym, ir.add(ep, offset), 0
       ir.store ir.or(flags, C::VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM),
-               ep,
-               (C::VM_ENV_DATA_INDEX_FLAGS * C.VALUE.size)
+        ep,
+        (C::VM_ENV_DATA_INDEX_FLAGS * C.VALUE.size)
       ir.jmp load_bh
       ir.brk
       ir.nop
@@ -169,35 +169,35 @@ class TenderJIT
       offset = ir.mul(idx, ir.loadi(C.VALUE.size))
       ir.store block_handler, ir.add(ep, offset), 0
       ir.store ir.or(flags, C::VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM),
-               ep,
-               (C::VM_ENV_DATA_INDEX_FLAGS * C.VALUE.size)
+        ep,
+        (C::VM_ENV_DATA_INDEX_FLAGS * C.VALUE.size)
       ir.jmp load_bh
 
       ir.brk
 
       ir.put_label _next
 
-      #ir.jmp modify_block_param
+      # ir.jmp modify_block_param
 
-      #use_proxy = ir.label :use_proxy
-      #ir.jle block_handler_type, ir.loadi(1), use_proxy
+      # use_proxy = ir.label :use_proxy
+      # ir.jle block_handler_type, ir.loadi(1), use_proxy
 
-      #block_handler_type_proc = ir.label :block_handler_type_proc
-      #ir.je block_handler_type, ir.loadi(3), block_handler_type_proc
-      #ir.nop
-      #ir.nop
-      #ir.nop
-      #ir.brk
+      # block_handler_type_proc = ir.label :block_handler_type_proc
+      # ir.je block_handler_type, ir.loadi(3), block_handler_type_proc
+      # ir.nop
+      # ir.nop
+      # ir.nop
+      # ir.brk
 
-      #ir.put_label block_handler_type_proc
+      # ir.put_label block_handler_type_proc
 
-      #ir.brk
-      #ir.nop
+      # ir.brk
+      # ir.nop
 
-      #ir.put_label modify_block_param
+      # ir.put_label modify_block_param
 
-      #ir.put_label use_proxy
-      #proxy = ir.loadi C.rb_block_param_proxy
+      # ir.put_label use_proxy
+      # proxy = ir.loadi C.rb_block_param_proxy
       ir.put_label load_bh
       offset = ir.mul(idx, ir.loadi(C.VALUE.size))
       ir.ret ir.load(ep, offset)
@@ -215,8 +215,6 @@ class TenderJIT
 
       not_embedded = ir.label :not_embedded
       got_len = ir.label :got_len
-      return_nil = ir.label :return_nil
-      finish = ir.label :finish
 
       flags = ir.load ary, C.RBasic.offsetof(:flags)
       embedded_p = ir.and(flags, C::RARRAY_EMBED_FLAG)
@@ -287,7 +285,7 @@ class TenderJIT
 
       ir = IR.new
 
-      ec  = ir.loadp(0)
+      ec = ir.loadp(0)
       cfp = ir.loadp(1)
 
       ec = ir.copy ec
@@ -323,7 +321,7 @@ class TenderJIT
     def translate_cfg bbs, ir, context
       seen = {}
       worklist = [[bbs.first, context]]
-      while work = worklist.pop
+      while (work = worklist.pop)
         yarv_block, context = *work
         # If we've seen the block before, it must be a joint point
         if seen[yarv_block]
@@ -492,11 +490,11 @@ class TenderJIT
 
     def opt_send_without_block ctx, ir, insn
       cd = insn.opnds.first
-      #mid   = C.vm_ci_mid(cd.ci)
-      argc  = C.vm_ci_argc(cd.ci)
-      #flags = C.vm_ci_flag(cd.ci)
+      # mid   = C.vm_ci_mid(cd.ci)
+      argc = C.vm_ci_argc(cd.ci)
+      # flags = C.vm_ci_flag(cd.ci)
 
-      params = [ ctx.ec, ctx.cfp ]
+      params = [ctx.ec, ctx.cfp]
       callee_params = argc.times.map { ctx.pop.reg }
       params << ctx.pop.reg # recv
       params += callee_params
@@ -582,13 +580,13 @@ class TenderJIT
 
       idx = ctx.pop.reg
       recv = ctx.pop.reg
-      params = [ctx.ec, ctx.cfp, recv, idx ]
+      params = [ctx.ec, ctx.cfp, recv, idx]
       ctx.push :unknown, ir.copy(ir.call(func, params))
     end
 
     def trampoline_2 patch_id, callback
       ir = IR.new
-      ir.save_params    1 + 1 + 2 # recv, param, ec, cfp
+      ir.save_params 1 + 1 + 2 # recv, param, ec, cfp
 
       ec = ir.copy ir.loadp 0
       cfp = ir.copy ir.loadp 1
@@ -702,9 +700,9 @@ class TenderJIT
       item = ir.load(buf, ir.mul(idx, ir.loadi(C.VALUE.size)))
       ir.jmp finish
       ir.put_label return_nil
-      _nil = ir.loadi(Fiddle::Qnil)
+      nil_ = ir.loadi(Fiddle::Qnil)
       ir.put_label finish
-      ir.phi(item, _nil)
+      ir.phi(item, nil_)
     end
 
     def opt_getconstant_path ctx, ir, insn
@@ -784,7 +782,7 @@ class TenderJIT
       func = ir.loadi C.rb_ec_str_resurrect
       str = ir.loadi Fiddle.dlwrap(insn.opnds.first)
       out = ir.copy ir.call(func, [ctx.ec, str])
-      ctx.push(Hacks.basic_type(''), out)
+      ctx.push(Hacks.basic_type(""), out)
     end
 
     def opt_neq ctx, ir, insn
@@ -798,20 +796,20 @@ class TenderJIT
       left = l_type.reg
 
       out = if l_type.fixnum? || l_type.symbol?
-              ir.cmp left, right
-              ir.csel_eq ir.loadi(Fiddle::Qfalse), ir.loadi(Fiddle::Qtrue)
-            else
-              func = nil
-              patch_id = @patch_id
-              patch_ctx = ctx.dup
-              ir.patch_location { |loc|
-                @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy, cd.ci)
-              }
-              @patch_id += 1
-              func = ir.loadi ir.uimm(opt_neq_trampoline(patch_id), 64)
-              params = [ctx.ec, ctx.cfp, left, right]
-              ir.copy ir.call(func, params)
-            end
+        ir.cmp left, right
+        ir.csel_eq ir.loadi(Fiddle::Qfalse), ir.loadi(Fiddle::Qtrue)
+      else
+        func = nil
+        patch_id = @patch_id
+        patch_ctx = ctx.dup
+        ir.patch_location { |loc|
+          @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy, cd.ci)
+        }
+        @patch_id += 1
+        func = ir.loadi ir.uimm(opt_neq_trampoline(patch_id), 64)
+        params = [ctx.ec, ctx.cfp, left, right]
+        ir.copy ir.call(func, params)
+      end
 
       ctx.pop
       ctx.pop
@@ -1273,13 +1271,13 @@ class TenderJIT
       caller_cfp = ir.loadp 1 # load the caller's frame
 
       recv = if block
-               ep = ir.load(caller_cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
-               specval = ir.load(ep, C::VM_ENV_DATA_INDEX_SPECVAL * C.VALUE.size)
-               block = ir.and(specval, ~0x3)
-               ir.load(block, C.rb_captured_block.offsetof(:self))
-             else
-               ir.loadp 2
-             end
+        ep = ir.load(caller_cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
+        specval = ir.load(ep, C::VM_ENV_DATA_INDEX_SPECVAL * C.VALUE.size)
+        block = ir.and(specval, ~0x3)
+        ir.load(block, C.rb_captured_block.offsetof(:self))
+      else
+        ir.loadp 2
+      end
 
       local_size = 0 # FIXME: reserve room for locals
 
@@ -1290,9 +1288,9 @@ class TenderJIT
       sp = ir.add(sp, ctx.stack.stack_depth_b)
 
       raise if ctx.splat?
-      #p comptime_params
+      # p comptime_params
       # Fixme probably should bail on wrong params
-      #p cme.def.body.iseq.iseqptr.body.param.lead_num
+      # p cme.def.body.iseq.iseqptr.body.param.lead_num
       offset = (ctx.argc - 1) * C.VALUE.size
 
       # write out parameters to the stack
@@ -1351,29 +1349,29 @@ class TenderJIT
       recv = ir.copy ir.loadp 2
 
       ary = if argc == 0
-              ir.loadi(Fiddle.dlwrap(EMPTY))
-            else
-              ir.loadi(Fiddle.dlwrap(EMPTY))
-              ## Push receiver plus parameters on the stack so we can
-              ## We're rounding argc up to the nearest multiple of 2, then iterating.
-              i = (argc + 1) & -2
+        ir.loadi(Fiddle.dlwrap(EMPTY))
+      else
+        ir.loadi(Fiddle.dlwrap(EMPTY))
+        ## Push receiver plus parameters on the stack so we can
+        ## We're rounding argc up to the nearest multiple of 2, then iterating.
+        i = (argc + 1) & -2
 
-              (i / 2).times {
-                if i > argc
-                  ir.push(ir.loadp(3 + i - 2))
-                else
-                  ir.push(ir.loadp(3 + i - 1), ir.loadp(3 + i - 2))
-                end
-                i -= 2
-              }
+        (i / 2).times {
+          if i > argc
+            ir.push(ir.loadp(3 + i - 2))
+          else
+            ir.push(ir.loadp(3 + i - 1), ir.loadp(3 + i - 2))
+          end
+          i -= 2
+        }
 
-              func = ir.loadi C.rb_ec_ary_new_from_values
-              sp = ir.copy ir.loadsp
-              x = ir.copy ir.call(func, [ec, ir.loadi(argc), sp])
-              i = (argc + 1) & -2
-              (i / 2).times { ir.pop }
-              x
-            end
+        func = ir.loadi C.rb_ec_ary_new_from_values
+        sp = ir.copy ir.loadsp
+        x = ir.copy ir.call(func, [ec, ir.loadi(argc), sp])
+        i = (argc + 1) & -2
+        (i / 2).times { ir.pop }
+        x
+      end
 
       # Push parameters for rb_funcallv on the stack
       ir.push(ir.loadi(Fiddle.dlwrap(patch_id)))

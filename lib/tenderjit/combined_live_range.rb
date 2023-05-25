@@ -5,9 +5,9 @@ class TenderJIT
     attr_reader :arg1, :arg2, :out
 
     def initialize arg1, arg2, out
-      @arg1   = arg1
-      @arg2   = arg2
-      @out    = out
+      @arg1 = arg1
+      @arg2 = arg2
+      @out = out
     end
 
     def rclass
@@ -39,8 +39,15 @@ class TenderJIT
     end
 
     def spill ir, counter
+      # Spill inputs to the same place
+      # then load outputs from the same place
+      @arg1.live_range = @arg1
+      @arg2.live_range = @arg2
+      @out.live_range = @out
       @arg1.spill(ir, counter)
       @arg2.spill(ir, counter) + @out.spill(ir, counter)
+      # puts "HI MOM"
+      # exit!
     end
 
     def physical_register= x

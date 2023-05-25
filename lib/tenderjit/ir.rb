@@ -128,7 +128,7 @@ class TenderJIT
       _push __method__, arg1, NONE, NONE
     end
 
-    def stack_delloc arg1
+    def stack_free arg1
       _push __method__, arg1, NONE, NONE
     end
 
@@ -144,7 +144,7 @@ class TenderJIT
       raise ArgumentError if params.any?(&:integer?)
       raise ArgumentError unless params.all?(&:register?)
 
-      insn.params = params
+      params.each { |param| insn.add_param param }
       @instructions = @instructions.append insn
       insn.out
     end

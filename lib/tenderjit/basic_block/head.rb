@@ -99,13 +99,13 @@ class TenderJIT
         if spills > 0
           bytes = spills * Fiddle::SIZEOF_VOIDP
           bytes = (bytes + 15) & -16 # round up to the nearest 16
-          ir.insert_at(self.first.start) do |ir|
-            ir.stack_alloc(bytes)
+          @ir.insert_at(self.first.start) do |ir|
+            @ir.stack_alloc(@ir.uimm(bytes))
           end
           each_instruction do |insn|
             if insn.return?
-              ir.insert_at(insn.prev) do |ir|
-                ir.stack_delloc(bytes)
+              @ir.insert_at(insn.prev) do |ir|
+                @ir.stack_free(@ir.uimm(bytes))
               end
             end
           end

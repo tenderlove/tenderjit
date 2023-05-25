@@ -37,7 +37,10 @@ class TenderJIT
         !put_label? && out.label?
       end
 
-      def replace arg1, arg2
+      def replace old, new
+        arg1 = @arg1 == old ? new : @arg1
+        arg2 = @arg2 == old ? new : @arg2
+
         @arg1.remove_use self
         @arg2.remove_use self
         arg1.add_use self
@@ -98,17 +101,31 @@ class TenderJIT
     end
 
     class Call < Instruction
-      attr_accessor :params
+      attr_reader :params
 
       def initialize op, arg1, arg2, out, bb = nil
         super(op, arg1, arg2, out, bb)
         @params = []
       end
 
+      def add_param param
+        param.add_use self
+        @params << param
+      end
+
       def call?; true; end
 
       def used_variables
         super + params
+      end
+
+      def replace old, new
+        super
+        if params.any? { |x| x == old }
+          old.remove_use self
+          new.add_use self
+          @params = params.map { |param| param == old ? new : param }
+        end
       end
 
       def call cg, out, in1, in2
