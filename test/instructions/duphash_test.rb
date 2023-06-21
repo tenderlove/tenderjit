@@ -9,7 +9,7 @@ class TenderJIT
     end
 
     def test_duphash
-      jit.compile method(:duphash)
+      compile method(:duphash), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
       assert_equal 0, jit.exits
