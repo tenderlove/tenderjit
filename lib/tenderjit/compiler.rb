@@ -488,6 +488,10 @@ class TenderJIT
       ctx.push Hacks.basic_type(obj), out
     end
 
+    def opt_ltlt ctx, ir, insn
+      opt_send_without_block ctx, ir, insn
+    end
+
     def opt_send_without_block ctx, ir, insn
       cd = insn.opnds.first
       # mid   = C.vm_ci_mid(cd.ci)
