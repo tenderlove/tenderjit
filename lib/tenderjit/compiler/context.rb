@@ -44,6 +44,12 @@ class TenderJIT
         @locals = @locals.dup
       end
 
+      def freeze
+        super
+        @stack.freeze
+        @locals.freeze
+      end
+
       def each &blk
         @stack.each(&blk)
       end

@@ -505,6 +505,7 @@ class TenderJIT
 
       patch_id = @patch_id
       patch_ctx = ctx.dup
+      patch_ctx.freeze
 
       func = nil
       ir.patch_location { |loc|
@@ -1271,11 +1272,12 @@ class TenderJIT
 
     def call_iseq_frame ec, cfp, comptime_recv, comptime_params, cme, ctx, type, iseq, block: false
       ir = IR.new
-      ec = ir.loadp 0
+      runtime_ec = ir.loadp 0
       caller_cfp = ir.loadp 1 # load the caller's frame
 
+      ep = ir.load(caller_cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
+
       recv = if block
-        ep = ir.load(caller_cfp, ir.uimm(C.rb_control_frame_t.offsetof(:ep)))
         specval = ir.load(ep, C::VM_ENV_DATA_INDEX_SPECVAL * C.VALUE.size)
         block = ir.and(specval, ~0x3)
         ir.load(block, C.rb_captured_block.offsetof(:self))
@@ -1288,14 +1290,47 @@ class TenderJIT
       # Move the stack pointer forward enough that the callee won't
       # interfere with the caller's stack, just in case the caller had to write
       # to the stack
-      sp = ir.load(caller_cfp, C.rb_control_frame_t.offsetof(:__bp__))
-      sp = ir.add(sp, ctx.stack.stack_depth_b)
+      sp = ir.add(ep, ctx.stack.stack_depth_b + C.VALUE.size)
 
       raise if ctx.splat?
       # p comptime_params
       # Fixme probably should bail on wrong params
       # p cme.def.body.iseq.iseqptr.body.param.lead_num
       offset = (ctx.argc - 1) * C.VALUE.size
+
+      if C.SPECIAL_CONST_P(comptime_recv)
+        #raise NotImplementedError
+      else
+        # Ensure it's heap allocated
+        b = ir.neg recv
+        c = ir.and recv, b
+        cont = ir.label :cont
+        ir.jgt c, ir.uimm(4), cont
+        ir.brk
+        ir.put_label cont
+
+        # Ensure it's the same class
+        cont = ir.label :cont
+        runtime_class = ir.load recv, C.RBasic.offsetof(:klass)
+        imm = ir.loadi Fiddle.dlwrap(C.rb_class_of(comptime_recv))
+        ir.je runtime_class, imm, cont
+
+        patch_id = @patch_id
+        func = nil
+        ir.patch_location { |loc|
+          @patches[patch_id] = PatchCtx.new(ctx.stack, buff.pos + loc, func.copy, ctx.ci)
+        }
+
+        argc = C.vm_ci_argc(ctx.ci)
+        func = ir.loadi ir.uimm(trampoline(argc, patch_id), 64)
+        params = (2 + 1 + argc).times.map { |i| # 2 for ec and cfp, 1 for recv
+          ir.loadp(i)
+        }
+        ir.ret ir.call(func, params)
+        @patch_id += 1
+
+        ir.put_label cont
+      end
 
       # write out parameters to the stack
       ctx.argc.times do |i|
@@ -1319,7 +1354,6 @@ class TenderJIT
       callee_cfp = ir.sub(caller_cfp, C.rb_control_frame_t.size)
       ir.store(ir.loadi(pc), callee_cfp, C.rb_control_frame_t.offsetof(:pc))
       ir.store(sp, callee_cfp, C.rb_control_frame_t.offsetof(:sp))
-      ir.store(sp, callee_cfp, C.rb_control_frame_t.offsetof(:__bp__))
       ir.store(
         ir.sub(sp, C.VALUE.size),
         callee_cfp, C.rb_control_frame_t.offsetof(:ep)
@@ -1328,11 +1362,11 @@ class TenderJIT
       ir.store(recv, callee_cfp, C.rb_control_frame_t.offsetof(:self))
       ir.store(ir.loadi(0), callee_cfp, C.rb_control_frame_t.offsetof(:jit_return))
       ir.store(ir.loadi(0), callee_cfp, C.rb_control_frame_t.offsetof(:block_code))
-      ir.store(callee_cfp, ec, C.rb_execution_context_t.offsetof(:cfp))
+      ir.store(callee_cfp, runtime_ec, C.rb_execution_context_t.offsetof(:cfp))
 
       callee_iseq = iseq.body.jit_func
       iseq_location = ir.loadi(callee_iseq)
-      ir.ret ir.call(iseq_location, [ec, callee_cfp])
+      ir.ret ir.call(iseq_location, [runtime_ec, callee_cfp])
 
       asm = ir.assemble
       buff.writeable!

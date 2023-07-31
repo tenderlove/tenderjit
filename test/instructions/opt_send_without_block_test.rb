@@ -111,7 +111,6 @@ class TenderJIT
     end
 
     def cfunc x
-      a = 1
       Fiddle.dlwrap x
     end
 
@@ -227,6 +226,58 @@ class TenderJIT
       assert_same x3, v3.x
 
       assert_equal 2, jit.compiled_methods
+      assert_equal 6, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
+    class PMA; def foo; "a"; end; end
+    class PMB; def foo; "b"; end; end
+
+    def polymorphic_iseq x
+      x.foo
+    end
+
+    def test_polymorphic_iseq
+      a = PMA.new
+      b = PMB.new
+
+      compile method(:polymorphic_iseq), recv: self
+      jit.enable!
+      v1 = polymorphic_iseq a
+      v2 = polymorphic_iseq b
+      v2 = polymorphic_iseq b
+      jit.disable!
+
+      assert_equal "a", v1
+      assert_equal "b", v2
+      assert_equal 3, jit.compiled_methods
+      assert_equal 6, jit.executed_methods
+      assert_equal 0, jit.exits
+    end
+
+    class PM2A; def foo(m); 1 + m; end; end
+    class PM2B; def foo(m); 2 + m; end; end
+
+    def polymorphic_iseq_param x, z
+      x.foo(z)
+    end
+
+    def test_polymorphic_param_iseq
+      a = PM2A.new
+      b = PM2B.new
+      c = 3
+
+      compile method(:polymorphic_iseq_param), recv: self
+      jit.enable!
+      v1 = polymorphic_iseq_param a, c
+      v2 = polymorphic_iseq_param b, c
+      v3 = polymorphic_iseq_param b, c
+      jit.disable!
+
+      assert_equal 4, v1
+      assert_equal 5, v2
+      assert_equal 5, v3
+      assert_equal 3, jit.compiled_methods
       assert_equal 6, jit.executed_methods
       assert_equal 0, jit.exits
     end
