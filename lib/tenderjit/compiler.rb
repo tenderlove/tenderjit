@@ -25,7 +25,7 @@ class TenderJIT
         iseq.body.variable.coverage = 0
       end
 
-      iseq.body.jit_func = 0
+      iseq.body.jit_entry = 0
     end
 
     def self.method_to_iseq_t method
@@ -1154,9 +1154,9 @@ class TenderJIT
       case cme.def.type
       when C::VM_METHOD_TYPE_ISEQ
         iseq = cme.def.body.iseq.iseqptr
-        if iseq.body.jit_func == 0
+        if iseq.body.jit_entry == 0
           comp = TenderJIT::Compiler.new iseq
-          iseq.body.jit_func = comp.compile FakeFrame.new(comptime_recv)
+          iseq.body.jit_entry = comp.compile FakeFrame.new(comptime_recv)
         end
         type = C::VM_FRAME_MAGIC_METHOD | C::VM_ENV_FLAG_LOCAL
         call_iseq_frame ec, cfp, comptime_recv, comptime_params, cme, patch_ctx, type, iseq
@@ -1258,9 +1258,9 @@ class TenderJIT
         captured = C.rb_captured_block.new block_handler
         iseq = captured.code.iseq
 
-        if iseq.body.jit_func == 0
+        if iseq.body.jit_entry == 0
           comp = TenderJIT::Compiler.new iseq
-          iseq.body.jit_func = comp.compile FakeFrame.new(captured.self)
+          iseq.body.jit_entry = comp.compile FakeFrame.new(captured.self)
         end
 
         type = C::VM_FRAME_MAGIC_BLOCK
@@ -1364,7 +1364,7 @@ class TenderJIT
       ir.store(ir.loadi(0), callee_cfp, C.rb_control_frame_t.offsetof(:block_code))
       ir.store(callee_cfp, runtime_ec, C.rb_execution_context_t.offsetof(:cfp))
 
-      callee_iseq = iseq.body.jit_func
+      callee_iseq = iseq.body.jit_entry
       iseq_location = ir.loadi(callee_iseq)
       ir.ret ir.call(iseq_location, [runtime_ec, callee_cfp])
 

@@ -51,13 +51,13 @@ class TenderJIT
 
   # Entry point for compiling a method from RJIT hooks
   def compile iseq, cfp
-    return if iseq.body.jit_func != 0
+    return if iseq.body.jit_entry != 0
 
     compiler = TenderJIT::Compiler.new iseq
     jit_addr = compiler.compile cfp
 
     @compiled_iseq_addrs << compiler.iseq.to_i
-    iseq.body.jit_func = jit_addr
+    iseq.body.jit_entry = jit_addr
   end
 
   # Compile a method.  For example:
@@ -73,7 +73,7 @@ class TenderJIT
 
   def uncompile_iseqs
     @compiled_iseq_addrs.each do |addr|
-      C.rb_iseq_t.new(addr).body.jit_func = 0
+      C.rb_iseq_t.new(addr).body.jit_entry = 0
       C.rb_iseq_t.new(addr).body.variable.coverage = 0
     end
   end
