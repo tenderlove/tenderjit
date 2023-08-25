@@ -155,6 +155,11 @@ class TenderJIT
       add_insn __method__, pc, insn, EMPTY
     end
 
+    def getinstancevariable pc, insn
+      ops = [readop(:ptr, pc, 0), C.IVC.new(readop(:ptr, pc, 1))]
+      add_insn __method__, pc, insn, ops
+    end
+
     def getlocal_WC_0 pc, insn
       add_insn :getlocal, pc, insn, local_name([readop(:uint, pc, 0), 0])
     end

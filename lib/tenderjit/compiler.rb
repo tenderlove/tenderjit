@@ -437,6 +437,39 @@ class TenderJIT
       yarv
     end
 
+    def getinstancevariable ctx, ir, insn
+      iv_id = insn.opnds.first
+
+      # Get the register for self, or populate it if it's not there
+      self_reg = if ctx.recv
+        ctx.recv
+      else
+        ctx.recv = ir.load(ctx.cfp, ir.uimm(C.rb_control_frame_t.offsetof(:self)))
+        ctx.recv
+      end
+
+      recv = Fiddle.dlunwrap(ctx.comptime_cfp.self)
+
+      case Hacks.basic_type(recv)
+      when :T_OBJECT
+        flags = ir.load self_reg, C.RBasic.offsetof(:flags)
+        shape_reg = ir.shr flags, ir.imm(32)
+
+        shape_id = C.rb_shape_get_shape_id(recv)
+        index = C.rb_shape_get_iv_index(shape_id, iv_id)
+
+        val = if C.FL_TEST_RAW(recv, C::ROBJECT_EMBED)
+          ir.load(self_reg, C.RObject.offsetof(:as, :ary) + (index * C.VALUE.size))
+        else
+          raise NotImplementedError
+        end
+
+        ctx.push(:unknown, val)
+      else
+        raise NotImplementedError
+      end
+    end
+
     def getblockparamproxy ctx, ir, insn
       idx, level = insn.opnds
 

@@ -213,7 +213,7 @@ class TenderJIT
       x2 = B.new
       x3 = B.new
 
-      jit.compile method(:wow2)
+      compile method(:wow2), recv: self
 
       jit.enable!
       v1 = wow2(x1)

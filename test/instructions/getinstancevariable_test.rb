@@ -33,8 +33,8 @@ class TenderJIT
     end
 
     def test_getinstancevariable_embedded
-      jit.compile(Foo.instance_method(:read))
       foo = Foo.new
+      compile(Foo.instance_method(:read), recv: foo)
       jit.enable!
       v = foo.read
       jit.disable!
@@ -58,7 +58,7 @@ class TenderJIT
     end
 
     def test_getinstancevariable_subclass
-      jit.compile(Parent.instance_method(:read))
+      compile(Parent.instance_method(:read), recv: Parent.new)
 
       Parent.new.read # populate the iv table
 
