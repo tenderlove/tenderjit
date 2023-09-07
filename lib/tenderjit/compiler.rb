@@ -246,6 +246,9 @@ class TenderJIT
       }
     end
 
+    class PatchIVRead < Util::ClassGen.pos(:iv_id, :buffer_offset, :reg)
+    end
+
     class PatchCtx < Util::ClassGen.pos(:stack, :buffer_offset, :reg, :ci)
       def argc
         C.vm_ci_argc(ci)
@@ -437,6 +440,89 @@ class TenderJIT
       yarv
     end
 
+    def gen_iv_read recv, patch_id
+      patch_ctx = @patches[patch_id]
+
+      ir = IR.new
+      self_reg = ir.loadp 0
+
+      case Hacks.basic_type(recv)
+      when :T_OBJECT
+        shape_id = C.rb_shape_get_shape_id(recv)
+        index = C.rb_shape_get_iv_index(shape_id, patch_ctx.iv_id)
+
+        flags = ir.load self_reg, C.RBasic.offsetof(:flags)
+        shape_reg = ir.shr flags, ir.imm(32)
+
+        read = ir.label :read
+        # If the shapes are the same, great we'll ccontinue
+        ir.je(shape_reg, ir.uimm(shape_id), read)
+
+        # Otherwise we need to recompile, so add a stub here
+        func = nil
+        ir.patch_location { |loc|
+          @patches[patch_id] = PatchIVRead.new(patch_ctx.iv_id, loc, func.copy)
+        }
+        @patch_id += 1
+        func = ir.loadi ir.uimm(read_iv_trampoline(patch_id), 64)
+        ir.ret(ir.call(func, [self_reg]))
+
+        ir.put_label read
+        val = if C.FL_TEST_RAW(recv, C::ROBJECT_EMBED)
+          ir.load(self_reg, C.RObject.offsetof(:as, :ary) + (index * C.VALUE.size))
+        else
+          iv_tbl = ir.load(self_reg, C.RObject.offsetof(:as, :heap, :ivptr))
+          ir.load(iv_tbl, index * C.VALUE.size)
+        end
+        ir.ret val
+      else
+        raise NotImplementedError
+      end
+
+      asm = ir.assemble
+      entry = buff.pos + buff.to_i
+      buff.writeable!
+      asm.write_to buff
+      buff.executable!
+
+      ir = IR.new
+      ir.storei(entry, patch_ctx.reg)
+      asm = ir.assemble_patch
+
+      pos = buff.pos
+      buff.seek patch_ctx.buffer_offset
+      buff.writeable!
+      asm.write_to(buff)
+      buff.executable!
+      buff.seek pos
+
+      entry
+    end
+
+    def read_iv_trampoline patch_id
+      ir = IR.new
+      recv = ir.copy ir.loadp 0
+      ir.push(recv, ir.loadi(Fiddle.dlwrap(patch_id)))
+
+      callback = "gen_iv_read"
+
+      argv = ir.copy(ir.loadsp)
+      func = ir.loadi Hacks::FunctionPointers.rb_funcallv
+      zelf = ir.loadi Fiddle.dlwrap(self)
+      callback = ir.loadi Hacks.rb_intern_str(callback)
+      res = ir.num2int ir.call(func, [zelf, callback, ir.loadi(2), argv])
+
+      ir.pop
+      ir.ret ir.call(res, [recv])
+
+      asm = ir.assemble
+      addr = @trampolines.to_i + @trampolines.pos
+      @trampolines.writeable!
+      asm.write_to @trampolines
+      @trampolines.executable!
+      addr
+    end
+
     def getinstancevariable ctx, ir, insn
       iv_id = insn.opnds.first
 
@@ -452,19 +538,17 @@ class TenderJIT
 
       case Hacks.basic_type(recv)
       when :T_OBJECT
-        flags = ir.load self_reg, C.RBasic.offsetof(:flags)
-        shape_reg = ir.shr flags, ir.imm(32)
+        patch_id = @patch_id
+        # We just need to save the patch location and the iv name
+        func = nil
+        ir.patch_location { |loc|
+          @patches[patch_id] = PatchIVRead.new(iv_id, loc, func.copy)
+        }
+        @patch_id += 1
+        func = ir.loadi ir.uimm(read_iv_trampoline(patch_id), 64)
 
-        shape_id = C.rb_shape_get_shape_id(recv)
-        index = C.rb_shape_get_iv_index(shape_id, iv_id)
-
-        val = if C.FL_TEST_RAW(recv, C::ROBJECT_EMBED)
-          ir.load(self_reg, C.RObject.offsetof(:as, :ary) + (index * C.VALUE.size))
-        else
-          raise NotImplementedError
-        end
-
-        ctx.push(:unknown, val)
+        params = [self_reg]
+        ctx.push :unknown, ir.copy(ir.call(func, params))
       else
         raise NotImplementedError
       end

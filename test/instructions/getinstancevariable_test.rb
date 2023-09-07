@@ -45,8 +45,8 @@ class TenderJIT
     end
 
     def test_getinstancevariable_extended
-      jit.compile(Foo.instance_method(:read))
       foo = Foo.new
+      compile(Foo.instance_method(:read), recv: foo)
       foo.expand
       jit.enable!
       v = foo.read
@@ -67,6 +67,20 @@ class TenderJIT
       v = foo.read
       jit.disable!
       assert_equal 10, v
+      assert_equal 0, jit.exits
+    ensure
+      jit.uncompile(Foo.instance_method(:read))
+    end
+
+    def test_shape_changes
+      foo = Foo.new
+      compile(Foo.instance_method(:read), recv: foo)
+      jit.enable!
+      foo.read # ensure the stub is hit
+      foo.expand
+      v = foo.read # shape is different
+      jit.disable!
+      assert_equal "a", v
       assert_equal 0, jit.exits
     ensure
       jit.uncompile(Foo.instance_method(:read))
