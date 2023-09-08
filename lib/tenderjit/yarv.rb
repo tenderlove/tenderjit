@@ -299,6 +299,11 @@ class TenderJIT
       add_insn __method__, pc, insn, ops
     end
 
+    def newhash pc, insn
+      ops = [readop(:int, pc, 0)]
+      add_insn __method__, pc, insn, ops
+    end
+
     def splatarray pc, insn
       ops = [readop(:ptr, pc, 0)]
       add_insn __method__, pc, insn, ops

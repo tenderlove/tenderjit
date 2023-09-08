@@ -688,6 +688,34 @@ class TenderJIT
       end
     end
 
+    def newhash ctx, ir, insn
+      hash_size = insn.opnds.first
+
+      if hash_size == 0
+        func = ir.loadi C.rb_hash_new
+        res = ir.call func, []
+        ctx.push Hacks.basic_type({}), ir.copy(res)
+      else
+        stack = hash_size.times.map { |i| ctx.peek(i).reg }
+
+        raise unless hash_size % 2 == 0
+
+        # First allocate the hash with a size
+        func = ir.loadi C.rb_hash_new_with_size
+        hash = ir.copy ir.call(func, [ir.loadi(hash_size)])
+
+        # push all the hash elements on the stack
+        stack.each_slice(2) { |a, b| ir.push(b, a) }
+
+        argv = ir.copy(ir.loadsp)
+        argc = ir.loadi(hash_size)
+        func = ir.loadi C.rb_hash_bulk_insert
+        ir.call(func, [argc, argv, hash])
+        (hash_size / 2).times { ir.pop }
+        ctx.push Hacks.basic_type({}), hash
+      end
+    end
+
     def opt_aref ctx, ir, insn
       cd = insn.opnds.first
       patch_id = @patch_id

@@ -142,7 +142,7 @@ class TenderJIT
     def call location, params
       insn = new_insn Call, :call, location, NONE, retvar
       raise ArgumentError if params.any?(&:integer?)
-      raise ArgumentError unless params.all?(&:register?)
+      raise ArgumentError, "not all params are registers" unless params.all?(&:register?)
 
       params.each { |param| insn.add_param param }
       @instructions = @instructions.append insn

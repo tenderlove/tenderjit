@@ -13,7 +13,7 @@ class TenderJIT
     def test_empty_hash
       assert_has_insn method(:empty_hash), insn: :newhash
 
-      jit.compile(method(:empty_hash))
+      compile(method(:empty_hash), recv: self)
       jit.enable!
       v = empty_hash
       jit.disable!
@@ -25,7 +25,7 @@ class TenderJIT
 
     def test_filled_hash
       assert_has_insn method(:filled_hash), insn: :newhash
-      jit.compile(method(:filled_hash))
+      compile(method(:filled_hash), recv: self)
       jit.enable!
       v = filled_hash
       jit.disable!
