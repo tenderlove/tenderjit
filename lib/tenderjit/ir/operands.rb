@@ -113,6 +113,9 @@ class TenderJIT
           false
         end
 
+        ##
+        # Create an operand of the same name and physical register,
+        # but doesn't have any associated uses.
         def copy
           self.class.new(name, physical_register)
         end

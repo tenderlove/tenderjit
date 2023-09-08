@@ -445,6 +445,7 @@ class TenderJIT
 
       ir = IR.new
       self_reg = ir.loadp 0
+      iv_id = patch_ctx.iv_id
 
       case Hacks.basic_type(recv)
       when :T_OBJECT
@@ -459,12 +460,8 @@ class TenderJIT
         ir.je(shape_reg, ir.uimm(shape_id), read)
 
         # Otherwise we need to recompile, so add a stub here
-        func = nil
-        ir.patch_location { |loc|
-          @patches[patch_id] = PatchIVRead.new(patch_ctx.iv_id, loc, func.copy)
-        }
-        @patch_id += 1
-        func = ir.loadi ir.uimm(read_iv_trampoline(patch_id), 64)
+        func = patched_loadi(ir, ->(patch_id) { read_iv_trampoline(patch_id) },
+                                 ->(loc, opnd) { PatchIVRead.new(iv_id, loc, opnd.copy) })
         ir.ret(ir.call(func, [self_reg]))
 
         ir.put_label read
@@ -538,20 +535,24 @@ class TenderJIT
 
       case Hacks.basic_type(recv)
       when :T_OBJECT
-        patch_id = @patch_id
-        # We just need to save the patch location and the iv name
-        func = nil
-        ir.patch_location { |loc|
-          @patches[patch_id] = PatchIVRead.new(iv_id, loc, func.copy)
-        }
-        @patch_id += 1
-        func = ir.loadi ir.uimm(read_iv_trampoline(patch_id), 64)
+        func = patched_loadi(ir, ->(patch_id) { read_iv_trampoline(patch_id) },
+                                 ->(loc, opnd) { PatchIVRead.new(iv_id, loc, opnd.copy) })
 
         params = [self_reg]
         ctx.push :unknown, ir.copy(ir.call(func, params))
       else
         raise NotImplementedError
       end
+    end
+
+    def patched_loadi ir, before_assembly, at_assembly
+      patch_id = @patch_id
+      address = before_assembly.call(patch_id)
+      func = nil
+      ir.patch_location { |loc| @patches[patch_id] = at_assembly.call(loc, func) }
+      @patch_id += 1
+      func = ir.loadi ir.uimm(address, 64)
+      func
     end
 
     def getblockparamproxy ctx, ir, insn
@@ -624,12 +625,8 @@ class TenderJIT
       patch_ctx = ctx.dup
       patch_ctx.freeze
 
-      func = nil
-      ir.patch_location { |loc|
-        @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy, cd.ci)
-      }
-      func = ir.loadi ir.uimm(trampoline(argc, patch_id), 64)
-      @patch_id += 1
+      func = patched_loadi(ir, ->(patch_id) { trampoline(argc, patch_id) },
+                               ->(loc, opnd) { PatchCtx.new(patch_ctx, loc, func.copy, cd.ci) })
 
       ctx.push :unknown, ir.copy(ir.call(func, params))
     end
@@ -721,12 +718,8 @@ class TenderJIT
       patch_id = @patch_id
       patch_ctx = ctx.dup
 
-      func = nil
-      ir.patch_location { |loc|
-        @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy, cd.ci)
-      }
-      func = ir.loadi ir.uimm(opt_aref_trampoline(patch_id), 64)
-      @patch_id += 1
+      func = patched_loadi(ir, ->(patch_id) { opt_aref_trampoline(patch_id) },
+                               ->(loc, opnd) { PatchCtx.new(patch_ctx, loc, func.copy, cd.ci) })
 
       idx = ctx.pop.reg
       recv = ctx.pop.reg
@@ -952,11 +945,10 @@ class TenderJIT
         func = nil
         patch_id = @patch_id
         patch_ctx = ctx.dup
-        ir.patch_location { |loc|
-          @patches[patch_id] = PatchCtx.new(patch_ctx, loc, func.copy, cd.ci)
-        }
-        @patch_id += 1
-        func = ir.loadi ir.uimm(opt_neq_trampoline(patch_id), 64)
+
+        func = patched_loadi(ir, ->(patch_id) { opt_neq_trampoline(patch_id) },
+                             ->(loc, opnd) { PatchCtx.new(patch_ctx, loc, func.copy, cd.ci) })
+
         params = [ctx.ec, ctx.cfp, left, right]
         ir.copy ir.call(func, params)
       end
@@ -1460,14 +1452,10 @@ class TenderJIT
         imm = ir.loadi Fiddle.dlwrap(C.rb_class_of(comptime_recv))
         ir.je runtime_class, imm, cont
 
-        patch_id = @patch_id
-        func = nil
-        ir.patch_location { |loc|
-          @patches[patch_id] = PatchCtx.new(ctx.stack, buff.pos + loc, func.copy, ctx.ci)
-        }
-
         argc = C.vm_ci_argc(ctx.ci)
-        func = ir.loadi ir.uimm(trampoline(argc, patch_id), 64)
+        func = patched_loadi(ir, ->(patch_id) { trampoline(argc, patch_id) },
+                                 ->(loc, opnd) { PatchCtx.new(ctx.stack, buff.pos + loc, func.copy, ctx.ci) })
+
         params = (2 + 1 + argc).times.map { |i| # 2 for ec and cfp, 1 for recv
           ir.loadp(i)
         }
