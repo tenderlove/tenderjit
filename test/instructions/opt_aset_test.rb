@@ -39,18 +39,19 @@ class TenderJIT
     end
 
     def test_opt_aset_hash
-      jit.compile method(:opt_aset_hash)
+      compile method(:opt_aset_hash), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
       assert_equal 0, jit.exits
 
       jit.enable!
+      opt_aset_hash
       v = opt_aset_hash
       jit.disable!
       assert_equal 'val', v
 
       assert_equal 1, jit.compiled_methods
-      assert_equal 1, jit.executed_methods
+      assert_equal 2, jit.executed_methods
       assert_equal 0, jit.exits
     end
 
@@ -58,7 +59,7 @@ class TenderJIT
     # project, so only exit/error-free execution is tested.
     #
     def test_opt_aset_array
-      jit.compile method(:opt_aset_array)
+      compile method(:opt_aset_array), recv: self
       assert_equal 1, jit.compiled_methods
       assert_equal 0, jit.executed_methods
       assert_equal 0, jit.exits

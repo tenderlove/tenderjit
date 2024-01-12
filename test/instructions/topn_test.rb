@@ -38,7 +38,7 @@ class TenderJIT
 
       assert_has_insn meth, insn: :topn
 
-      jit.compile(meth)
+      compile(meth, recv: self)
       jit.enable!
       v = meth.call
       jit.disable!

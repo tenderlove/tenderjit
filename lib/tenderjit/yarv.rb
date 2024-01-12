@@ -207,6 +207,11 @@ class TenderJIT
       add_insn __method__, pc, insn, ops
     end
 
+    def opt_aset pc, insn
+      ops = [C.rb_call_data.new(readop(:ptr, pc, 0))]
+      add_insn __method__, pc, insn, ops
+    end
+
     def opt_getconstant_path pc, insn
       ops = [C.iseq_inline_constant_cache.new(readop(:ptr, pc, 0))]
       add_insn __method__, pc, insn, ops
@@ -306,6 +311,16 @@ class TenderJIT
 
     def splatarray pc, insn
       ops = [readop(:ptr, pc, 0)]
+      add_insn __method__, pc, insn, ops
+    end
+
+    def topn pc, insn
+      ops = [readop(:int, pc, 0)]
+      add_insn __method__, pc, insn, ops
+    end
+
+    def setn pc, insn
+      ops = [readop(:int, pc, 0)]
       add_insn __method__, pc, insn, ops
     end
 

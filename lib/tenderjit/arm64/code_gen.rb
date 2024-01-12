@@ -123,9 +123,9 @@ class TenderJIT
           asm.mov PARAM_REGS[i], pr
         end
         # Save these regs
-        asm.stp X30, XZR, [SP, -16], :!
+        asm.stp X29, X30, [SP, -16], :!
         asm.blr location.pr
-        asm.ldp X30, XZR, [SP], 16
+        asm.ldp X29, X30, [SP], 16
       end
 
       def patch_location block, _, _
@@ -199,8 +199,8 @@ class TenderJIT
       def loadp _, _, _
       end
 
-      def storep out, reg, _
-        write out, reg, _
+      def storep reg, val, _
+        loadi reg, val, _
       end
 
       def loadsp _, _, _

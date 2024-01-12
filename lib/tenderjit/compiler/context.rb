@@ -92,6 +92,13 @@ class TenderJIT
         @stack.fetch(idx)
       end
 
+      def replace idx, item
+        old_item = peek idx
+        new_item = StackItem.new(item.type, old_item.depth, item.reg)
+        idx = @stack.length - idx - 1
+        @stack[idx] = new_item
+      end
+
       def pop
         raise EmptyStackError if @stack.empty?
         @stack.pop

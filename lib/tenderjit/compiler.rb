@@ -1,6 +1,8 @@
 require "jit_buffer"
 require "tenderjit/fiddle_hacks"
 require "tenderjit/compiler/context"
+require "tenderjit/compiler/opt_aset"
+require "tenderjit/deferred_compiler"
 require "tenderjit/ir"
 require "tenderjit/yarv"
 
@@ -269,10 +271,13 @@ class TenderJIT
       @iseq = iseq
       @trampolines = JITBuffer.new 4096
       @buff = JITBuffer.new 4096
+      puts TRAMPOLINES2: @trampolines.to_i.to_s(16)
+      puts BUFF: @buff.to_i.to_s(16)
       @yarv_labels = {}
       @trampoline_index = []
       @patches = []
       @patch_id = 0
+      @deferred_compiler = DeferredCompiler.new(@buff)
     end
 
     def yarv
@@ -300,6 +305,7 @@ class TenderJIT
       stat = ir.load(stats_location, ir.uimm(Stats.offsetof("executed_methods")))
       inc = ir.add(stat, ir.uimm(0x1))
       ir.store(inc, stats_location, ir.uimm(Stats.offsetof("executed_methods")))
+      ir.store(ir.copy(ir.loadsp), stats_location, ir.uimm(Stats.offsetof("entry_sp")))
 
       cfg = yarv.basic_blocks
 
@@ -685,6 +691,14 @@ class TenderJIT
       end
     end
 
+    def setn ctx, ir, insn
+      ctx.replace(insn.opnds.first, ctx.peek(0))
+    end
+
+    def opt_aset ctx, ir, insn
+      @deferred_compiler.opt_aset self, ctx, ir, insn
+    end
+
     def newhash ctx, ir, insn
       hash_size = insn.opnds.first
 
@@ -715,7 +729,6 @@ class TenderJIT
 
     def opt_aref ctx, ir, insn
       cd = insn.opnds.first
-      patch_id = @patch_id
       patch_ctx = ctx.dup
 
       func = patched_loadi(ir, ->(patch_id) { opt_aref_trampoline(patch_id) },
@@ -1187,6 +1200,12 @@ class TenderJIT
       prev_frame = ir.add ctx.cfp, ir.uimm(C.rb_control_frame_t.size)
       ir.store(prev_frame, ctx.ec, ir.uimm(C.rb_execution_context_t.offsetof(:cfp)))
 
+      stats_location = ir.loadi(STATS.to_i)
+      entry_sp = ir.load(stats_location, ir.uimm(Stats.offsetof("entry_sp")))
+      cont = ir.label :cont
+      ir.je(entry_sp, ir.copy(ir.loadsp), cont)
+      ir.brk
+      ir.put_label cont
       ir.ret item.reg
     end
 

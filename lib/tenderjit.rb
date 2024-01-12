@@ -20,6 +20,7 @@ class TenderJIT
     "uint64_t executed_methods",
     "uint64_t recompiles",
     "uint64_t exits",
+    "uint64_t entry_sp",
   ]
 
   STATS = Stats.malloc(Fiddle::RUBY_FREE)
@@ -95,7 +96,7 @@ class TenderJIT
   end
 
   def enable!
-    RubyVM::RJIT.resume
+    RubyVM::RJIT.enable
   end
 
   def disable!

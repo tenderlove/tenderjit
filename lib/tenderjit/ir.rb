@@ -237,6 +237,11 @@ class TenderJIT
       _push __method__, NONE, NONE, param(num)
     end
 
+    def storep num, val
+      raise ArgumentError unless num.integer?
+      _push __method__, val, NONE, param(num)
+    end
+
     def load arg1, arg2
       _push __method__, arg1, arg2
     end
